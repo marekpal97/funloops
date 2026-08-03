@@ -22,7 +22,7 @@ Subcommands:
   prime      — assemble prior-trajectory prime context for an issue at claim
                time (reads the derived index read-only; holdout-aware)
   trajectory — assemble a per-issue trajectory payload for the memory feed
-               (see docs/agents/issue-loop-memory.md)
+               (the optional host extension; shape: devloop-boundaries.md §4)
 
 Stdlib only. Config: docs/agents/loop.toml.
 """

@@ -1,27 +1,32 @@
 # The issue-to-PR loop
 
-The first fully engineered loop in this repo: issues labeled
-`ready-for-agent` flow through implement → gates → draft PR without
-hand-prompting. Day shift plans the backlog (`/grill-with-docs` → `/to-spec`
-→ `/to-tickets`, or `/wayfinder` for foggy multi-session efforts); this loop
-is the night shift.
+The first loop in this workspace: issues labeled `ready-for-agent` flow through
+implement → gates → draft PR without hand-prompting. Day shift plans the backlog
+(`/grill-with-docs` → `/to-spec` → `/to-tickets`, or `/wayfinder` for foggy
+multi-session efforts); this loop is the night shift.
 
 Surfaces:
 
-- **`devloop/`** (via the `scripts/issue_loop.py` shim) — deterministic rail
-  (stdlib-only). DAG snapshot, frontier computation, claim/release,
-  command+diff gates. Package map: `devloop-boundaries.md` §2.
-- **`docs/agents/loop.toml`** — every tunable: run caps, fix rounds,
-  training mode, label names, and the gate pipeline.
-- **`/issue-loop`** (`docs/agents/issue-loop.command.md`) — the orchestrator:
-  dispatches implementer/judge/reviewer subagents, owns all control-plane
-  writes. Dev tooling, not a product skill — it deliberately does NOT live in
-  the root `commands/` dir (which ships with the plugin). Install on a dev
-  machine with the repo's standard untracked-symlink pattern:
+- **the `devloop` package** (`uv run devloop`, or `python -m devloop`) —
+  deterministic rail, stdlib-only. DAG snapshot, frontier computation,
+  claim/release, command+diff gates. Package map: `devloop-boundaries.md` §2.
+- **`loop.toml`** beside this file — every tunable: run caps, fix rounds,
+  training mode, label names, and the gate pipeline. A new host repo starts
+  from `loop.toml.template`, which carries the same knobs with nothing
+  host-specific filled in.
+- **`/issue-loop`** (`issue-loop.command.md`) — the orchestrator: dispatches
+  implementer/judge/reviewer subagents, owns all control-plane writes. Dev
+  tooling, not a shipped skill, so it is installed with an untracked symlink
+  and never committed:
 
   ```bash
-  ln -s ../../docs/agents/issue-loop.command.md .claude/commands/issue-loop.md
+  ln -s ../../packages/devloop/docs/agents/issue-loop.command.md .claude/commands/issue-loop.md
   ```
+
+The loop runs with or without a memory host. Where the host repo has a
+Thinkweave vault, the command doc's marked `host-extension` blocks add
+claim-time priming from prior runs and a per-issue write-back; without one they
+are skipped and nothing else changes.
 
 ## How the issue DAG becomes a script
 
@@ -35,7 +40,7 @@ maintains the live gate for us: `issue_dependencies_summary.blocked_by`
 counts open blockers natively, so an edge to a blocker outside this repo's
 snapshot still blocks (the plan warns which).
 
-**The script computes only the frontier.** `issue_loop.py plan` re-reads all
+**The rail computes only the frontier.** `devloop plan` re-reads all
 issues each run and partitions the `ready-for-agent` set into:
 
 - **frontier** — open, unclaimed, every blocker CLOSED → runnable now;
@@ -113,8 +118,8 @@ threshold) touches no code.
 
 | kind | judged by | what it checks |
 |---|---|---|
-| `diff` | script (deterministic) | forbidden paths, max changed lines |
-| `command` | script (deterministic) | any shell command; pass = exit 0 |
+| `diff` | rail (deterministic) | forbidden paths, max changed lines |
+| `command` | rail (deterministic) | any shell command; pass = exit 0 |
 | `acceptance` | fresh LLM judge | the issue's own acceptance criteria, per-criterion, `threshold = all\|majority` |
 | `review` | fresh LLM reviewer | code-review findings vs `block_on` severities |
 | `simplify` | fresh subagent (vendored ponytail-review) | over-engineering trim — the one **applying** gate. Runs last; `required = false`; shrinks the verified diff, re-runs `rerun` gates, reverts to the pre-simplify tip if either goes red |
@@ -140,10 +145,10 @@ Design rules baked in:
   after verification, and can only shrink an already-green diff. It re-runs
   the `rerun` gates on the trim and reverts to the pre-simplify tip if either
   goes red — so it never blocks shipping and never regresses behavior. Its
-  delete-list comes from the **vendored** ponytail-review skill
-  (`docs/agents/ponytail-review.command.md`); ponytail's own plugin/hook
-  installer is **never** run — its `UserPromptSubmit` hook would collide with
-  weave's, so we vendor the skill text only.
+  delete-list comes from the **vendored** `ponytail-review.command.md` beside
+  this file; ponytail's own plugin/hook installer is **never** run — its
+  `UserPromptSubmit` hook collides with other tooling's, so we vendor the skill
+  text only.
 
 ## The TDD contingency
 
@@ -193,9 +198,8 @@ frontier unaided.
 
 ## Origin
 
-Synthesized from three sources in the vault: Matt Pocock's AI Engineer
-workshop (`src-2397c3aa` — DAG-of-issues Kanban, vertical slices,
-Sandcastle, fresh-context review), Owain Lewis's agent-loops guide
-(`src-82540a15` — control-plane visibility, risk labels, per-run caps), and
-Austin Marchese's loop-engineering method (`src-e07b9ebd` — goal+verification
-pairing, training mode, skills-before-loops).
+Synthesized from three sources: Matt Pocock's AI Engineer workshop
+(DAG-of-issues Kanban, vertical slices, Sandcastle, fresh-context review),
+Owain Lewis's agent-loops guide (control-plane visibility, risk labels, per-run
+caps), and Austin Marchese's loop-engineering method (goal+verification pairing,
+training mode, skills-before-loops).

@@ -10,7 +10,7 @@ def _normalize_skill(entry: dict) -> dict:
     """Project one stage-dispatch record down to its stored shape.
 
     Stage dispatches only — generic capture of *every* Skill invocation is
-    parked with its unpark trigger in issue-loop-memory.md (#99). We keep the
+    parked with its unpark trigger in devloop-boundaries.md §4. We keep the
     four fields that make the dispatch first-class:
     ``id`` (which skill), ``role`` (its stage role), ``outcome`` (how the
     invocation resolved), and ``fix_rounds_attributed`` (how many fix rounds

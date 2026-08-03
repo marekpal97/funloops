@@ -15,4 +15,4 @@ When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the 
 
 The slow self-improvement loop (`/arch-proposal`) files evidence-gated draft issues labeled `arch-proposal`. These are proposals, not work orders: a human accepts one by relabeling it `ready-for-agent` (it then enters the fast loop's frontier), or rejects it by closing the issue. The slow loop never opens PRs.
 
-thinkweave had no pre-existing triage labels, so these are the plain canonical defaults — nothing to remap. Edit the right-hand column later if you adopt different vocabulary.
+These are the plain canonical defaults, for a tracker with no pre-existing triage vocabulary. Edit the right-hand column if your repo already uses different label strings — the loop reads the `[labels]` section of `loop.toml`, so the two must agree.

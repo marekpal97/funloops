@@ -2658,9 +2658,11 @@ def test_normalize_trace_is_documented_as_a_backstop_not_the_validation_seam():
     doc = " ".join(mint._normalize_trace.__doc__.split())
     assert "backstop" in doc
     assert "validate" in doc  # names the verb that owns enforcement
-    memory = (cli.REPO_ROOT / "docs" / "agents" / "issue-loop-memory.md").read_text(
+    # The same rule on the spec side — #149 moved it out of the host's overlay
+    # into the boundary spec, where the module's other scope rules live.
+    spec = (cli.REPO_ROOT / "docs" / "agents" / "devloop-boundaries.md").read_text(
         encoding="utf-8")
-    assert "backstop" in memory and "validate" in memory
+    assert "backstop, not the validation seam" in spec
 
 
 def test_command_doc_wires_the_validate_verb_into_the_gate_pipeline():
@@ -2694,10 +2696,10 @@ def test_skills_scope_is_settled_as_stage_dispatch_with_an_unpark_trigger():
     with an explicit unpark trigger, stated in the doc that owns the contract,
     so the next reader neither builds it speculatively nor assumes it exists.
     """
-    memory = (cli.REPO_ROOT / "docs" / "agents" / "issue-loop-memory.md").read_text(
+    spec = (cli.REPO_ROOT / "docs" / "agents" / "devloop-boundaries.md").read_text(
         encoding="utf-8")
-    start = memory.index("**Invocation-trajectory extension")
-    para = " ".join(memory[start:memory.index("\n\n**", start + 1)].split())
+    start = spec.index("**`skills[]` is the stage-dispatch log")
+    para = " ".join(spec[start:spec.index("\n\n**", start + 1)].split())
     assert "parked" in para.lower() and "unpark trigger" in para.lower()
     assert "every Skill invocation" in para  # names what it is NOT
     # The projection agrees: it is documented as the stage-dispatch shape.

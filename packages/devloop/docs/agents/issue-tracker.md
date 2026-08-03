@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and PRDs for this repo live as GitHub issues (`github.com/marekpal97/thinkweave`). Use the `gh` CLI for all operations.
+Issues and PRDs live as GitHub issues in whichever repo you are working in — `gh` infers it from the clone's `origin` remote, so nothing here is repo-specific. Use the `gh` CLI for all operations.
 
 ## Conventions
 

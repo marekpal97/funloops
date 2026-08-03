@@ -28,8 +28,8 @@ of the record — **no field is written by two owners.**
 - **PR body** owns the *diff summary*, the gate table, and the smell report —
   the code-review view of the change.
 - **Trajectory note** (`type: note`, tag `loop-run`; assembled by
-  `scripts/issue_loop.py trajectory`, design in
-  [`issue-loop-memory.md`](issue-loop-memory.md)) owns **how the work went** —
+  `devloop trajectory`, payload shape in
+  [`devloop-boundaries.md`](devloop-boundaries.md) §4) owns **how the work went** —
   the run-causal register, written by the orchestrator at run end while the
   fix-round/seam detail is still in context. It is a plain `note`: its
   frontmatter carries observable facts only (`outcome`, `gates`, `files_touched`,
