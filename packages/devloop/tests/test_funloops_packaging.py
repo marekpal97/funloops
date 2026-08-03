@@ -12,6 +12,11 @@ configured as thinkweave. What survives is the part the golden actually
 witnesses: the resolved-config **contract shape** — which sections exist, which
 knobs each carries, which gates run in which order with which kind. Host-owned
 *values* are free to differ; the shape is not.
+
+Growing the contract (a new knob, a new gate) means **extending** this file to
+match — it is a recorded shape, not an unreproducible artifact, and a failure
+here is the reminder to update it deliberately rather than a reason to delete
+the test.
 """
 
 from __future__ import annotations

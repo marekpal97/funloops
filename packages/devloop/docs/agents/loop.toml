@@ -90,7 +90,9 @@ sensitive_paths = [
 ]
 # Watched paths → at most yellow (skim, never gate). The judgment plane: doc
 # changes steer every future run, so a human glances even when gates are green.
-watched_paths = ["packages/devloop/docs/agents/"]
+# Glob form, not a dir prefix, so a second workspace member's judgment plane
+# lands in the same lane the day it appears.
+watched_paths = ["*/docs/agents/*"]
 green_max_diff_lines = 150     # green requires the diff below this; >= is a medium diff (yellow)
 green_requires_first_try = true  # green requires fix_rounds == 0
 red_min_diff_lines = 800       # "big diff" → red

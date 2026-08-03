@@ -249,8 +249,9 @@ Two interface-level invariants, stated on the module:
 
 **The host overlay.** How these notes reach a *particular* memory host — the
 vault write-back, its four-surface ownership partition, the wrap-coverage rail —
-is host-side documentation (`issue-loop-memory.md` in a Thinkweave host), not
-this package's. What lives here is the shape the package emits and reads back;
+is host-side documentation, not this package's. For a Thinkweave host that
+document is `docs/agents/issue-loop-memory.md` in the **thinkweave** repo; this
+paragraph is the only place it is located, so a move updates one line. What lives here is the shape the package emits and reads back;
 what lives there is what a host does with it.
 
 ## 5. The index_client contract

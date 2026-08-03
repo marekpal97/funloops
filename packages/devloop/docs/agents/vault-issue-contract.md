@@ -8,8 +8,10 @@ be a written, tested contract rather than tribal knowledge. Parity means
 coverage, **not identicality**: a loop run writes surfaces interactive work
 never produces (trajectory notes), and an interactive `/wrap` carries narrative
 context a headless run cannot reconstruct — the guarantee is the ownership
-partition below, not byte-equivalent records. The contract test lives at
-`tests/test_vault_issue_contract.py`; this doc is its prose half.
+partition below, not byte-equivalent records. The contract test
+(`test_vault_issue_contract.py`) runs **host-side only** — it asserts against a
+host's vault surfaces, which this package deliberately cannot import (boundary
+spec §5 splits the schema-pin seam the same way). This doc is its prose half.
 
 A finished issue produces outputs on four surfaces. Each owns a disjoint slice
 of the record — **no field is written by two owners.**

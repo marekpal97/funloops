@@ -24,7 +24,8 @@ Subcommands:
   trajectory — assemble a per-issue trajectory payload for the memory feed
                (the optional host extension; shape: devloop-boundaries.md §4)
 
-Stdlib only. Config: docs/agents/loop.toml.
+Stdlib only. Config: the host repo's docs/agents/loop.toml, found by walking up
+from the cwd, else the copy shipped with the package (see find_config).
 """
 
 from __future__ import annotations
@@ -42,7 +43,33 @@ from devloop import dag, github, index_client, trajectory, triage
 from devloop.gates import DETERMINISTIC, JUDGMENT, reject, validate
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = REPO_ROOT / "docs" / "agents" / "loop.toml"
+CONFIG_REL = Path("docs") / "agents" / "loop.toml"
+PACKAGE_CONFIG = REPO_ROOT / CONFIG_REL
+
+
+def find_config(start: Path | None = None) -> Path:
+    """The host repo's ``docs/agents/loop.toml``, else the package's own copy.
+
+    The gate pipeline belongs to the repo being worked on, not to the installed
+    rail, so the search walks upward from the working directory — the same
+    convention every repo-scoped tool uses. It stops at the first ``.git``: a
+    repo without its own loop.toml falls back to the package's copy rather than
+    silently inheriting an ancestor directory's gate pipeline.
+
+    The fallback is what the funloops workspace itself resolves (it keeps its
+    loop.toml with the package, not at the workspace root), and it may not
+    exist at all in a wheel install that shipped no ``docs/`` — ``load_config``
+    treats a missing file as "defaults only", which is honest: no gates
+    configured, and every ``check`` says so by name.
+    """
+    here = (start or Path.cwd()).resolve()
+    for directory in (here, *here.parents):
+        found = directory / CONFIG_REL
+        if found.is_file():
+            return found
+        if (directory / ".git").exists():   # repo root: stop, don't escape it
+            break
+    return PACKAGE_CONFIG
 
 # Stamped on a prime payload built the pre-#100 way (labels as concepts, no
 # text leg) — the dead-by-vocabulary join; see issue-loop.command.md §1b.
@@ -104,8 +131,13 @@ DEFAULT_CONFIG: dict = {
 # Config
 
 
-def load_config(path: Path = CONFIG_PATH) -> dict:
-    """Defaults merged with loop.toml. Gates come only from the file."""
+def load_config(path: Path | None = None) -> dict:
+    """Defaults merged with loop.toml. Gates come only from the file.
+
+    ``path`` defaults to whatever ``find_config`` resolves for the working
+    directory, so the host repo's file wins over the packaged one.
+    """
+    path = path if path is not None else find_config()
     cfg = {
         "loop": dict(DEFAULT_CONFIG["loop"]),
         "labels": dict(DEFAULT_CONFIG["labels"]),

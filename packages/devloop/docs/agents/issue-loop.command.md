@@ -21,7 +21,14 @@ ln -s ../../packages/devloop/docs/agents/issue-loop.command.md .claude/commands/
 **The rail** is the `devloop` console script (`python -m devloop` is the same
 entry point). Every command block below writes `uv run devloop …`, which is how
 this workspace invokes it; a host that installs the package another way
-substitutes its own invocation and nothing else changes.
+substitutes its own invocation.
+
+**Which `loop.toml` you are running.** The rail searches upward from the
+working directory for `docs/agents/loop.toml`, stops at the repo root, and
+falls back to the copy shipped with the package — so the repo being worked on
+owns its gate pipeline, and a repo that has never adopted one runs the
+package's. `devloop config` prints what resolved; check it when a gate looks
+like someone else's.
 
 `run_mode` picks between the two ways to run (see `loop.toml`):
 
@@ -135,9 +142,9 @@ uv run devloop prime <N> --run-id <run-id> \
 **You resolve the three signals; the rail fuses them.**
 
 1. **`--concepts` — ontology terms, never GitHub labels** (labels match zero
-   trajectory notes; the dead-join diagnosis lives in the host overlay
-   `issue-loop-memory.md`, which stays vault-side with the rest of the
-   memory-feed design). Map the issue to 2–3 ontology terms via
+   trajectory notes; the dead-join diagnosis is in `devloop-boundaries.md` §4,
+   which also locates the host's overlay doc for the rest of the memory-feed
+   design). Map the issue to 2–3 ontology terms via
    `weave_concepts` at claim time. A labels-only call with no `--query` comes
    back with a warning stamped in the payload's `note` — if you see it, the run
    was effectively unprimed: fix the call, don't shrug.
@@ -182,10 +189,11 @@ splice two blocks into the implementer prompt:
    `ponytail-persona.md` beside this file (everything below its provenance
    header). Read that file and splice its text; never duplicate it here — the
    vendored file is the single source.
-2. **The epic's north-star block, verbatim.** When the issue belongs to an
-   epic whose body carries a north-star block (a `**Goal:**` /
-   `**Anti-goals:**` pair), read that epic with `gh issue view <epic>` and
-   splice the block **unedited** — it is the standard the acceptance judge
+2. **The epic's north-star block, verbatim.** The epic is the `Epic: #N` field
+   in the issue's pipe header (`gh issue view <N>` — the same read as the
+   dispatch step below; do it first if you have not yet). When that epic's body
+   carries a north-star block (a `**Goal:**` / `**Anti-goals:**` pair), read it
+   with `gh issue view <epic>` and splice the block **unedited** — it is the standard the acceptance judge
    scores against, so paraphrasing it moves the target. No epic, or no such
    block: splice nothing for this item.
 
@@ -506,7 +514,7 @@ path + branch + why), so a human can `git worktree remove` them after
 acting on the evidence. If nothing was shippable, say what the human must do to
 unblock the DAG (usually: merge open loop PRs).
 
-<!-- host-extension: memory feed — everything below needs a Thinkweave vault on the host. Without one the run ends at §2: the tracker, the PR, and the report already carry the complete record, and nothing is written back. The host-side design doc is issue-loop-memory.md. -->
+<!-- host-extension: memory feed — everything below needs a Thinkweave vault on the host. Without one the run ends at §2: the tracker, the PR, and the report already carry the complete record, and nothing is written back. The host's overlay doc is located in devloop-boundaries.md section 4. -->
 
 ## 3. Feed the vault — write one trajectory note per processed issue
 

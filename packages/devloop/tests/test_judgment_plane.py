@@ -90,12 +90,19 @@ def test_command_doc_documents_the_symlink_wiring():
 
 
 def test_symlink_is_not_committed():
-    """The symlink itself is machine-local. Mirrors the plan-distill pin."""
+    """The symlink itself is machine-local. Untracked is the observable half;
+    the gitignore rule is what makes it stay that way, so pin both — otherwise
+    this passes on a checkout that simply never installed the command."""
     out = subprocess.run(
         ["git", "ls-files", ".claude/"],
         cwd=WORKSPACE_ROOT, capture_output=True, text=True, check=False,
     ).stdout
     assert "issue-loop" not in out
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", ".claude/commands/issue-loop.md"],
+        cwd=WORKSPACE_ROOT, capture_output=True, check=False,
+    ).returncode
+    assert ignored == 0, "the command symlink path must be gitignored"
 
 
 def test_config_runs_in_this_checkout():
@@ -139,10 +146,13 @@ def test_memory_feed_blocks_are_marked_and_balanced():
     text = _doc(COMMAND_DOC)
     assert text.count(EXT_OPEN) == text.count(EXT_CLOSE) >= 3
     # The marker states the condition and the vault-less behavior, so a reader
-    # who skips the block knows what they are skipping.
-    for marker in re.findall(re.escape(EXT_OPEN) + r"[^>]*-->", text):
-        low = marker.lower()
-        assert "vault" in low
+    # who skips the block knows what they are skipping. Non-greedy to the
+    # closing `-->` (a marker may contain `>`), and every opener must be
+    # matched — otherwise the loop below checks nothing.
+    markers = re.findall(re.escape(EXT_OPEN) + r".*?-->", text, re.DOTALL)
+    assert len(markers) == text.count(EXT_OPEN)
+    for marker in markers:
+        assert "vault" in marker.lower(), marker
     assert "primed=false" in text or "primed: false" in text
 
 
@@ -169,9 +179,15 @@ def test_the_loop_is_complete_without_a_host_vault():
 def test_the_host_overlay_is_pointed_at_not_shipped():
     """issue-loop-memory.md is the host's overlay (it documents how finished
     issues feed a thinkweave vault) and stays host-side. funloops points at it
-    rather than carrying a copy that would drift."""
+    rather than carrying a copy that would drift — and locates it in exactly
+    one place, with the repo and path a reader needs to actually find it."""
     assert not (DOCS / "issue-loop-memory.md").exists()
-    assert "issue-loop-memory.md" in _doc(COMMAND_DOC)  # named as the host's
+    spec = _doc(BOUNDARIES)
+    assert "docs/agents/issue-loop-memory.md" in spec
+    assert "thinkweave" in spec[spec.index("**The host overlay.**"):]
+    # One locating site, so a move updates one line.
+    named = sum("issue-loop-memory.md" in _doc(p) for p in DOCS.glob("*.md"))
+    assert named == 1, "the overlay is located in more than one doc"
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +234,73 @@ def test_shipped_config_is_this_repo_not_the_template():
     cfg = cli.load_config()
     assert cfg["triage"]["sensitive_paths"], "funloops declares its own sensitive paths"
     assert "thinkweave" not in _doc(DOCS / "loop.toml").lower()
+
+
+# --- the template's delivery mechanism (review round 1, major) --------------
+# "Copy it to your repo's docs/agents/loop.toml" has to be true. It is only
+# true if the rail looks there, so these pin the lookup, not the prose.
+
+
+def _host_repo(tmp_path: Path, marker: str = "echo host") -> Path:
+    """A repo that adopted the template, with one distinguishing edit."""
+    (tmp_path / ".git").mkdir()
+    cfg_dir = tmp_path / "docs" / "agents"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "loop.toml").write_text(
+        _doc(TEMPLATE).replace('cmd = "pytest -q"', f'cmd = "{marker}"'), encoding="utf-8")
+    return tmp_path
+
+
+def test_host_repo_config_is_found_from_the_cwd(tmp_path):
+    """The adopting repo's own file wins over the packaged copy — otherwise
+    the template ships with no way to take effect."""
+    assert cli.find_config(_host_repo(tmp_path)) == tmp_path / "docs" / "agents" / "loop.toml"
+
+
+def test_config_is_found_from_a_subdirectory(tmp_path):
+    """The loop runs from wherever the orchestrator sits, not only the repo
+    root, so the search walks upward."""
+    deep = _host_repo(tmp_path) / "src" / "pkg"
+    deep.mkdir(parents=True)
+    assert cli.find_config(deep) == tmp_path / "docs" / "agents" / "loop.toml"
+
+
+def test_the_search_stops_at_the_repo_root(tmp_path):
+    """A repo with no loop.toml of its own must not silently inherit one from
+    an ancestor directory — that would be someone else's gate pipeline."""
+    outer = _host_repo(tmp_path)
+    inner = outer / "vendor" / "other-repo"
+    (inner / ".git").mkdir(parents=True)
+    assert cli.find_config(inner) == cli.PACKAGE_CONFIG
+
+
+def test_config_falls_back_to_the_packaged_copy(tmp_path):
+    """No host config anywhere → the package's own, which is how the funloops
+    checkout (no docs/agents/ at its root) keeps resolving its loop.toml."""
+    assert cli.find_config(tmp_path) == cli.PACKAGE_CONFIG
+    assert cli.load_config()["triage"]["sensitive_paths"] == ["cli.py", "loop.toml", "pyproject.toml"]
+
+
+def test_an_adopting_repo_really_gets_its_own_gate_pipeline(tmp_path):
+    """End to end, the way the reviewer reproduced the bug: copy the template
+    into a repo, run the rail from that repo, and the emitted config must be
+    that repo's — not this package's."""
+    host = _host_repo(tmp_path)
+    out = subprocess.run([sys.executable, "-m", "devloop", "config"],
+                         cwd=host, capture_output=True, text=True, check=True)
+    cfg = json.loads(out.stdout)
+    assert next(g for g in cfg["gates"] if g["id"] == "tests")["cmd"] == "echo host"
+    assert cfg["triage"]["sensitive_paths"] == []   # the template's, not funloops'
+
+
+def test_template_header_describes_the_real_lookup():
+    """The prose that sent the reviewer looking for a `--config` flag: the
+    header must say how the copy is found."""
+    text = _doc(TEMPLATE)
+    assert "docs/agents/loop.toml" in text
+    low = text.lower()
+    assert "upward" in low or "walks up" in low
+    assert "cwd" in low or "working directory" in low
 
 
 # ---------------------------------------------------------------------------

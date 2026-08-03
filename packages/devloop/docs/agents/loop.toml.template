@@ -3,6 +3,13 @@
 # you don't want to override and the rail supplies the same value from
 # devloop/cli.py's DEFAULT_CONFIG.
 #
+# How the copy takes effect: the rail searches upward from the cwd (the working
+# directory) for `docs/agents/loop.toml`, stopping at the repo root (`.git`), and
+# falls back to the copy shipped with the package. So the gate pipeline belongs
+# to the repo you are working in — no flag to pass, and no editing an installed
+# package. `devloop config` prints what actually resolved; if it is not yours,
+# check the path and the directory you ran from.
+#
 # Read by the `devloop` rail (`uv run devloop config`) and by the /issue-loop
 # command (orchestration). Semantics: issue-loop.md. Per-run posture belongs on
 # the command line, not in edits to this file: every knob in
