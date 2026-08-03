@@ -12,7 +12,6 @@ dev = ["pytest>=8.0", "ruff>=0.16"]
 testpaths = ["packages/devloop/tests"]
 
 [tool.ruff]
-line-length = 100
 # The virtual root has no requires-python of its own, so state the members'
 # floor here — otherwise ruff assumes an older target and silently skips
 # version-gated rules (e.g. UP017's datetime.UTC, 3.11+).

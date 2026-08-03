@@ -53,21 +53,10 @@ Named here so the second loop knows where to look rather than reinventing —
 **none of these are built, and the first one gets extracted when a second caller
 actually exists**, not before.
 
-- **Gate protocol + `GateResult` shape** — a gate is a config entry with a
-  `kind`, and which verb it has (`execute` vs `validate`) states which plane
-  runs it. `GateResult` is a plain dict `{id, kind, passed, summary, detail}`.
-  Currently `packages/devloop/devloop/gates.py`.
-- **The `gh` subprocess seam** — one chokepoint for every GitHub call, returning
-  plain dicts so the graph math never sees `gh` output. Currently
-  `packages/devloop/devloop/github.py`.
-- **The config-override pattern** — defaults merged with a TOML file, then
-  `--set [section.]key=value` per-run overrides parsed as TOML scalars, with
-  unknown sections and keys a hard error. Currently in
-  `packages/devloop/devloop/cli.py`.
-- **The trajectory / memory-feed shape** — one primitive with a write face
-  (mint) and a read face (prime) sharing one vocabulary, plus the read-only
-  client into a host's derived index. Currently
-  `packages/devloop/devloop/trajectory/` and `index_client.py`.
+- **Gate protocol + `GateResult` shape** — currently `packages/devloop/devloop/gates.py`.
+- **The `gh` subprocess seam** — currently `packages/devloop/devloop/github.py`.
+- **The config-override pattern** — currently `packages/devloop/devloop/cli.py`.
+- **The trajectory / memory-feed shape** — currently `packages/devloop/devloop/trajectory/` and `index_client.py`.
 
 The memory feed is an **optional host extension**, not a dangling stub: a loop
 runs fully without one, and `prime` degrades to `primed=false` rather than
