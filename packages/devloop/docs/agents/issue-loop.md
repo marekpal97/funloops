@@ -16,12 +16,8 @@ Surfaces:
   host-specific filled in.
 - **`/issue-loop`** (`issue-loop.command.md`) — the orchestrator: dispatches
   implementer/judge/reviewer subagents, owns all control-plane writes. Dev
-  tooling, not a shipped skill, so it is installed with an untracked symlink
-  and never committed:
-
-  ```bash
-  ln -s ../../packages/devloop/docs/agents/issue-loop.command.md .claude/commands/issue-loop.md
-  ```
+  tooling, not a shipped skill: installed by an untracked symlink; see the
+  command doc's **Install** block.
 
 The loop runs with or without a memory host. Where the host repo has a
 Thinkweave vault, the command doc's marked `host-extension` blocks add

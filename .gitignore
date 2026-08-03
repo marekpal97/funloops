@@ -7,9 +7,5 @@ __pycache__/
 dist/
 build/
 
-# Machine-local agent wiring, none of it shared: `.claude/commands/` holds
-# untracked symlinks to the command docs under packages/*/docs/agents/ (see
-# issue-loop.command.md), and `.claude/settings.local.json` is per-machine by
-# definition. Ignoring the directory covers both; nothing here is meant to be
-# committed, so the rule is deliberately broader than the symlinks alone.
+# Machine-local agent wiring (command symlinks, settings.local.json) — never committed.
 .claude/

@@ -39,6 +39,13 @@ def _script() -> Path:
     return Path(sys.executable).parent / "devloop"
 
 
+def _shape(cfg: dict) -> dict:
+    """Sections, their knob lists, and the gate id/kind/key contract — the part
+    of the config that must not drift; values are host-owned."""
+    return {s: [(g["id"], g["kind"], sorted(g)) for g in cfg[s]] if s == "gates" else list(cfg[s])
+            for s in cfg}
+
+
 def test_console_script_config_matches_the_carve_out_contract():
     """The `devloop` console script resolves the same config *shape* as the
     rail it carved out of. Runs the script installed beside the interpreter
@@ -47,16 +54,8 @@ def test_console_script_config_matches_the_carve_out_contract():
     script = _script()
     assert script.exists(), f"console script not installed at {script}"
     cfg = _config([str(script)])
-
     assert list(cfg) == list(GOLDEN)
-    for section in (s for s in GOLDEN if s != "gates"):
-        assert list(cfg[section]) == list(GOLDEN[section]), section
-    assert [(g["id"], g["kind"]) for g in cfg["gates"]] == \
-           [(g["id"], g["kind"]) for g in GOLDEN["gates"]]
-    # Same gate *keys* too — a gate that quietly lost its threshold or its
-    # rerun list is a contract break the id/kind pair would not catch.
-    for got, want in zip(cfg["gates"], GOLDEN["gates"], strict=True):
-        assert set(got) == set(want), got["id"]
+    assert _shape(cfg) == _shape(GOLDEN)
 
 
 def test_python_m_devloop_is_the_same_entry_point():
