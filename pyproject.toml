@@ -1,0 +1,30 @@
+# Virtual workspace root — funloops itself ships nothing. The umbrella is a
+# name and a layout, not a package: each loop is a workspace member under
+# packages/, and there is deliberately no shared/core package (see README).
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.16"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/devloop/tests"]
+
+[tool.ruff]
+line-length = 100
+# The virtual root has no requires-python of its own, so state the members'
+# floor here — otherwise ruff assumes an older target and silently skips
+# version-gated rules (e.g. UP017's datetime.UTC, 3.11+).
+target-version = "py311"
+
+[tool.ruff.lint.isort]
+# devloop lives under packages/, not beside this file, so isort cannot infer it.
+known-first-party = ["devloop"]
+
+[tool.ruff.lint]
+# TRY004 wants TypeError where devloop raises ValueError on a non-dict trace.
+# That exception type is interface, documented on the function and pinned by
+# test_build_trajectory_rejects_non_dict_trace — the carve-out is
+# behavior-frozen, so the lint yields, not the code.
+ignore = ["TRY004"]

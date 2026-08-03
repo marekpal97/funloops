@@ -30,6 +30,7 @@ def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict
         capture_output=True,
         text=True,
         timeout=gate.get("timeout_sec", 900),
+        check=False,  # a failing command IS the gate result, not an exception
     )
     tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[-30:])
     return {

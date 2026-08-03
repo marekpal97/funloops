@@ -335,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
                 ["gh", "label", "create", label, "--description",
                  "Claimed by an /issue-loop run", "--color", "1d76db"],
                 capture_output=True,
+                check=False,
             )  # idempotent: fails silently if it exists
             github.run(["issue", "edit", str(args.number), "--add-label", label])
         github.run(["issue", "comment", str(args.number), "--body",

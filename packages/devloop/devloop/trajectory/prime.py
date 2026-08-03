@@ -239,7 +239,7 @@ def append_served_event(
     from the index, derived and rebuildable from the markdown-adjacent log.
     """
     event = {
-        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
         "type": "retrieval",
         "tool": LOOP_PRIME_TOOL,
         "args": {"run_id": run_id, "issue": issue_number, "session_id": session_id},

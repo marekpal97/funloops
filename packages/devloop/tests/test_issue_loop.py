@@ -297,13 +297,10 @@ def test_check_rejects_simplify_as_orchestrator_kind(tmp_path, capsys):
     assert "LLM-judged" in err["error"]
 
 
-def test_committed_hooks_carry_no_ponytail_entries():
-    """Acceptance criterion: vendoring the skill installs NO ponytail hooks.
-    The committed hook manifest must contain no ponytail UserPromptSubmit /
-    PreToolUse entry (ponytail's plugin would collide with weave's own
-    UserPromptSubmit hook)."""
-    hooks = (cli.REPO_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
-    assert "ponytail" not in hooks.lower()
+# test_committed_hooks_carry_no_ponytail_entries stayed in thinkweave: it reads
+# thinkweave's hooks/hooks.json, which is the host's, not this package's
+# (carve-out import rule, thinkweave#148). Same for
+# test_vendored_ponytail_audit_installs_no_hooks below.
 
 
 def test_vendored_ponytail_review_skill_present_with_provenance():
@@ -462,23 +459,9 @@ def test_plan_distill_located_outside_the_loop():
     assert "outside the loop" in low or "not the loop" in low or "outside the issue-loop" in low
 
 
-def test_plan_distill_fallback_parses_through_real_weave_argparse():
-    """Executability pin (NIT): the documented `weave add` fallback resolves
-    through the REAL weave argparse, and `plan_ref=[pending]` round-trips as the
-    scalar string '[pending]' (not a list) — _parse_fm_token JSON-probes the
-    leading '[', fails, and falls through to the string branch. Catches schema
-    drift in either the parser or the doc's flag shape."""
-    from thinkweave.surfaces.cli.notes import _parse_fm_token
-    from thinkweave.surfaces.cli.parser import build_parser
-
-    ns = build_parser().parse_args(
-        ["add", "t", "--type", "decision", "-f", "plan_ref=[pending]"]
-    )
-    assert ns.command == "add"
-    assert ns.type == "decision"
-    assert "plan_ref=[pending]" in ns.frontmatter
-    # The subtle bit the doc relies on: [pending] survives as a scalar string.
-    assert _parse_fm_token("plan_ref=[pending]") == ("plan_ref", "[pending]")
+# test_plan_distill_fallback_parses_through_real_weave_argparse stayed in
+# thinkweave: it imports thinkweave's own argparse to pin the documented
+# `weave add` fallback (carve-out import rule, thinkweave#148).
 
 
 def test_plan_distill_rides_installed_skill_never_edits_it():
@@ -505,7 +488,7 @@ def test_plan_distill_symlink_is_not_committed():
 
     out = subprocess.run(
         ["git", "ls-files", ".claude/commands/"],
-        cwd=cli.REPO_ROOT, capture_output=True, text=True,
+        cwd=cli.REPO_ROOT, capture_output=True, text=True, check=False,
     ).stdout
     assert "plan-distill" not in out
 
@@ -791,7 +774,7 @@ def test_render_prime_block_honors_char_budget():
          "insights": [{"id": f"n-ins{i}", "body": c * 400}]}
         for i, c in ((1, "L"), (2, "M"), (3, "N"))
     ]
-    block, served = prime.render_prime_block(trajectories, budget_chars=600)
+    _block, served = prime.render_prime_block(trajectories, budget_chars=600)
     # First piece always lands; the budget stops further pieces before all three.
     assert served == ["n-ins1"]
     assert "n-ins2" not in served and "n-ins3" not in served
@@ -2068,15 +2051,6 @@ def test_vendored_ponytail_audit_skill_present_with_provenance():
         assert tag in text
     # The whole-repo hunt list (what distinguishes audit from review) survived.
     assert "Hunt" in text
-
-
-def test_vendored_ponytail_audit_installs_no_hooks():
-    """Acceptance guard (mirrors #58): vendoring the audit skill installs NO
-    ponytail hooks — the committed hook manifest carries no ponytail entry
-    (ponytail's plugin installer would collide with weave's own
-    UserPromptSubmit hook, which is why we vendor SKILL TEXT ONLY)."""
-    hooks = (cli.REPO_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
-    assert "ponytail" not in hooks.lower()
 
 
 def _arch_proposal_doc() -> str:

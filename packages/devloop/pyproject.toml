@@ -1,0 +1,20 @@
+[project]
+name = "devloop"
+version = "0.1.0"
+description = "The deterministic rail of the /issue-loop dev workflow — tracker-as-DAG math, gate execution, PR triage, trajectory assembly."
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Marek Paluch" }]
+# Stdlib only, on purpose: the rail is the deterministic plane of a loop whose
+# other half is an LLM orchestrator. Nothing here may need a wheel to run.
+dependencies = []
+
+[project.scripts]
+devloop = "devloop.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["devloop"]
