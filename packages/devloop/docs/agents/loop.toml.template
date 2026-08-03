@@ -1,0 +1,114 @@
+# loop.toml — TEMPLATE. Copy to your repo's docs/agents/loop.toml and edit the
+# lines marked `← EDIT`. Everything else is a working default; delete any knob
+# you don't want to override and the rail supplies the same value from
+# devloop/cli.py's DEFAULT_CONFIG.
+#
+# Read by the `devloop` rail (`uv run devloop config`) and by the /issue-loop
+# command (orchestration). Semantics: issue-loop.md. Per-run posture belongs on
+# the command line, not in edits to this file: every knob in
+# [loop]/[labels]/[tdd]/[dispatch]/[triage] takes `--set [section.]key=value`
+# for a single run. Gates are file-only by design — the pipeline is a trust
+# boundary you change in review-visible history, not a per-run mood.
+
+[loop]
+max_issues_per_run = 3   # token guardrail: issues processed per invocation
+max_parallel = 1         # frontier width dispatched concurrently (>1 = worktrees)
+max_fix_rounds = 2       # implement→gates→fix iterations before routing to human
+training_mode = true     # pause for human approval before push/PR; flip when trusted
+draft_pr = true
+branch_prefix = "loop/issue-"
+require_green_baseline = true   # red suite on main → refuse to implement
+claim_mode = "assign"    # assign: the assignee IS the claim | label
+run_mode = "pass"        # pass: one frontier pass | exhaust: re-plan until dry
+delivery = "pr-per-issue"  # pr-per-issue | stacked (one branch, one final PR)
+# prime_holdout only bites where the OPTIONAL memory-feed host extension is
+# wired (issue-loop.command.md §1b). Without a memory host, priming never runs
+# and this knob is inert — leave it, or set 0 to say so explicitly.
+prime_holdout = 5
+
+[dispatch]
+persona = true   # splice the ponytail persona + epic north-star into dispatch prompts
+
+[tdd]
+# auto: red→green TDD is ENFORCED iff the per-run baseline probe is green.
+# always / never override the probe.
+mode = "auto"
+
+[labels]
+# ← EDIT if your tracker uses different vocabulary (see triage-labels.md).
+runnable = "ready-for-agent"
+claimed = "agent-claimed"
+on_gate_failure = "ready-for-human"
+
+# ── Risk-lane triage ──────────────────────────────────────────────────────
+# After all gates pass, the rail classifies the shipped PR green / yellow /
+# red so a human reviews only what matters. The rail CLASSIFIES; the
+# orchestrator applies the label. Precedence red > yellow > green.
+[triage]
+# green (auto-merge-ok) only makes sense where branch protection + required CI
+# actually guard the merge. Ship conservative: a would-be-green PR is labeled
+# review-light until the repo graduates out of training mode.
+green_enabled = false
+# ← EDIT: sensitive paths are always red, whatever the size or review verdict.
+# Empty means "no path is sensitive here" — an inherited list from another
+# repo's layout classifies the wrong files, so this ships empty on purpose.
+# Three pattern forms: dir prefix (trailing '/'), bare basename (matches at any
+# depth), glob (*/?/[ — matched against the basename). Typical picks: your
+# public API surface, auth/crypto, migrations, this gate pipeline.
+sensitive_paths = []
+# ← EDIT: watched paths cap a PR at yellow — a human skims, the gate never fails.
+watched_paths = []
+green_max_diff_lines = 150       # green requires the diff below this
+green_requires_first_try = true  # green requires fix_rounds == 0
+red_min_diff_lines = 800         # "big diff" → red
+
+# ── Gate pipeline ─────────────────────────────────────────────────────────
+# Ordered, and the order is the contract: the deterministic guards run first,
+# then judgment, then the applying trim. kinds: command | diff (deterministic,
+# run by the rail) — acceptance | review | simplify (LLM-judged, run by the
+# command in fresh subagent contexts). Another command/diff gate is
+# config-only; a new *kind* needs a DETERMINISTIC entry in devloop/gates.py or
+# a section in the /issue-loop command.
+
+[[gates]]
+id = "diff-guard"
+kind = "diff"
+required = true
+# ← EDIT: paths an agent must never touch. Same three pattern forms as
+# [triage].sensitive_paths (both go through devloop/paths.py). CI config is
+# here because a loop that can edit its own gates has no gates.
+forbidden_paths = [".github/workflows/"]
+max_changed_lines = 2000
+
+[[gates]]
+id = "tests"
+kind = "command"
+required = true
+cmd = "pytest -q"   # ← EDIT: your repo's test command. Pass = exit 0.
+timeout_sec = 1200
+
+[[gates]]
+id = "acceptance"
+kind = "acceptance"
+required = true
+threshold = "all"        # all | majority — of the issue's acceptance criteria
+
+[[gates]]
+id = "review"
+kind = "review"
+required = true
+block_on = ["critical", "major"]   # finding severities that fail the gate
+smells_baseline = true   # Fowler smells reported as judgement calls, never gate-failing
+
+# simplify runs LAST and is safe by construction: it can only SHRINK an
+# already-verified diff. The orchestrator snapshots the tip, applies the
+# subagent's delete-list, re-runs `rerun`, and hard-resets to the snapshot if
+# either goes red — so required=false is literal: its failure mode is a revert,
+# not a block.
+[[gates]]
+id = "simplify"
+kind = "simplify"
+required = false
+skill = "ponytail-review"          # vendored under docs/agents/; host /simplify is the fallback
+rerun = ["tests", "acceptance"]    # re-verify the shrunk diff against these gate ids, in order
+revert_note = "⚠ simplify-reverted"  # PR-body note when the shrunk diff is discarded

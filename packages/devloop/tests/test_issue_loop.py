@@ -1849,8 +1849,9 @@ def test_load_config_triage_defaults(tmp_path):
     cfg = cli.load_config(tmp_path / "nope.toml")
     t = cfg["triage"]
     assert t["green_enabled"] is False   # ship conservative
-    assert "hooks/" in t["sensitive_paths"]
-    assert "*schema*" in t["sensitive_paths"]
+    # No path is sensitive until a host says so: the packaged rail cannot know
+    # another repo's layout, and an inherited guess classifies the wrong files.
+    assert t["sensitive_paths"] == []
     assert t["green_requires_first_try"] is True
     assert isinstance(t["green_max_diff_lines"], int)
     assert isinstance(t["red_min_diff_lines"], int)
@@ -1860,9 +1861,10 @@ def test_load_config_triage_defaults(tmp_path):
 def test_repo_loop_toml_has_triage_section():
     cfg = cli.load_config()
     assert cfg["triage"]["green_enabled"] is False
-    # sensitive-path defaults translated to THIS repo's layout.
+    # Sensitive paths translated to THIS repo's layout: the CLI surface and the
+    # gate pipeline, as bare basenames so they hold for every workspace member.
     sp = cfg["triage"]["sensitive_paths"]
-    assert "hooks/" in sp and "src/thinkweave/surfaces/" in sp
+    assert "cli.py" in sp and "loop.toml" in sp
 
 
 def test_triage_override_via_set(tmp_path):
@@ -1998,7 +2000,9 @@ def test_red_label_sourced_from_on_gate_failure(tmp_path, capsys):
         _signals(baseline_green=False), TRIAGE_CFG,
         red_label="needs-a-human")["label"] == "needs-a-human"
     sig = tmp_path / "sig.json"
-    sig.write_text(json.dumps(_signals(files_touched=["hooks/x.json"])), encoding="utf-8")
+    # A path this repo's loop.toml declares sensitive, so the run classifies red.
+    sig.write_text(json.dumps(_signals(files_touched=["packages/devloop/devloop/cli.py"])),
+                   encoding="utf-8")
     cli.main(["triage", "--signals-json", str(sig),
                      "--set", "labels.on_gate_failure=escalate-me"])
     assert json.loads(capsys.readouterr().out)["label"] == "escalate-me"

@@ -1,6 +1,9 @@
-# Issue-to-PR loop configuration — the DEFAULTS.
-# Read by scripts/issue_loop.py (deterministic rail) and the /issue-loop
-# command (orchestration). Semantics: docs/agents/issue-loop.md.
+# Issue-to-PR loop configuration for THIS repo (funloops).
+#
+# Read by the `devloop` rail (`uv run devloop config`) and the /issue-loop
+# command (orchestration). Semantics: docs/agents/issue-loop.md. A new host
+# repo starts from `loop.toml.template` beside this file, which carries the
+# same knobs with their defaults commented and nothing host-specific in them.
 #
 # Per-run posture belongs on the command line, not in edits to this file:
 # every knob in [loop]/[labels]/[tdd]/[dispatch]/[triage] can be overridden for one run via
@@ -33,17 +36,16 @@ run_mode = "pass"
 #                  PR closes the whole set at the end. One review, no
 #                  merge-waits mid-DAG — the trade is a bigger diff to review.
 delivery = "pr-per-issue"
-# prime_holdout: claim-time priming (issue_loop.py prime <N>) splices prior
-# trajectories' insight bodies into the implementer prompt. Some runs are a
-# deliberate HOLDOUT — dispatched unprimed — so #60's outcome regression can
-# separate "context helped" from "easy issue". The holdout is stateless
-# 1-in-N-in-expectation sampling (sha1(run_id) % N == 0): deterministic per
-# run-id, but a sample, NOT a counter that fires on literally every Nth run.
-# 0 disables holdout (always prime). Per-run override: --set prime_holdout=0.
+# prime_holdout only bites where the optional memory-feed host extension is
+# wired (issue-loop.command.md §1b): some runs dispatch UNPRIMED so an outcome
+# regression can separate "context helped" from "easy issue". Stateless
+# 1-in-N-in-expectation sampling (sha1(run_id) % N == 0) — deterministic per
+# run-id, but a sample, NOT a counter firing on every Nth run. 0 disables it,
+# which is also what a host with no memory feed effectively runs.
 prime_holdout = 5
 
 [dispatch]
-# Splice ponytail persona + epic north-star into dispatch prompts (issue #89);
+# Splice ponytail persona + epic north-star into dispatch prompts;
 # semantics: issue-loop.command.md §1b. Per-run override: --set dispatch.persona=false.
 persona = true
 
@@ -60,7 +62,7 @@ runnable = "ready-for-agent"
 claimed = "agent-claimed"
 on_gate_failure = "ready-for-human"
 
-# ── Risk-lane triage (issue_loop.py triage) ───────────────────────────────
+# ── Risk-lane triage (devloop triage) ─────────────────────────────────────
 # After all gates pass, the orchestrator assembles the shipped PR's signal set
 # and runs `triage --signals-json` to classify it into a lane — green
 # (auto-merge-ok), yellow (review-light), red (ready-for-human) — so a human
@@ -76,25 +78,25 @@ on_gate_failure = "ready-for-human"
 green_enabled = false
 # Sensitive paths → always red, regardless of size/first-try/review. Three
 # pattern forms: dir prefix (trailing '/'), bare basename (matches at any
-# depth), glob (*/?/[ — matched against the basename). Translated to THIS
-# repo's layout: the hooks, the CLI+MCP surface (surfaces/mcp/ holds the MCP
-# tool-signature files), the ontology + sources config by basename, any schema.
+# depth), glob (*/?/[ — matched against the basename). funloops' layout: the
+# CLI module (the workspace's one external interface per the boundary spec),
+# the gate pipeline itself (a trust boundary), and the packaging wiring that
+# decides what a member ships. Bare basenames so they hold for every member
+# package, not just devloop.
 sensitive_paths = [
-    "hooks/",
-    "src/thinkweave/surfaces/",
-    "ontology.yaml",
-    "sources.yaml",
-    "*schema*",
+    "cli.py",
+    "loop.toml",
+    "pyproject.toml",
 ]
-# Watched paths → at most yellow (skim, never gate). Empty by default; add
-# dirs that warrant a human glance without being hard-sensitive.
-watched_paths = []
+# Watched paths → at most yellow (skim, never gate). The judgment plane: doc
+# changes steer every future run, so a human glances even when gates are green.
+watched_paths = ["packages/devloop/docs/agents/"]
 green_max_diff_lines = 150     # green requires the diff below this; >= is a medium diff (yellow)
 green_requires_first_try = true  # green requires fix_rounds == 0
 red_min_diff_lines = 800       # "big diff" → red
 
 # ── Gate pipeline ─────────────────────────────────────────────────────────
-# Ordered. kinds: command | diff (deterministic, run by the script)
+# Ordered. kinds: command | diff (deterministic, run by the rail)
 #                 acceptance | review | simplify (LLM-judged / orchestrated,
 #                 run by the command in fresh subagent contexts). Adding
 # another command/diff gate is config-only; a new *kind* needs a DETERMINISTIC
@@ -106,15 +108,15 @@ id = "diff-guard"
 kind = "diff"
 required = true
 # same three pattern forms as [triage].sensitive_paths above (both go
-# through devloop/paths.py since issue #94).
-forbidden_paths = [".github/workflows/", "dist/", "_old/"]
+# through devloop/paths.py).
+forbidden_paths = [".github/workflows/", "dist/"]
 max_changed_lines = 2000
 
 [[gates]]
 id = "tests"
 kind = "command"
 required = true
-cmd = "uv run --extra mcp pytest -x -q"
+cmd = "uv run pytest -x -q"
 timeout_sec = 1200
 
 [[gates]]
@@ -140,7 +142,7 @@ smells_baseline = true   # report Fowler code smells as judgement calls — neve
 # NEVER fails the pipeline. That is why required=false: its "failure" mode is the
 # revert, not a block. skill names the vendored delete-list source
 # (docs/agents/ponytail-review.command.md; the host /simplify skill is the fallback).
-# Also drives the §1e stack-tip pass (#90): one whole-branch run before PR-open
+# Also drives the §1e stack-tip pass: one whole-branch run before PR-open
 # — same rerun/revert_note, no separate gate.
 [[gates]]
 id = "simplify"

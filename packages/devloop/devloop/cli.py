@@ -85,17 +85,11 @@ DEFAULT_CONFIG: dict = {
         # branch protection + required CI and graduates out of training mode.
         "green_enabled": False,
         # Sensitive paths → always red. Three pattern forms (see classify_pr):
-        # dir prefix (trailing '/'), bare basename, glob. Translated to THIS
-        # repo's layout: the SessionStart/Stop hooks, the CLI+MCP surface
-        # (surfaces/ contains the MCP tool-signature files under mcp/), the
-        # ontology + sources config by basename, and any *schema* file.
-        "sensitive_paths": [
-            "hooks/",
-            "src/thinkweave/surfaces/",
-            "ontology.yaml",
-            "sources.yaml",
-            "*schema*",
-        ],
+        # dir prefix (trailing '/'), bare basename, glob. Empty by default:
+        # a packaged rail cannot know a host repo's layout, and a guess
+        # inherited from some other repo classifies the wrong files. Each host
+        # declares its own in loop.toml (see loop.toml.template).
+        "sensitive_paths": [],
         # Watched paths → at most yellow (skim, don't gate). Empty by default.
         "watched_paths": [],
         "green_max_diff_lines": 150,   # green requires diff below this
