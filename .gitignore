@@ -6,3 +6,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# Machine-local agent wiring: `.claude/commands/` holds untracked symlinks to
+# the command docs under packages/*/docs/agents/ (see issue-loop.command.md).
+.claude/
