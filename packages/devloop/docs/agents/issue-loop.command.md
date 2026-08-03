@@ -10,6 +10,19 @@ disable-model-invocation: true
 Drain the runnable frontier of the issue DAG. Merged PRs close their issues
 (`Closes #N`), which unblocks dependents; the tracker is the state machine.
 
+**Install (machine-local).** This command is dev tooling, not a shipped skill,
+so the symlink into `.claude/commands/` is never committed — same convention as
+the vendored ponytail files beside it. From the repo root:
+
+```bash
+ln -s ../../packages/devloop/docs/agents/issue-loop.command.md .claude/commands/issue-loop.md
+```
+
+**The rail** is the `devloop` console script (`python -m devloop` is the same
+entry point). Every command block below writes `uv run devloop …`, which is how
+this workspace invokes it; a host that installs the package another way
+substitutes its own invocation and nothing else changes.
+
 `run_mode` picks between the two ways to run (see `loop.toml`):
 
 - **pass** — one pass over the current frontier, up to `max_issues_per_run`.
@@ -24,10 +37,16 @@ Drain the runnable frontier of the issue DAG. Merged PRs close their issues
   frontier goes dry with blocked issues remaining, report what's awaiting
   merge and stop; never busy-wait.
 
-Config: `docs/agents/loop.toml` (knobs + gate pipeline). Rail:
-`scripts/issue_loop.py`. Semantics: `docs/agents/issue-loop.md`.
-Issue-tracker conventions: `docs/agents/issue-tracker.md`; label vocabulary:
-`docs/agents/triage-labels.md`.
+Config: `loop.toml` beside this file (knobs + gate pipeline; a new host repo
+starts from `loop.toml.template`). Semantics: `issue-loop.md`. Issue-tracker
+conventions: `issue-tracker.md`; label vocabulary: `triage-labels.md`.
+
+**Optional host extension: the memory feed.** Where the host repo has a
+Thinkweave vault, the loop primes each implementer from prior runs and writes
+back what happened. Those stretches are delimited by `host-extension` HTML
+comments. **Without a memory host, skip every marked block** — the loop below
+is complete and runs unchanged; priming simply never happens and nothing is
+written back.
 
 ## 0. Resolve config and plan
 
@@ -36,8 +55,7 @@ this run's *posture*. Translate sugar flags to rail overrides — `--stacked`
 → `--set delivery=stacked`, `--max-issues <n>` → `--set
 max_issues_per_run=<n>` — and pass any explicit `--set [section.]key=value`
 through verbatim. Collect the resulting `--set` flags once and append them
-to **every** `issue_loop.py` invocation in this run (`config`, `plan`,
-`claim`, `release`, `check`, `trajectory`), so the deterministic rail and
+to **every** `devloop` invocation in this run, so the deterministic rail and
 this orchestrator always see the same effective config. Never edit
 `loop.toml` on the user's behalf to change one run. Gates are file-only by
 design (the gate pipeline is a trust boundary, not a run-time posture) —
@@ -45,8 +63,8 @@ the rail rejects `--set` on unknown keys or gate config, and a nonsensical
 combination (e.g. `--stacked` without `--dag`) is still an error per §1e.
 
 ```bash
-python scripts/issue_loop.py config <set-flags>   # resolved knobs + gates
-python scripts/issue_loop.py plan <set-flags>     # frontier / blocked / claimed
+uv run devloop config <set-flags>   # resolved knobs + gates
+uv run devloop plan <set-flags>     # frontier / blocked / claimed
 ```
 
 If the user passed an issue number as argument, the frontier is just that
@@ -64,7 +82,7 @@ Create the first implementer worktree, and **before any edits** run the
 tests gate in it (pristine = origin/main state):
 
 ```bash
-python scripts/issue_loop.py check --gate tests --cwd <worktree>
+uv run devloop check --gate tests --cwd <worktree>
 ```
 
 - **Green** → proceed. With `tdd.mode = auto` (or `always`), TDD is
@@ -95,10 +113,12 @@ For each issue:
 ### 1a. Claim (control-plane visibility)
 
 ```bash
-python scripts/issue_loop.py claim <N> --run-id <run-id>
+uv run devloop claim <N> --run-id <run-id>
 ```
 
 ### 1b. Implement
+
+<!-- host-extension: memory feed — needs a Thinkweave vault. Without one, skip to "Dispatch blocks" below; the implementer is dispatched unprimed, which is exactly what `primed=false` records. -->
 
 **Prime from prior trajectories (claim-time).** Before spawning the
 implementer, fetch the reusable half of prior similar runs — this is the native
@@ -106,7 +126,7 @@ implementer, fetch the reusable half of prior similar runs — this is the nativ
 similar to this issue.
 
 ```bash
-python scripts/issue_loop.py prime <N> --run-id <run-id> \
+uv run devloop prime <N> --run-id <run-id> \
   --concepts "<2-3 ontology terms>" --query "<the issue's title (+ body)>" \
   [--decisions "<comma-separated note ids>"] --vault <vault-root> \
   [--buffer <weave_dir>/buffer/<this-session-id>.jsonl] <set-flags>
@@ -115,11 +135,12 @@ python scripts/issue_loop.py prime <N> --run-id <run-id> \
 **You resolve the three signals; the rail fuses them.**
 
 1. **`--concepts` — ontology terms, never GitHub labels** (labels match zero
-   trajectory notes; the dead-join diagnosis lives in issue-loop-memory.md's
-   Prime v3 note). Map the issue to 2–3 ontology terms via `weave_concepts`
-   at claim time. A labels-only call with no `--query` comes back with a
-   warning stamped in the payload's `note` — if you see it, the run was
-   effectively unprimed: fix the call, don't shrug.
+   trajectory notes; the dead-join diagnosis lives in the host overlay
+   `issue-loop-memory.md`, which stays vault-side with the rest of the
+   memory-feed design). Map the issue to 2–3 ontology terms via
+   `weave_concepts` at claim time. A labels-only call with no `--query` comes
+   back with a warning stamped in the payload's `note` — if you see it, the run
+   was effectively unprimed: fix the call, don't shrug.
 2. **`--query` — the issue's own text.** Title, or title + body. This is the
    full-text leg; it is what makes priming land when your concept guess misses.
 3. **`--decisions` — file-anchored ids, resolved by you at claim time.** Walk a
@@ -133,12 +154,17 @@ The rail reads the derived index read-only, retrieves `[loop-run]` notes by
 concept match and full-text match fused with RRF, weights them by outcome, and
 emits JSON: `block` (markdown to splice), `primed`, `holdout`, `served` (the
 note ids surfaced — insight bodies plus the decision ids you passed). **Splice
-`block` verbatim into the implementer prompt, adjacent to the
-`decisions_for_file` standing order below** — it is the same class of context
-(prior decisions for touched files + prior lessons for similar work). When
-`block` is empty (a deliberate holdout — `prime_holdout` samples one run in N
-in expectation to run unprimed for the served-context regression — or simply no
-matching trajectories), splice nothing and dispatch unchanged; the loop runs
+`block` verbatim into the implementer prompt, adjacent to the dispatch blocks
+below**, and add this standing order to the list:
+
+- Check prior decisions for every file you touch
+  (`weave_graph(file_path=…, filter='decisions_for_file')`; fall back to
+  `weave decisions --file <path>` CLI if MCP is absent). Do not re-litigate a
+  settled decision — surface conflicts instead.
+
+When `block` is empty (a deliberate holdout — `prime_holdout` samples one run in
+N in expectation to run unprimed for the served-context regression — or simply
+no matching trajectories), splice nothing and dispatch unchanged; the loop runs
 identically. Record `primed` and `served` for §3. When you pass `--buffer` (the
 loop session's buffer JSONL), the rail also logs the served ids as a
 `loop_prime` event that the indexer projects to
@@ -146,38 +172,35 @@ loop session's buffer JSONL), the rail also logs the served ids as a
 run from the index. Add `--dry-run` to see what a call would serve without
 logging it as served (payload prints, buffer write suppressed).
 
-**Dispatch blocks (issue #89) — write-time simplification pressure.** When
-`dispatch.persona` is on (loop.toml `[dispatch] persona = true`, the default),
-splice two blocks into the implementer prompt, adjacent to the prime block:
+<!-- /host-extension -->
+
+**Dispatch blocks — write-time simplification pressure.** When
+`dispatch.persona` is on (`loop.toml [dispatch] persona = true`, the default),
+splice two blocks into the implementer prompt:
 
 1. **The ponytail persona** — the body of the **vendored**
-   `docs/agents/ponytail-persona.md` (everything below its provenance header).
-   Read that file and splice its text; never duplicate it here — the
+   `ponytail-persona.md` beside this file (everything below its provenance
+   header). Read that file and splice its text; never duplicate it here — the
    vendored file is the single source.
 2. **The epic's north-star block, verbatim.** When the issue belongs to an
-   epic that carries a north-star block, splice that epic's block; the current
-   one (epic #88) is:
-
-   <!-- verbatim from epic #88 — three lines, kept unwrapped on purpose -->
-   > **Goal:** fewer POCs; deep but interpretable modules with boundaries at likely redesign points; conceptual fidelity — retrieval, triaging, and trajectory composition are different concerns and never share a bucket; generic utils (parsing, coercion, path matching) are never defined alongside key logic.
-   > **Anti-goals:** no new half-mechanisms (a capability ships with its consumer or not at all); no contract asserted in prose without an enforcing seam; no behavior change during the mechanical package split.
-   > **Provenance:** distilled from the owner's 18 review comments on PR #86 and the loop-v3 plan (session 2026-07-31).
+   epic whose body carries a north-star block (a `**Goal:**` /
+   `**Anti-goals:**` pair), read that epic with `gh issue view <epic>` and
+   splice the block **unedited** — it is the standard the acceptance judge
+   scores against, so paraphrasing it moves the target. No epic, or no such
+   block: splice nothing for this item.
 
 When `dispatch.persona` is off (`--set dispatch.persona=false`), splice
 neither block anywhere — every dispatch prompt (implementer, fix round,
-reviewer, acceptance judge) is **byte-identical** to the pre-#89 loop.
+reviewer, acceptance judge) is byte-identical to a run with the feature absent.
 
 Read the issue: `gh issue view <N> --comments`. Then dispatch an
 **implementer subagent** with worktree isolation (Agent tool,
 `isolation: "worktree"`). Its prompt must contain, verbatim: the issue body,
-the acceptance criteria, the branch name (`<branch_prefix><N>`), the spliced
-prime block (when non-empty), the two dispatch blocks above (when
-`dispatch.persona` is on), and these standing orders:
+the acceptance criteria, the branch name (`<branch_prefix><N>`), the dispatch
+blocks above (when `dispatch.persona` is on), and these standing orders:
 
-- Read `ARCHITECTURE.md` §-relevant parts and check prior decisions for every
-  file you touch (`weave_graph(file_path=…, filter='decisions_for_file')`;
-  fall back to `weave decisions --file <path>` CLI if MCP is absent). Do not
-  re-litigate a settled decision — surface conflicts instead.
+- Read the repo's architecture and design docs for the areas you touch before
+  editing them; a documented standard overrides your instinct.
 - TDD per the probe (§0.5): when enforced, for each acceptance criterion
   write the failing test FIRST, watch it fail, then implement to green.
   The cycle is **red → green only** — refactoring belongs to the review
@@ -208,19 +231,17 @@ executed by the rail** — *this* orchestrator dispatches a fresh subagent. The
 rail's `check` runs those two kinds and refuses every other kind — judgment
 kind or typo alike — with `gate kind '<k>' is LLM-judged — run it from the
 /issue-loop command, not the script`. Protocol detail — the two registries, the
-shared `GateResult` shape, execute-vs-validate:
-`docs/agents/devloop-boundaries.md` §3.
+shared `GateResult` shape, execute-vs-validate: `devloop-boundaries.md` §3.
 
 **A judgment gate's return is schema-checked before it becomes a verdict.**
 Each judgment kind has a JSON schema (in its bullet below). For `acceptance`
 and `review`, ask the subagent for exactly that object as its return. For
 `simplify` the **vendored** skill owns its output format (a prose delete-list),
-so you condense its delete-list + tally into the envelope yourself — the same
-one §3's `trace` stores. Either way, write the JSON to a file and hand it to
-the rail before acting on it:
+so you condense its delete-list + tally into the envelope yourself. Either way,
+write the JSON to a file and hand it to the rail before acting on it:
 
 ```bash
-python scripts/issue_loop.py validate --gate <id> --return-json <return-file>
+uv run devloop validate --gate <id> --return-json <return-file>
 ```
 
 The rail emits the same `GateResult` the deterministic gates emit, plus
@@ -233,13 +254,12 @@ The rail emits the same `GateResult` the deterministic gates emit, plus
   value (`criteria[1].verdict: 'probably' is not one of met | not-met`).
   SendMessage those reasons back to the same subagent and **re-ask** — never
   hand-fix its return, never read a verdict out of a rejected one, and never
-  pass it on to `--gates-json` / `--trace-json`. If the re-ask still comes back
-  rejected, treat the gate as failed and route to human with the reasons as
-  the evidence.
+  pass it on to `--gates-json`. If the re-ask still comes back rejected, treat
+  the gate as failed and route to human with the reasons as the evidence.
 
 - `kind: command` / `kind: diff` — deterministic, via the rail:
   ```bash
-  python scripts/issue_loop.py check --gate <id> --cwd <worktree> --base-ref origin/main
+  uv run devloop check --gate <id> --cwd <worktree> --base-ref origin/main
   ```
 - `kind: acceptance` — dispatch a **fresh judge subagent** (no implementation
   context). Give it: the issue's acceptance criteria, `git diff
@@ -274,18 +294,18 @@ The rail emits the same `GateResult` the deterministic gates emit, plus
    mode this is per-slice — the snapshot is the tip *before* this slice's
    simplify, so a revert only unwinds the trim, never prior slices.
 2. **Get the delete-list.** Dispatch a **fresh subagent** with the text of the
-   **vendored** `docs/agents/ponytail-review.command.md` skill (host
+   **vendored** `ponytail-review.command.md` skill beside this file (host
    `/simplify` is the fallback if unavailable) and the slice diff —
    `git diff origin/main...HEAD`; in stacked mode
    `git diff <tip-before-this-issue>...HEAD`, per §1e's scoped-diffs bullet.
    It returns a delete-list (one line per cut) and a
    `net: -<N> lines possible` tally, in the vendored skill's own format.
    Condense that into the gate's envelope — `{"outcome": "applied",
-   "lines_delta": -<N>, "cuts": [{"what": …, "why": …}], "kept": [{…}]}`, the
-   same one §3's `trace` stores — and `validate` it. `outcome` is `"lean"` when
-   the subagent said `Lean already. Ship.` (skip the rest — note "simplify:
-   lean already" in the PR body and move on); `"applied"` when you apply the
-   delete-list; `"reverted"` is step 5's terminal value after a red re-verify.
+   "lines_delta": -<N>, "cuts": [{"what": …, "why": …}], "kept": [{…}]}` — and
+   `validate` it. `outcome` is `"lean"` when the subagent said `Lean already.
+   Ship.` (skip the rest — note "simplify: lean already" in the PR body and
+   move on); `"applied"` when you apply the delete-list; `"reverted"` is step
+   5's terminal value after a red re-verify.
 3. **Apply.** Apply the delete-list as a single commit on the branch.
 4. **Re-verify.** Re-run the gates named in the gate's `rerun` key (`tests`,
    then `acceptance`) on the shrunk diff, in order — `tests` via the rail
@@ -304,14 +324,13 @@ post-review diff. That is the whole point of running it last and non-required.
 **On a required-gate failure:** feed the evidence (gate id, summary, detail,
 per-criterion verdicts, review findings) back to the implementer subagent
 (SendMessage to the same agent — it keeps its context) for a fix round.
-When `dispatch.persona` is on, re-splice **both dispatch blocks** (§1b —
-persona from the vendored file + north-star verbatim) into the fix-round
-message.
+When `dispatch.persona` is on, re-splice **both dispatch blocks** (§1b) into
+the fix-round message.
 Re-run the pipeline **from the first failed gate**. After `max_fix_rounds`
 exhausted:
 
 ```bash
-python scripts/issue_loop.py release <N>
+uv run devloop release <N>
 gh issue edit <N> --remove-label ready-for-agent --add-label <on_gate_failure>
 gh issue comment <N> --body "<gate evidence table + what was attempted>"
 ```
@@ -352,7 +371,7 @@ only what matters. Assemble the shipped PR's signal set — you already hold
 all of it — into a JSON file and run:
 
 ```bash
-python scripts/issue_loop.py triage <N> --signals-json <signals-file>
+uv run devloop triage <N> --signals-json <signals-file>
 ```
 
 Signals schema (you compute them per shipped PR). The three **safety-critical**
@@ -386,8 +405,7 @@ gh issue edit <N> --add-label <label>   # or: gh pr edit <pr-url> --add-label
   branch protection + required CI actually guard the merge; enable it per the
   training-mode graduation, not before.
 - **yellow** (`review-light`) — passed, but with fix rounds, a medium diff, a
-  watched path, or no coverage signal: a human skims the trajectory note's
-  "How it went".
+  watched path, or no coverage signal: a human skims before merging.
 - **red** (`ready-for-human`) — sensitive path (always, regardless of size),
   big diff, degraded baseline, `major`/`critical` review, or uncertain/not-met
   acceptance. This reuses the `on_gate_failure` label `ready-for-human`
@@ -395,7 +413,7 @@ gh issue edit <N> --add-label <label>   # or: gh pr edit <pr-url> --add-label
 
 Thresholds and the sensitive-path list are `[triage]` knobs in `loop.toml`
 (override per run with `--set triage.green_enabled=true` etc.), never
-hardcoded.
+hardcoded — and they are per-host: the package ships no sensitive-path guess.
 
 **Teardown.** Once the PR is open the worktree has served its purpose —
 the branch lives on origin and review happens from there. From the main
@@ -458,19 +476,20 @@ gate pipeline, fix rounds, failure routing) is identical:
   add the gate's `revert_note` (`⚠ simplify-reverted`, suffixed
   `(stack-tip)`) to the PR body. A run whose slices **individually passed**
   simplify can still receive cuts here — that is the point of the pass.
+  Note the win (`stack-tip simplify: -<N> lines, tests+acceptance green`) or
+  the revert in the PR body.
+  <!-- host-extension: memory feed — needs a Thinkweave vault. -->
   Record the result in the final completed issue's §3 trace under
   `stack_simplify` (same outcome/lines_delta/cuts/kept envelope as the
-  per-slice `simplify` key), and note the win
-  (`stack-tip simplify: -<N> lines, tests+acceptance green`) or the revert
-  in the PR body.
+  per-slice `simplify` key).
+  <!-- /host-extension -->
 - **One PR at the end** (DAG exhausted, cap hit, or an issue routed to
   human): push the branch and open a single draft PR whose body carries
   `Closes #A` lines for every completed issue, the per-issue gate tables,
   and — if some of the DAG remains — which issues are NOT included and
   why. `training_mode` pauses once, here, instead of per issue. After the
   PR is open, remove the `loop/dag-<N>` worktree (same teardown rule as
-  §1d — the stacked worktrees were exactly the ones found pinning PR
-  branches on 2026-07-21).
+  §1d — stacked worktrees are exactly the ones found pinning PR branches).
 - **A failed issue doesn't poison the stack.** If an issue exhausts its fix
   rounds, reset the branch to the last good tip (`git reset --hard
   <tip-before-this-issue>`), route the issue to human as usual, and stop
@@ -487,14 +506,15 @@ path + branch + why), so a human can `git worktree remove` them after
 acting on the evidence. If nothing was shippable, say what the human must do to
 unblock the DAG (usually: merge open loop PRs).
 
+<!-- host-extension: memory feed — everything below needs a Thinkweave vault on the host. Without one the run ends at §2: the tracker, the PR, and the report already carry the complete record, and nothing is written back. The host-side design doc is issue-loop-memory.md. -->
+
 ## 3. Feed the vault — write one trajectory note per processed issue
 
-Owner-approved 2026-07-15 and enabled (design: `docs/agents/issue-loop-memory.md`).
-Run unattended — do not gate on user approval. For each processed issue,
-assemble the deterministic half —
+**Optional host extension.** Runs unattended where a vault exists — do not gate
+on user approval. For each processed issue, assemble the deterministic half —
 
 ```bash
-python scripts/issue_loop.py trajectory <N> --cwd <worktree> \
+uv run devloop trajectory <N> --cwd <worktree> \
   --gates-json <results-file> --skills-json <dispatch-log> [--skill-centric] \
   [--primed | --no-primed] [--served-json <served-ids-file>] \
   [--trace-json <trace-file>] \
@@ -504,10 +524,10 @@ python scripts/issue_loop.py trajectory <N> --cwd <worktree> \
 Mirror the §1b prime verdict: pass `--primed` with `--served-json` (a JSON list
 of the `served` ids the prime emitted) when this issue's implementer received
 prime context, or `--no-primed` when it was a holdout (`primed: false`, no
-served ids). Omitting both keeps the pre-#57 shape. This frontmatter mirror is
-markdown-truth for the served-context regression — the trajectory's `outcome`
-(and #60's outcome judge) regressed against `primed`/`served` separates
-"context helped" from "easy issue".
+served ids). Omitting both keeps the pre-serving shape. This frontmatter mirror
+is markdown-truth for the served-context regression — the trajectory's
+`outcome` regressed against `primed`/`served` separates "context helped" from
+"easy issue".
 
 `--skills-json` points at a JSON file you write from what the loop dispatched
 for this issue: a list of `{id, role, outcome, fix_rounds_attributed}`, one
@@ -518,15 +538,16 @@ invocation resolved (e.g. `shipped` / `met` / `not-met` / `passed`), and
 `fix_rounds_attributed` is how many fix rounds that gate/skill caused (attribute
 each round in §1c to the gate that triggered it; the total is `--fix-rounds`).
 Omit `--skills-json` and the payload carries `skills: []`. Add `--skill-centric`
-when the record is primarily about a skill invocation (SkillOpt raw material) —
-it adds the `skill-invocation` tag so `weave_search(tags=[skill-invocation])`
-returns skill-attributed records.
+when the record is primarily about a skill invocation — it adds the
+`skill-invocation` tag so `weave_search(tags=[skill-invocation])` returns
+skill-attributed records.
 
-`--trace-json` (issue #85) points at a JSON file **you compose from the gate
-agents' own reports** — no new model call, you already have these in context:
-the reviewer's findings + reasoning, the simplify gate's cut/keep rationale (the
-over-engineering description), the acceptance judge's per-criterion evidence and
-any verdict flips, and the TDD red-confirmation. Condense them into the envelope
+`--trace-json` points at a JSON file **you compose from the gate agents' own
+reports** — no new model call, you already have these in context: the
+reviewer's findings + reasoning, the simplify gate's cut/keep rationale, the
+acceptance judge's per-criterion evidence and any verdict flips, and the TDD
+red-confirmation. These are the same envelopes §1c already validated at the
+gate seam; condense them into
 
 ```json
 {
@@ -545,25 +566,25 @@ any verdict flips, and the TDD red-confirmation. Condense them into the envelope
 ```
 
 The rail only accepts and shapes it (unknown keys dropped; a non-dict trace is
-rejected). `stack_simplify` (issue #90) shares the `simplify` envelope and
-records the §1e stack-tip pass: at most once per stacked run, on the **final
-completed issue's** trajectory. The placement rule is deliberately unenforced
-by the rail — which issue is final is orchestrator knowledge the rail never
-holds. It lands under the single `trace` frontmatter key — the
-machine-readable half of the tracker's gate evidence, not a second prose owner.
-Counts (`lines_delta`, `flipped_by_round`) are filter/join keys, not signal.
-Omit `--trace-json` for the pre-#85 shape.
+rejected). `stack_simplify` shares the `simplify` envelope and records the §1e
+stack-tip pass: at most once per stacked run, on the **final completed issue's**
+trajectory. The placement rule is deliberately unenforced by the rail — which
+issue is final is orchestrator knowledge the rail never holds. It lands under
+the single `trace` frontmatter key — the machine-readable half of the tracker's
+gate evidence, not a second prose owner. Counts (`lines_delta`,
+`flipped_by_round`) are filter/join keys, not signal. Omit `--trace-json` and
+the key is absent.
 
-**Mint portable lessons as insight notes, then link them (issue #85).** The
-trajectory body is the run-causal register only (What / How it went) — there is
-`no Lessons section`. The reusable wisdom a *future* run would apply is minted as
-one or more separate **insight notes** at ship time (concepts at creation, from
-the ontology — `weave_concepts` first), then linked from the trajectory via
+**Mint portable lessons as insight notes, then link them.** The trajectory body
+is the run-causal register only (What / How it went) — there is
+`no Lessons section`. The reusable wisdom a *future* run would apply is minted as one or
+more separate **insight notes** at ship time (concepts at creation, from the
+ontology — `weave_concepts` first), then linked from the trajectory via
 `builds_on`. The register test that sorts every artifact:
-`run-bound semantic trace` → the trajectory's `trace`; a `portable lesson` → an
-`insight note`, linked; an enumerable fact → a `frontmatter key`. Prime v2 serves
-those insight bodies by following the `builds_on` links, so a lesson written once
-is reused verbatim.
+`run-bound semantic trace` → the trajectory's `trace`; a `portable lesson` → an `insight note`,
+linked; an enumerable fact → a `frontmatter key`. Prime serves those insight
+bodies by following the `builds_on` links, so a lesson written once is reused
+verbatim.
 
 Compose, per issue:
 
@@ -583,8 +604,7 @@ Compose, per issue:
 
    `project=` is NOT optional: without it (and when `session_id` doesn't
    resolve — e.g. headless runs before the session note exists) the writer
-   drops the note as a bare file at the vault's `projects/` root. The
-   2026-08-02 runs shipped stray root-level trajectory notes exactly this way.
+   drops the note as a bare file at the vault's `projects/` root.
 
    Capture each returned insight id.
 
@@ -608,15 +628,18 @@ Optionally print the first run's composed notes as a sanity check; non-blocking.
 
 ## 4. Wrap coverage — do NOT run `/wrap` here
 
-Headless loop runs are wrap-covered without an explicit run-end `/wrap`. The
-`SessionStart` hook mints this run's session note (with a `source_session` UUID,
-no `processed` flag); the nightly `/dream` phase-2 `dream-wrap-worker` catch-up
-picks it up (`type: session`, not processed, recent, non-empty `events.jsonl`)
-and synthesises + `weave wrap-finalize`s it. The deterministic per-issue content
-is already in the §3 trajectory notes, so nothing is lost by wrap time.
+**Optional host extension**, and it is a *don't*: headless loop runs are
+wrap-covered without an explicit run-end `/wrap`. The `SessionStart` hook mints
+this run's session note (with a `source_session` UUID, no `processed` flag); the
+nightly `/dream` phase-2 `dream-wrap-worker` catch-up picks it up (`type:
+session`, not processed, recent, non-empty `events.jsonl`) and synthesises +
+`weave wrap-finalize`s it. The deterministic per-issue content is already in the
+§3 trajectory notes, so nothing is lost by wrap time.
 
 Do not run `/wrap` or `weave wrap-finalize` from the loop: session synthesis and
 **decision promotion** belong to the session-note owner, and letting the loop
 mint decisions would break the single-owner rule. See
 [`vault-issue-contract.md`](vault-issue-contract.md) for the full division of
 labor and its contract test.
+
+<!-- /host-extension -->

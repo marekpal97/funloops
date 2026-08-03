@@ -117,7 +117,7 @@ def test_config_runs_in_this_checkout():
 
 @pytest.mark.skipif(
     shutil.which("gh") is None
-    or subprocess.run(["gh", "auth", "status"], capture_output=True).returncode != 0,
+    or subprocess.run(["gh", "auth", "status"], capture_output=True, check=False).returncode != 0,
     reason="needs an authenticated gh (the tracker is the DAG)",
 )
 def test_plan_runs_against_the_funloops_tracker():
@@ -157,9 +157,13 @@ def test_the_loop_is_complete_without_a_host_vault():
     for token in ("implementer subagent", "Do NOT push", "gh pr create",
                   "max_fix_rounds", "git worktree remove"):
         assert token in spine, token
-    # And nothing in the spine needs a memory host.
+    # The preamble is where the extension is explained — it names the host and
+    # says what a reader without one does.
+    preamble, _, body = spine.partition("## 0. ")
+    assert "skip every marked block" in preamble
+    # From the first step on, no procedural instruction needs a memory host.
     for token in ("weave_", "weave ", "vault", "thinkweave", "trajectory", "prime"):
-        assert token not in spine.lower(), token
+        assert token not in body.lower(), token
 
 
 def test_the_host_overlay_is_pointed_at_not_shipped():
@@ -191,7 +195,7 @@ def test_template_documents_every_knob():
     for section, knobs in cli.DEFAULT_CONFIG.items():
         assert f"[{section}]" in text, section
         for knob in knobs:
-            assert re.search(rf"^\s*#?\s*{re.escape(knob)}\s*=", text, re.M), knob
+            assert re.search(rf"^\s*#?\s*{re.escape(knob)}\s*=", text, re.MULTILINE), knob
 
 
 def test_template_bakes_in_no_host_specifics():

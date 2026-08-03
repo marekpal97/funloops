@@ -2313,15 +2313,21 @@ def test_issue_loop_doc_splices_persona_by_reference():
     assert "both dispatch blocks" in doc
 
 
-def test_issue_loop_doc_carries_north_star_verbatim():
-    """The epic's north-star block is spliced verbatim adjacent to the prime
-    block: goal, anti-goals and provenance lines all survive in the doc."""
+def test_issue_loop_doc_sources_the_north_star_from_the_tracker():
+    """The north-star block is the epic's own words, read from the tracker at
+    dispatch time and spliced UNEDITED. #149 removed the copy of one host's
+    epic that used to be inlined here: a hardcoded goal is the wrong goal for
+    every other repo, and stale for this one the moment the epic moves on. The
+    verbatim requirement survives — it is what the acceptance judge scores
+    against, so paraphrasing moves the target."""
     doc = _issue_loop_doc()
-    assert "fewer POCs" in doc
-    assert "conceptual fidelity" in doc
-    assert "no new half-mechanisms" in doc
-    assert "no contract asserted in prose without an enforcing seam" in doc
-    assert "distilled from the owner's 18 review comments on PR #86" in doc
+    assert "gh issue view <epic>" in doc
+    assert "verbatim" in doc and "unedited" in doc.lower()
+    assert "**Goal:**" in doc and "**Anti-goals:**" in doc  # the block's shape
+    # No inlined epic body: the marker phrases from the copy that used to live
+    # here must not have survived the rewrite.
+    assert "fewer POCs" not in doc
+    assert "review comments on PR #86" not in doc
 
 
 def test_issue_loop_doc_gates_splice_on_dispatch_persona_knob():
@@ -2665,7 +2671,7 @@ def test_command_doc_wires_the_validate_verb_into_the_gate_pipeline():
         encoding="utf-8")
     start = text.index("### 1c. Gate pipeline")
     section = " ".join(text[start:text.index("\n### ", start + 1)].split())
-    assert "issue_loop.py validate --gate" in section
+    assert "devloop validate --gate" in section
     assert "--return-json" in section
     # The three-way exit convention the orchestrator branches on.
     assert "re-ask" in section and "reasons" in section
