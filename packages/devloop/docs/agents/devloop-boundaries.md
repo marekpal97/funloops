@@ -331,6 +331,16 @@ Four properties make the seam safe to depend on:
   the other legs use — an insight note, a source, or an id this index does not
   hold simply drops out. The over-fetch depth is the seam's one corner cut,
   marked `ponytail:` at its constant.
+- **Filtering a ranking must not re-base it.** Depth buys recall; this buys
+  precision, and they are separate concerns that the same filter step
+  threatens. Because nearly the whole ranking drops out at the join above,
+  renumbering the survivors 1..N would enter a 180th-place cosine match at
+  `1/(60+1)` — the largest score any leg can contribute — so the leg would
+  promote something on *every* query and prime serves top-3. Hence `_rrf`
+  takes explicit `(rank, row)` pairs rather than deriving rank from list
+  position, and `_by_semantic` carries the host's own positions through. A
+  leg's ranks are therefore not required to be contiguous. This generalizes:
+  any future leg that filters after ranking inherits the same obligation.
 
 **No FTS double-count.** The host's similar mode does not fall back to full
 text: `Search.similar` raises `SemanticSearchUnavailable` and the CLI exits 1

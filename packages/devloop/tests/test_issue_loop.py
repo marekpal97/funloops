@@ -1358,6 +1358,29 @@ def test_trajectory_candidates_fuses_the_semantic_leg_at_the_same_k(tmp_path):
     assert [r["id"] for r in three_leg] == ["n-a", "n-b", "n-c"]
 
 
+def test_trajectory_candidates_semantic_leg_keeps_the_hosts_own_rank(tmp_path):
+    """A deep semantic hit must not enter the fusion as if it were the host's
+    best. The leg discards the ~99.5% of a whole-vault ranking that is not a
+    trajectory, so re-basing the survivors to 1..N would hand a 180th-place
+    cosine match 1/61 — the largest score any leg can contribute, tying the
+    best FTS hit. The host's own position is what carries.
+
+    Hand-computed (k=60): n-a at host position 180 adds 1/240 = 0.004167 to its
+    concept rank 1 (1/61 = 0.016393) → 0.020560; n-b holds concept rank 2
+    (1/62 = 0.016129) plus an FTS rank of 1 or 2 (≥ 1/62) → ≥ 0.032258. The
+    genuine FTS hit stays ahead, so the order is the two-leg [n-b, n-a, n-c] —
+    whereas at host position 1 (the test above) n-a legitimately overtakes."""
+    db = _fusion_db(tmp_path)
+    deep = [f"n-pad{i}" for i in range(179)] + ["n-a"]   # n-a is the 180th
+    conn = index_client.open_ro(str(db))
+    try:
+        rows = index_client.trajectory_candidates(
+            conn, ["retrieval"], "fuse the retrieval legs", semantic=deep)
+    finally:
+        conn.close()
+    assert [r["id"] for r in rows] == ["n-b", "n-a", "n-c"]
+
+
 def test_trajectory_candidates_semantic_leg_can_carry_retrieval_alone(tmp_path):
     """The live acceptance in miniature: no concepts and no FTS terms, yet the
     semantic leg alone produces a candidate — the case the two-leg rail served

@@ -109,10 +109,16 @@ def _fts_match_expr(text: str) -> str:
     return " OR ".join(f'"{t}"' for t in terms)
 
 
-def _by_concepts(conn: sqlite3.Connection, concepts: list[str], scan_cap: int) -> list[dict]:
+def _ranked(rows) -> list[tuple[int, dict]]:
+    """A leg's rows as the 1-indexed ranking :func:`_rrf` consumes."""
+    return list(enumerate((dict(r) for r in rows), start=1))
+
+
+def _by_concepts(conn: sqlite3.Connection, concepts: list[str],
+                 scan_cap: int) -> list[tuple[int, dict]]:
     """Leg 1: ``[loop-run]`` notes carrying ANY of the concepts, recency first."""
     placeholders = ",".join("?" * len(concepts))
-    return [dict(r) for r in conn.execute(
+    return _ranked(conn.execute(
         f"""SELECT DISTINCT {_CANDIDATE_COLS}
             FROM notes n
             JOIN note_tags t ON t.note_id = n.id AND t.tag = 'loop-run'
@@ -121,12 +127,13 @@ def _by_concepts(conn: sqlite3.Connection, concepts: list[str], scan_cap: int) -
             ORDER BY n.date DESC, n.id DESC
             LIMIT ?""",
         [*concepts, scan_cap],
-    )]
+    ))
 
 
-def _by_fts(conn: sqlite3.Connection, match: str, scan_cap: int) -> list[dict]:
+def _by_fts(conn: sqlite3.Connection, match: str,
+            scan_cap: int) -> list[tuple[int, dict]]:
     """Leg 2: ``[loop-run]`` notes matching the text, fts5 relevance order."""
-    return [dict(r) for r in conn.execute(
+    return _ranked(conn.execute(
         f"""SELECT {_CANDIDATE_COLS}
             FROM notes_fts f
             JOIN notes n ON n.rowid = f.rowid
@@ -136,7 +143,7 @@ def _by_fts(conn: sqlite3.Connection, match: str, scan_cap: int) -> list[dict]:
             ORDER BY f.rank
             LIMIT ?""",
         [match, scan_cap],
-    )]
+    ))
 
 
 # Leg 3 lives outside sqlite: the vectors are the host's and embedding a query
@@ -209,12 +216,20 @@ def semantic_ranking(
     return ids
 
 
-def _by_semantic(conn: sqlite3.Connection, ids: list[str], scan_cap: int) -> list[dict]:
+def _by_semantic(conn: sqlite3.Connection, ids: list[str],
+                 scan_cap: int) -> list[tuple[int, dict]]:
     """Leg 3: the host's ranked ids hydrated to ``[loop-run]`` candidate rows.
 
     Scoping is this join, not the host call: similar mode ranks the whole vault,
     so an insight note, a source, or an id this index does not hold simply fails
-    to hydrate. The host's rank order is preserved.
+    to hydrate.
+
+    **Each survivor keeps the position the host gave it.** Trajectories are a
+    fraction of a percent of a vault, so nearly the whole ranking drops out
+    here; re-basing the handful that survive to 1..N would enter a 180th-place
+    cosine match at 1/61 — the largest score any leg can contribute — and the
+    leg would promote something on every single query. Carrying the original
+    position is what makes a weak semantic match score like a weak match.
     """
     ids = list(dict.fromkeys(ids))  # a repeat would count its rank twice
     if not ids:
@@ -227,11 +242,18 @@ def _by_semantic(conn: sqlite3.Connection, ids: list[str], scan_cap: int) -> lis
             WHERE n.id IN ({placeholders})""",
         ids,
     )}
-    return [rows[i] for i in ids if i in rows][:scan_cap]
+    return [(pos, rows[i]) for pos, i in enumerate(ids, start=1)
+            if i in rows][:scan_cap]
 
 
-def _rrf(rankings: list[list[dict]]) -> list[dict]:
+def _rrf(rankings: list[list[tuple[int, dict]]]) -> list[dict]:
     """Reciprocal rank fusion: ``score[id] = Σ 1/(RRF_K + rank_i)``, 1-indexed.
+
+    Each leg contributes ``(rank, row)`` pairs, and a leg's ranks need not be
+    contiguous: the semantic leg hands over the host's own positions, most of
+    which never survive its filter (:func:`_by_semantic`). Ranks are explicit
+    rather than re-derived from list position precisely so that filtering a
+    ranking cannot silently promote what is left.
 
     Ties keep first-seen order (dict insertion + a stable sort), so a single
     ranking fuses to itself byte-for-byte — concept-only retrieval is unchanged
@@ -240,7 +262,7 @@ def _rrf(rankings: list[list[dict]]) -> list[dict]:
     scores: dict[str, float] = {}
     rows: dict[str, dict] = {}
     for ranking in rankings:
-        for rank, row in enumerate(ranking, start=1):
+        for rank, row in ranking:
             scores[row["id"]] = scores.get(row["id"], 0.0) + 1.0 / (RRF_K + rank)
             rows.setdefault(row["id"], row)
     return sorted(rows.values(), key=lambda r: -scores[r["id"]])
