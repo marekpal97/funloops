@@ -413,12 +413,17 @@ def main(argv: list[str] | None = None) -> int:
                 conn = index_client.open_ro(db_path)
             except index_client.Error:
                 conn = None
+        # The semantic leg is a host call, so the imperative shell gathers it —
+        # same posture as the trajectory subcommand's git reads. None (no
+        # vault, no query, no reachable host) means the leg did not run, and
+        # build_prime_payload says so on the payload.
+        semantic = index_client.semantic_ranking(args.vault, args.query)
         try:
             payload = trajectory.build_prime_payload(
                 args.number, args.run_id, concepts, conn=conn, holdout=holdout,
                 limit=args.limit, budget_chars=args.budget_chars,
                 decisions=_split_csv(args.decisions) if args.decisions else None,
-                query=args.query,
+                query=args.query, semantic=semantic,
             )
         finally:
             if conn is not None:

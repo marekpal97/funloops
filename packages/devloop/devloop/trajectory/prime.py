@@ -91,15 +91,17 @@ def _outcome_rank(label: object) -> int:
 
 def query_trajectories(
     conn: Connection, concepts: list[str], limit: int, scan_cap: int = 40,
-    query: str = "",
+    query: str = "", semantic: list[str] | None = None,
 ) -> list[dict]:
     """``[loop-run]`` notes matching this issue that carry reusable color — a
     linked insight note (``builds_on``).
 
-    Retrieval is the seam's fused concept+FTS candidate list
+    Retrieval is the seam's fused candidate list
     (:func:`devloop.index_client.trajectory_candidates`): ``concepts`` are
-    ontology terms, ``query`` is the issue's own text. Either may be empty (one
-    leg then carries the retrieval); both empty matches nothing.
+    ontology terms, ``query`` is the issue's own text, and ``semantic`` is the
+    host's similarity ranking, passed through opaquely — prime never ranks or
+    fuses, the seam does. Any leg may be empty (the others then carry the
+    retrieval); all empty matches nothing.
 
     Returns ``{id, title, issue, outcome, outcome_label, insights}`` dicts, at
     most ``limit``. ``insights`` is the resolved list of linked insight-note
@@ -110,7 +112,7 @@ def query_trajectories(
     set keeps the fused order untouched — before truncating to ``limit``.
     """
     out: list[dict] = []
-    for r in trajectory_candidates(conn, concepts, query, scan_cap):
+    for r in trajectory_candidates(conn, concepts, query, scan_cap, semantic):
         try:
             fm = json.loads(r["frontmatter"] or "{}")
         except json.JSONDecodeError:
@@ -164,17 +166,31 @@ def render_prime_block(
     return "\n".join(pieces).strip() + "\n", served
 
 
+# Stamped on a payload whose semantic leg never ran (funloops#2). A leg that
+# quietly contributes nothing is indistinguishable from one that is dead — the
+# exact failure #100 was filed to fix — so its absence is on the payload even
+# when the run primed fine on the other two legs.
+SEMANTIC_SKIPPED_NOTE = (
+    "semantic leg skipped — the host served no ranking (needs --vault, query "
+    "text, and a `weave search --mode similar` with built embeddings); fused "
+    "on concepts + FTS only"
+)
+
+
 def build_prime_payload(
     issue_number: int, run_id: str, concepts: list[str], *,
     conn: Connection | None = None, holdout: int = 5,
     limit: int = 3, budget_chars: int = 1200, decisions: list[str] | None = None,
-    query: str = "",
+    query: str = "", semantic: list[str] | None = None,
 ) -> dict:
     """Assemble the claim-time prime payload the orchestrator splices verbatim.
 
-    ``concepts`` (ontology terms) and ``query`` (the issue's text) are the two
-    retrieval legs; ``decisions`` are the file-anchored note ids the
-    orchestrator resolved at claim time.
+    ``concepts`` (ontology terms), ``query`` (the issue's text) and ``semantic``
+    (the host's similarity ranking — :func:`index_client.semantic_ranking`, the
+    caller's subprocess) are the three retrieval legs; ``decisions`` are the
+    file-anchored note ids the orchestrator resolved at claim time.
+    ``semantic=None`` (the leg did not run) reproduces the two-leg payload
+    exactly and says so in ``note``.
 
     Output keys: ``primed`` (received prime context this run), ``holdout``
     (deliberately withheld), ``served`` (note ids served — trajectory + decisions,
@@ -202,7 +218,8 @@ def build_prime_payload(
     trajectories: list[dict] = []
     if conn is not None:
         try:
-            trajectories = query_trajectories(conn, concepts, limit, query=query)
+            trajectories = query_trajectories(conn, concepts, limit, query=query,
+                                              semantic=semantic)
         except Error:
             index_error = True
     decisions = (decisions or [])[:limit]
@@ -215,6 +232,9 @@ def build_prime_payload(
             "index unreadable (corrupt or schema-drift) — ran unprimed"
             if index_error else "no matching prior trajectories"
         )
+    if semantic is None:
+        payload["note"] = "; ".join(filter(None, [payload["note"],
+                                                  SEMANTIC_SKIPPED_NOTE]))
     return payload
 
 

@@ -11,6 +11,14 @@ retrievers — concept match and full-text match over the issue's own words —
 fused by reciprocal rank fusion. One leg alone was dead by construction: the
 write side tags notes with ontology concepts while the read side was handed
 GitHub labels, so the concept join matched nothing on the live index.
+
+Third leg (funloops#2): semantic similarity, through a *composition seam*
+rather than a query of our own. Vectors live in the host's embeddings.db and
+embedding a query needs the host's provider stack, which a stdlib-only package
+cannot have — so the leg shells out to ``weave search --mode similar`` (the
+same subprocess posture as the ``gh`` and ``git`` seams) and fuses the ranked
+ids that come back. No host, no embeddings, no key → the leg is skipped and
+said so; it never degrades into silence.
 """
 
 from __future__ import annotations
@@ -18,6 +26,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -130,6 +139,97 @@ def _by_fts(conn: sqlite3.Connection, match: str, scan_cap: int) -> list[dict]:
     )]
 
 
+# Leg 3 lives outside sqlite: the vectors are the host's and embedding a query
+# needs the host's provider, so the ranking is asked for over a subprocess.
+
+# How deep to ask the host to rank. Similar mode ranks the WHOLE vault — its
+# `--tags` filter is wired to fts mode only — so the leg over-fetches and scopes
+# to [loop-run] on hydration (`_by_semantic`).
+#
+# ponytail: 200 is a depth, not a tuned constant. Trajectories are a fraction of
+# a percent of a live vault; on the host index two synonym-only queries put the
+# intended trajectory at ranks 1 and 30. Cosine is computed over every vector
+# whatever the limit, so extra depth costs only parsing. Upgrade path when a
+# vault outgrows it: a tag filter on the host's similar mode, then ask for
+# exactly `scan_cap`.
+SEMANTIC_FETCH = 200
+
+# A claim-time step must not hang on a host that wedged.
+SEMANTIC_TIMEOUT = 60
+
+# `weave search` has no JSON mode; its one stable line shape is
+# ``  [<type>] <title> (<id>)`` optionally followed by `` [tag, tag]``, with
+# continuation lines (snippet, project) indented four. The id is the LAST
+# parenthesized group — titles carry parentheses of their own.
+_SEARCH_LINE = re.compile(r"^ {2}\[[^\]]*\] ")
+_SEARCH_ID = re.compile(r"\(([^()]+)\)")
+
+
+def semantic_ranking(
+    vault: str | None, query: str, limit: int = SEMANTIC_FETCH,
+) -> list[str] | None:
+    """Note ids ranked by embedding similarity to ``query``, via the host CLI.
+
+    The composition seam: ``weave search --mode similar`` scoped to ``vault``,
+    parsed off its stable line shape. Returns ids in the host's rank order.
+
+    ``None`` means **the leg did not run** — no vault to scope to, no query text
+    to embed, no ``weave`` on PATH, or the host refusing (embeddings unbuilt or
+    keyless exits 1). That is a different fact from ``[]``, "ran and matched
+    nothing", and callers surface it: a silently dead leg is the failure #100
+    was filed to fix. Never raises.
+
+    The vault is pinned per call rather than inherited: the leg must rank the
+    same vault the index came from, not whatever ``THINKWEAVE_VAULT`` an ambient
+    shell carries (ids from another vault would hydrate to nothing).
+
+    Similar mode does not fall back to full text — the host raises
+    ``SemanticSearchUnavailable`` and its CLI exits 1 — so a served ranking is
+    always semantic, and the FTS leg is never double-counted through this one.
+    """
+    if not vault or not query.strip():
+        return None
+    try:
+        proc = subprocess.run(
+            ["weave", "search", query, "--mode", "similar", "--type", "note",
+             "--limit", str(limit)],
+            capture_output=True, text=True, timeout=SEMANTIC_TIMEOUT, check=False,
+            env={**os.environ, "THINKWEAVE_VAULT": vault},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    ids = []
+    for line in proc.stdout.splitlines():
+        if _SEARCH_LINE.match(line):
+            groups = _SEARCH_ID.findall(line)
+            if groups:
+                ids.append(groups[-1])
+    return ids
+
+
+def _by_semantic(conn: sqlite3.Connection, ids: list[str], scan_cap: int) -> list[dict]:
+    """Leg 3: the host's ranked ids hydrated to ``[loop-run]`` candidate rows.
+
+    Scoping is this join, not the host call: similar mode ranks the whole vault,
+    so an insight note, a source, or an id this index does not hold simply fails
+    to hydrate. The host's rank order is preserved.
+    """
+    ids = list(dict.fromkeys(ids))  # a repeat would count its rank twice
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    rows = {r["id"]: dict(r) for r in conn.execute(
+        f"""SELECT {_CANDIDATE_COLS}
+            FROM notes n
+            JOIN note_tags t ON t.note_id = n.id AND t.tag = 'loop-run'
+            WHERE n.id IN ({placeholders})""",
+        ids,
+    )}
+    return [rows[i] for i in ids if i in rows][:scan_cap]
+
+
 def _rrf(rankings: list[list[dict]]) -> list[dict]:
     """Reciprocal rank fusion: ``score[id] = Σ 1/(RRF_K + rank_i)``, 1-indexed.
 
@@ -148,15 +248,21 @@ def _rrf(rankings: list[list[dict]]) -> list[dict]:
 
 def trajectory_candidates(
     conn: sqlite3.Connection, concepts: list[str], query: str = "",
-    scan_cap: int = 40,
+    scan_cap: int = 40, semantic: list[str] | None = None,
 ) -> list[dict]:
-    """Read-only: ``[loop-run]`` note rows for the concept and text legs, fused.
+    """Read-only: ``[loop-run]`` note rows for every available leg, fused.
 
     Returns ``[{id, title, date, frontmatter}]`` in fused rank order, at most
-    ``scan_cap`` per leg. Empty ``concepts`` degrades to FTS-only, empty
-    ``query`` to concept-only, both empty to ``[]``. The FTS leg is best-effort
-    only while the other leg is carrying: a broken ``notes_fts`` with nothing
-    else retrieved raises to the caller's degrade-to-unprimed guard.
+    ``scan_cap`` per leg. Each leg degrades independently: empty ``concepts``,
+    an empty ``query``, and a ``semantic`` ranking of ``None`` (the leg did not
+    run — :func:`semantic_ranking`) each just drop out of the fusion; all
+    absent gives ``[]``. ``semantic`` is appended last so a run without it
+    fuses byte-identically to the two-leg (#100) rail, ties included.
+
+    The FTS leg is best-effort only while another leg is carrying: a broken
+    ``notes_fts`` with nothing else *retrieved* raises to the caller's
+    degrade-to-unprimed guard. The semantic leg does not rescue it — a broken
+    index is a loud fact, not something a working third leg papers over.
     """
     rankings = []
     if concepts:
@@ -168,6 +274,8 @@ def trajectory_candidates(
         except sqlite3.Error:
             if not any(rankings):
                 raise
+    if semantic:
+        rankings.append(_by_semantic(conn, semantic, scan_cap))
     return _rrf(rankings)
 
 
