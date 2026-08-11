@@ -260,12 +260,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
                               "from --labels")
     p_prime.add_argument("--query", default="",
                          help="the issue's own text (title, or title + body) — the "
-                              "full-text retrieval leg, fused with --concepts")
+                              "full-text and (with --vault) semantic retrieval "
+                              "legs, fused with --concepts")
     p_prime.add_argument("--db", default=None, help="index db path (opened read-only)")
     p_prime.add_argument("--vault", default=None,
                          help="vault root; resolves the index under the vault's "
                               "weave_dir override (config.toml) when --db is absent, "
-                              "else <vault>/.weave/index.db")
+                              "else <vault>/.weave/index.db. Also scopes the "
+                              "semantic leg's `weave search --mode similar` call — "
+                              "without it that leg is skipped (said so in `note`)")
     p_prime.add_argument("--limit", type=int, default=3,
                          help="max prior trajectories (and decisions) to splice — top-N per kind")
     p_prime.add_argument("--budget-chars", type=int, default=1200,

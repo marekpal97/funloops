@@ -148,8 +148,15 @@ uv run devloop prime <N> --run-id <run-id> \
    `weave_concepts` at claim time. A labels-only call with no `--query` comes
    back with a warning stamped in the payload's `note` — if you see it, the run
    was effectively unprimed: fix the call, don't shrug.
-2. **`--query` — the issue's own text.** Title, or title + body. This is the
-   full-text leg; it is what makes priming land when your concept guess misses.
+2. **`--query` — the issue's own text.** Title, or title + body. This feeds
+   *two* legs: full text, and — when `--vault` is passed and the host's
+   embeddings are built — semantic similarity, which is what makes priming land
+   when the issue shares no words with the trajectory that would have helped.
+   The semantic leg runs by shelling out to `weave search --mode similar`; if it
+   cannot (no vault, no host, no embeddings), the payload's `note` says
+   "semantic leg skipped" and the run primes on the other two. That note is
+   information, not an error — but a run that always shows it on a host that
+   *does* have embeddings means `--vault` is missing from your call.
 3. **`--decisions` — file-anchored ids, resolved by you at claim time.** Walk a
    granularity ladder and stop at the first rung that returns anything:
    files named in the issue body → `weave_graph(file_path=…,
@@ -158,7 +165,7 @@ uv run devloop prime <N> --run-id <run-id> \
    concept+`--query` fusion above carry the retrieval alone.
 
 The rail reads the derived index read-only, retrieves `[loop-run]` notes by
-concept match and full-text match fused with RRF, weights them by outcome, and
+concept match, full-text match and semantic similarity fused with RRF, weights them by outcome, and
 emits JSON: `block` (markdown to splice), `primed`, `holdout`, `served` (the
 note ids surfaced — insight bodies plus the decision ids you passed). **Splice
 `block` verbatim into the implementer prompt, adjacent to the dispatch blocks
