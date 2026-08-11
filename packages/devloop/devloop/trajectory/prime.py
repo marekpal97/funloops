@@ -172,8 +172,8 @@ def render_prime_block(
 # when the run primed fine on the other two legs.
 SEMANTIC_SKIPPED_NOTE = (
     "semantic leg skipped — the host served no ranking (needs --vault, query "
-    "text, and a `weave search --mode similar` with built embeddings); fused "
-    "on concepts + FTS only"
+    "text, and a `weave search --mode similar` with built embeddings; set "
+    "WEAVE_BIN if `weave` is off PATH); fused on concepts + FTS only"
 )
 
 

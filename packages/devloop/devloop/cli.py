@@ -419,8 +419,16 @@ def main(argv: list[str] | None = None) -> int:
         # The semantic leg is a host call, so the imperative shell gathers it —
         # same posture as the trajectory subcommand's git reads. None (no
         # vault, no query, no reachable host) means the leg did not run, and
-        # build_prime_payload says so on the payload.
-        semantic = index_client.semantic_ranking(args.vault, args.query)
+        # build_prime_payload says so on the payload. Skip the call outright on
+        # the two runs that would discard it: a holdout returns before
+        # retrieval, and without an index there is nothing to hydrate ids
+        # against. Both would otherwise pay an embedding call, and up to the
+        # full timeout on a wedged host, for nothing.
+        semantic = (
+            index_client.semantic_ranking(args.vault, args.query)
+            if conn is not None and not trajectory.is_holdout(args.run_id, holdout)
+            else None
+        )
         try:
             payload = trajectory.build_prime_payload(
                 args.number, args.run_id, concepts, conn=conn, holdout=holdout,

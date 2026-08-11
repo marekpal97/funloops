@@ -166,10 +166,18 @@ SEMANTIC_TIMEOUT = 60
 
 # `weave search` has no JSON mode; its one stable line shape is
 # ``  [<type>] <title> (<id>)`` optionally followed by `` [tag, tag]``, with
-# continuation lines (snippet, project) indented four. The id is the LAST
-# parenthesized group — titles carry parentheses of their own.
+# continuation lines (snippet, project) indented four. Titles carry
+# parentheses of their own, so the id is anchored as the last parenthesized
+# group *before the optional tag bracket at end of line* — "last group on the
+# line" would read a parenthesized tag as the id.
 _SEARCH_LINE = re.compile(r"^ {2}\[[^\]]*\] ")
-_SEARCH_ID = re.compile(r"\(([^()]+)\)")
+_SEARCH_ID = re.compile(r"\(([^()]+)\)(?: \[[^\]]*\])?$")
+
+# The `weave` console script is off PATH on the plugin install route (its venv
+# is the plugin's), where a bare name would make every run report a skipped leg
+# and point the reader at the wrong fix. An env var, not a loop.toml knob: no
+# module below `cli` reads config (boundary spec §2).
+_WEAVE_BIN_ENV = "WEAVE_BIN"
 
 
 def semantic_ranking(
@@ -196,12 +204,27 @@ def semantic_ranking(
     """
     if not vault or not query.strip():
         return None
+    env = {**os.environ, "THINKWEAVE_VAULT": vault}
+    # Derived state can live off the vault path (PR #10). Pin the child to the
+    # weave_dir *this* vault declares — the same value resolve_db_path reads —
+    # and drop an ambient one when it declares none, or the host ranks some
+    # other vault's embeddings and the ids come back to hydrate against this
+    # index: a cross-vault mismatch whose only symptom is an empty leg.
+    weave_dir = _read_weave_dir_override(Path(vault))
+    if weave_dir:
+        env["THINKWEAVE_WEAVE_DIR"] = str(weave_dir)
+    else:
+        env.pop("THINKWEAVE_WEAVE_DIR", None)
     try:
         proc = subprocess.run(
-            ["weave", "search", query, "--mode", "similar", "--type", "note",
-             "--limit", str(limit)],
+            # `--` last: a query of exactly `-h` must be searched for, not
+            # print the host's help and exit 0 (which parses to nothing and
+            # reads as ran-and-matched-nothing — the silent leg this forbids).
+            [os.environ.get(_WEAVE_BIN_ENV) or "weave", "search",
+             "--mode", "similar", "--type", "note", "--limit", str(limit),
+             "--", query],
             capture_output=True, text=True, timeout=SEMANTIC_TIMEOUT, check=False,
-            env={**os.environ, "THINKWEAVE_VAULT": vault},
+            env=env,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -210,9 +233,9 @@ def semantic_ranking(
     ids = []
     for line in proc.stdout.splitlines():
         if _SEARCH_LINE.match(line):
-            groups = _SEARCH_ID.findall(line)
-            if groups:
-                ids.append(groups[-1])
+            found = _SEARCH_ID.search(line.rstrip())
+            if found:
+                ids.append(found.group(1))
     return ids
 
 

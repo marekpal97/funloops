@@ -225,11 +225,16 @@ dispatch — concretely, asking which invocations correlate with rework. Until
 then nothing implies capture-all exists.
 
 **Invocation-trajectory extension — the parking note above is the contract.**
-Internal to `prime.py`:
-`is_holdout` (the sha1 holdout — `build_prime_payload` computes it; moved
-off the public list 2026-08-01, it had no external consumer),
-`_coerce_builds_on`, the outcome-rank table, `render_prime_block`, and the two
-composition helpers over the seam (`query_trajectories`, `resolve_insights`).
+- `is_holdout(run_id, holdout)` — the sha1 holdout. It went off the public list
+  2026-08-01 for want of an external consumer and came back at funloops#2 with
+  one: `cli` must know a run will be held out *before* it pays for the semantic
+  leg's host call, since `build_prime_payload` returns before retrieval and
+  discards it. Predicting the same verdict in a second place would be worse
+  than exporting the one that decides it.
+
+Internal to `prime.py`: `_coerce_builds_on`, the outcome-rank table,
+`render_prime_block`, and the two composition helpers over the seam
+(`query_trajectories`, `resolve_insights`).
 
 Two interface-level invariants, stated on the module:
 
@@ -286,7 +291,9 @@ Interface (#94, completed by #100):
   broken FTS with nothing else retrieved raises into the degrade guard — FTS is
   load-bearing, so its failure must not read as a clean empty match. A working
   semantic leg does **not** rescue it: a broken index stays a loud fact.
-- `semantic_ranking(vault, query, limit) -> list[str] | None` — §5.1.
+- `semantic_ranking(vault, query, limit) -> list[str] | None` — §5.1. `cli`
+  calls it only when the run will actually use the result (an index is open and
+  the run is not a holdout).
 - `note_bodies(conn, ids) -> dict[str, str]` — ids → body text, `type='note'`
   only (a `builds_on` id may name a decision or session; those never serve).
 
@@ -322,9 +329,16 @@ Four properties make the seam safe to depend on:
   dead-by-construction leg is exactly what #100 was filed to fix.
 - **Byte-compatible degrade.** With the leg skipped, `served`, `block` and
   `primed` are the #100 two-leg values exactly; only `note` differs, by design.
-- **The vault is pinned per call**, never inherited from the ambient
-  `THINKWEAVE_VAULT`: the leg must rank the vault the open index came from, or
-  the ids it returns hydrate to nothing.
+- **The child environment is pinned per call**, never inherited. Both
+  `THINKWEAVE_VAULT` *and* `THINKWEAVE_WEAVE_DIR` are set from this vault (the
+  latter from the same `config.toml` `resolve_db_path` reads, and scrubbed when
+  the vault declares none): the leg must rank the vault the open index came
+  from, or the ids it returns hydrate to nothing. The query goes behind a `--`
+  sentinel for the same reason the leg exists — a query of exactly `-h` would
+  print the host's help, exit 0, and parse to a silent empty leg. `$WEAVE_BIN`
+  overrides the binary, because the plugin install route leaves `weave` off
+  PATH; an env var rather than a `loop.toml` knob, since no module below `cli`
+  reads config (§2).
 - **Scoping is a join, not a flag.** The host's similar mode ranks the whole
   vault (its `--tags` filter is fts-mode-only), so the leg over-fetches a fixed
   depth and `_by_semantic` hydrates the ids through the same `[loop-run]` join
