@@ -302,7 +302,7 @@ query surface is *index-vocabulary-shaped* (tags, concepts, FTS match, ids →
 bodies), returning plain dicts — schema knowledge inside, domain knowledge
 outside. Trajectory-domain judgment (which tag is `loop-run`, outcome ranking,
 color filtering, budgeting) stays in `trajectory/prime.py`, composing over the
-seam. The fusion sits *inside* the seam because both legs are retrievers over
+seam. The fusion sits *inside* the seam because every leg is a retriever over
 the index; prime never sees a rank list, only fused candidates.
 
 ### 5.1 The semantic leg — a composition seam, not a query of our own
@@ -317,16 +317,20 @@ fuses the ranked ids it parses back. The stdlib-only, never-import-the-host
 invariant is untouched; the rail simply asks the host a question when the host
 is there to answer.
 
-Four properties make the seam safe to depend on:
+Five properties make the seam safe to depend on:
 
 - **`None` is a fact, not an error.** No vault to scope to, no query text to
   embed, no `weave` on PATH, a host that exits non-zero (embeddings unbuilt or
   keyless), or one that hangs past the timeout all return `None` — *the leg did
   not run* — which is deliberately distinct from `[]`, *ran and matched
-  nothing*. `prime` stamps `SEMANTIC_SKIPPED_NOTE` on the payload for `None`,
-  including on runs that primed fine on the other two legs. A leg that
-  contributes nothing silently is indistinguishable from a dead one, and a
-  dead-by-construction leg is exactly what #100 was filed to fix.
+  nothing*. `prime` stamps the payload for `None`, including on runs that
+  primed fine on the other two legs, and names which cause it was: the host
+  served no ranking (`SEMANTIC_SKIPPED_NOTE`) versus no readable index to
+  resolve one against (`SEMANTIC_UNUSED_NOTE`, the case where `cli` rightly
+  never asked). They point at different fixes, so one note for both would send
+  half its readers after the wrong thing. A leg that contributes nothing
+  silently is indistinguishable from a dead one, and a dead-by-construction leg
+  is exactly what #100 was filed to fix.
 - **Byte-compatible degrade.** With the leg skipped, `served`, `block` and
   `primed` are the #100 two-leg values exactly; only `note` differs, by design.
 - **The child environment is pinned per call**, never inherited. Both
@@ -335,10 +339,11 @@ Four properties make the seam safe to depend on:
   the vault declares none): the leg must rank the vault the open index came
   from, or the ids it returns hydrate to nothing. The query goes behind a `--`
   sentinel for the same reason the leg exists — a query of exactly `-h` would
-  print the host's help, exit 0, and parse to a silent empty leg. `$WEAVE_BIN`
-  overrides the binary, because the plugin install route leaves `weave` off
-  PATH; an env var rather than a `loop.toml` knob, since no module below `cli`
-  reads config (§2).
+  print the host's help, exit 0, and parse to a silent empty leg.
+  `$DEVLOOP_WEAVE_BIN` overrides the binary, because the plugin install route
+  leaves `weave` off PATH; an env var rather than a `loop.toml` knob, since no
+  module below `cli` reads config (§2), and prefixed because the rail shares an
+  environment with whatever the host exports.
 - **Scoping is a join, not a flag.** The host's similar mode ranks the whole
   vault (its `--tags` filter is fts-mode-only), so the leg over-fetches a fixed
   depth and `_by_semantic` hydrates the ids through the same `[loop-run]` join
@@ -352,9 +357,17 @@ Four properties make the seam safe to depend on:
   `1/(60+1)` — the largest score any leg can contribute — so the leg would
   promote something on *every* query and prime serves top-3. Hence `_rrf`
   takes explicit `(rank, row)` pairs rather than deriving rank from list
-  position, and `_by_semantic` carries the host's own positions through. A
-  leg's ranks are therefore not required to be contiguous. This generalizes:
-  any future leg that filters after ranking inherits the same obligation.
+  position, and `_by_semantic` carries its parsed positions through. A leg's
+  ranks are therefore not required to be contiguous. This generalizes: any
+  future leg that filters after ranking inherits the same obligation.
+
+  What this fixes is **ordering, not membership**. There is no similarity
+  floor anywhere in the design, so when the other legs are thin — no concepts,
+  a query whose terms miss — a deep semantic hit is still the best candidate
+  there is, and prime will serve it. That is inherent to threshold-free RRF
+  and the FTS leg has always behaved the same way: fusion ranks what it is
+  given, it does not decide what deserves to be there. A floor would be the
+  change that fixes membership, and nothing here is one.
 
 **No FTS double-count.** The host's similar mode does not fall back to full
 text: `Search.similar` raises `SemanticSearchUnavailable` and the CLI exits 1

@@ -173,7 +173,16 @@ def render_prime_block(
 SEMANTIC_SKIPPED_NOTE = (
     "semantic leg skipped — the host served no ranking (needs --vault, query "
     "text, and a `weave search --mode similar` with built embeddings; set "
-    "WEAVE_BIN if `weave` is off PATH); fused on concepts + FTS only"
+    "DEVLOOP_WEAVE_BIN if `weave` is off PATH); fused on concepts + FTS only"
+)
+
+# The other way the leg goes unused, and a different fix: with no index open
+# there is nothing to hydrate a ranking against, so the caller rightly never
+# asked the host. Saying "the host served no ranking" there would send the
+# reader after embeddings when the index is what is missing.
+SEMANTIC_UNUSED_NOTE = (
+    "semantic leg not attempted — no readable index to resolve a ranking "
+    "against"
 )
 
 
@@ -190,7 +199,8 @@ def build_prime_payload(
     caller's subprocess) are the three retrieval legs; ``decisions`` are the
     file-anchored note ids the orchestrator resolved at claim time.
     ``semantic=None`` (the leg did not run) reproduces the two-leg payload
-    exactly and says so in ``note``.
+    exactly and says so in ``note`` — naming which of the two causes it was,
+    since they have different fixes.
 
     Output keys: ``primed`` (received prime context this run), ``holdout``
     (deliberately withheld), ``served`` (note ids served — trajectory + decisions,
@@ -233,8 +243,8 @@ def build_prime_payload(
             if index_error else "no matching prior trajectories"
         )
     if semantic is None:
-        payload["note"] = "; ".join(filter(None, [payload["note"],
-                                                  SEMANTIC_SKIPPED_NOTE]))
+        why = SEMANTIC_UNUSED_NOTE if conn is None else SEMANTIC_SKIPPED_NOTE
+        payload["note"] = "; ".join(filter(None, [payload["note"], why]))
     return payload
 
 

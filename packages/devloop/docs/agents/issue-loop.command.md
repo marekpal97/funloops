@@ -156,7 +156,9 @@ uv run devloop prime <N> --run-id <run-id> \
    cannot (no vault, no host, no embeddings), the payload's `note` says
    "semantic leg skipped" and the run primes on the other two. That note is
    information, not an error — but a run that always shows it on a host that
-   *does* have embeddings means `--vault` is missing from your call.
+   *does* have embeddings means `--vault` is missing from your call, or that
+   `weave` is not on PATH (the plugin install route puts it in the plugin's own
+   venv): export `DEVLOOP_WEAVE_BIN=/path/to/weave` and the leg comes back.
 3. **`--decisions` — file-anchored ids, resolved by you at claim time.** Walk a
    granularity ladder and stop at the first rung that returns anything:
    files named in the issue body → `weave_graph(file_path=…,
@@ -165,7 +167,8 @@ uv run devloop prime <N> --run-id <run-id> \
    concept+`--query` fusion above carry the retrieval alone.
 
 The rail reads the derived index read-only, retrieves `[loop-run]` notes by
-concept match, full-text match and semantic similarity fused with RRF, weights them by outcome, and
+concept match, full-text match and semantic similarity fused with RRF, weights
+them by outcome, and
 emits JSON: `block` (markdown to splice), `primed`, `holdout`, `served` (the
 note ids surfaced — insight bodies plus the decision ids you passed). **Splice
 `block` verbatim into the implementer prompt, adjacent to the dispatch blocks

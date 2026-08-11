@@ -1256,7 +1256,8 @@ def test_prime_serves_file_anchored_decisions_without_any_trajectory(tmp_path, c
 # Captured verbatim from the live host on 2026-08-11:
 #   THINKWEAVE_VAULT=… weave search "<q>" --mode similar --type note --limit 3
 # plus two `--type`-less lines whose TITLES carry their own parentheses — the
-# id is the LAST parenthesized group, and this is the evidence for that rule.
+# evidence that the id has to be anchored rather than taken as the title's
+# last token (the anchor itself is pinned by the tag-bracket test below).
 LIVE_SEARCH_STDOUT = (
     "  [note] loop trajectory #113: newsletter: run the email intake rail on "
     "cron — headless Gmail MCP now verified (n-8a03c20c) [loop-run]\n"
@@ -1288,10 +1289,10 @@ def _fake_run(stdout="", returncode=0, exc=None, seen=None):
 def test_semantic_ranking_parses_the_live_search_line_shape(monkeypatch):
     """`weave search` has no JSON mode, so the seam parses its one stable line
     shape: two spaces, `[type]`, title, `(id)`, optional ` [tags]`. The expected
-    ids are read off the captured live output above, not recomputed — and the
-    last-parenthesized-group rule is what keeps a title's own parentheses
-    (`… (GraphRAG) (n-ea77088c)`) from being mistaken for the id. Continuation
-    lines (`    project: …`) are indented four and never parse."""
+    ids are read off the captured live output above, not recomputed — and
+    anchoring the id to the end of the line is what keeps a title's own
+    parentheses (`… (GraphRAG) (n-ea77088c)`) from being mistaken for it.
+    Continuation lines (`    project: …`) are indented four and never parse."""
     seen = []
     monkeypatch.setattr(index_client.subprocess, "run",
                         _fake_run(LIVE_SEARCH_STDOUT, seen=seen))
@@ -1341,7 +1342,7 @@ def test_semantic_ranking_honors_a_weave_binary_override(monkeypatch):
     """`weave` is off PATH on the plugin install route, where a bare name would
     make every run report a skipped leg and point at the wrong fix."""
     seen = []
-    monkeypatch.setenv("WEAVE_BIN", "/opt/plugin/bin/weave")
+    monkeypatch.setenv("DEVLOOP_WEAVE_BIN", "/opt/plugin/bin/weave")
     monkeypatch.setattr(index_client.subprocess, "run", _fake_run(seen=seen))
     index_client.semantic_ranking("/vault", "text")
     assert seen[0][0][0] == "/opt/plugin/bin/weave"
@@ -1529,7 +1530,14 @@ def test_prime_cli_skips_the_host_call_on_a_run_that_would_discard_it(
     """A holdout returns before retrieval and a run with no readable index has
     nothing to hydrate ids against — both would pay an embedding call, and up
     to the full timeout on a wedged host, for a result thrown away. The rail
-    must not shell out at all."""
+    must not shell out at all.
+
+    Each also has to say the right thing. A holdout's note is the holdout,
+    full stop — the leg is beside the point on a run that is deliberately
+    unprimed. The no-index run reports the missing index, NOT the generic
+    "host served no ranking": every clause of that one (vault, query text,
+    embeddings, PATH) names something that was fine here, and it would send
+    the reader after embeddings when the index is what is absent."""
     monkeypatch.setattr(index_client.subprocess, "run",
                         _fake_run(exc=AssertionError("must not shell out")))
     db = _fusion_db(tmp_path)
@@ -1539,11 +1547,15 @@ def test_prime_cli_skips_the_host_call_on_a_run_that_would_discard_it(
     assert cli.main(["prime", "1", "--run-id", "loop-run-10", "--query", "text",
                      "--concepts", "retrieval", "--db", str(db),
                      "--vault", str(tmp_path), "--dry-run"]) == 0
-    assert json.loads(capsys.readouterr().out)["holdout"] is True
+    held_out = json.loads(capsys.readouterr().out)
+    assert held_out["holdout"] is True
+    assert "semantic" not in held_out["note"]
     assert cli.main(["prime", "1", "--run-id", "loop-run-0", "--query", "text",
                      "--concepts", "retrieval", "--db", str(tmp_path / "absent.db"),
                      "--vault", str(tmp_path), "--dry-run"]) == 0
-    assert "semantic leg skipped" in json.loads(capsys.readouterr().out)["note"]
+    no_index = json.loads(capsys.readouterr().out)["note"]
+    assert "no readable index" in no_index
+    assert "the host served no ranking" not in no_index
 
 
 def test_prime_cli_fuses_the_semantic_leg_when_the_host_serves(tmp_path, monkeypatch, capsys):

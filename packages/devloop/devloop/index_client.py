@@ -73,7 +73,7 @@ def _read_weave_dir_override(vault_root: Path) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
-# Trajectory retrieval — two legs, fused
+# Trajectory retrieval — three legs, fused
 
 # The retrieval doctrine's fusion constant (the main package's config knob is
 # `retrieval.rrf_k`, same default). The rail reads no vault config, so it is a
@@ -176,8 +176,9 @@ _SEARCH_ID = re.compile(r"\(([^()]+)\)(?: \[[^\]]*\])?$")
 # The `weave` console script is off PATH on the plugin install route (its venv
 # is the plugin's), where a bare name would make every run report a skipped leg
 # and point the reader at the wrong fix. An env var, not a loop.toml knob: no
-# module below `cli` reads config (boundary spec §2).
-_WEAVE_BIN_ENV = "WEAVE_BIN"
+# module below `cli` reads config (boundary spec §2). Prefixed, because the
+# rail shares an environment with whatever the host already exports.
+_WEAVE_BIN_ENV = "DEVLOOP_WEAVE_BIN"
 
 
 def semantic_ranking(
@@ -247,12 +248,15 @@ def _by_semantic(conn: sqlite3.Connection, ids: list[str],
     so an insight note, a source, or an id this index does not hold simply fails
     to hydrate.
 
-    **Each survivor keeps the position the host gave it.** Trajectories are a
-    fraction of a percent of a vault, so nearly the whole ranking drops out
-    here; re-basing the handful that survive to 1..N would enter a 180th-place
-    cosine match at 1/61 — the largest score any leg can contribute — and the
-    leg would promote something on every single query. Carrying the original
-    position is what makes a weak semantic match score like a weak match.
+    **Each survivor keeps its position in the parsed ranking.** Trajectories
+    are a fraction of a percent of a vault, so nearly the whole ranking drops
+    out here; re-basing the handful that survive to 1..N would enter a
+    180th-place cosine match at 1/61 — the largest score any leg can
+    contribute — and the leg would promote something on every single query.
+    Carrying the original position is what makes a weak semantic match score
+    like a weak match. Parse position, not the host's: an unparseable output
+    line shifts everything after it one place nearer the front, which moves a
+    rank by a hair and never re-bases it.
     """
     ids = list(dict.fromkeys(ids))  # a repeat would count its rank twice
     if not ids:
