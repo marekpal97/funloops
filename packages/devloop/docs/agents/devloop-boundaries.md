@@ -225,12 +225,8 @@ dispatch — concretely, asking which invocations correlate with rework. Until
 then nothing implies capture-all exists.
 
 **Invocation-trajectory extension — the parking note above is the contract.**
-- `is_holdout(run_id, holdout)` — the sha1 holdout. It went off the public list
-  2026-08-01 for want of an external consumer and came back at funloops#2 with
-  one: `cli` must know a run will be held out *before* it pays for the semantic
-  leg's host call, since `build_prime_payload` returns before retrieval and
-  discards it. Predicting the same verdict in a second place would be worse
-  than exporting the one that decides it.
+- `is_holdout(run_id, holdout)` — the sha1 holdout. Back on the public list at
+  funloops#2: `cli` must know a run is held out before paying for the host call.
 
 Internal to `prime.py`: `_coerce_builds_on`, the outcome-rank table,
 `render_prime_block`, and the two composition helpers over the seam
@@ -253,9 +249,7 @@ Two interface-level invariants, stated on the module:
   the issue whose words miss but whose meaning lands — all three RRF-fused in
   `index_client` (§5, §5.1), and hence the two warnings the payload's `note`
   carries: called with labels and no `--query`, and the semantic leg not having
-  run. **Every leg that fails to run says so on the payload** — the generalized
-  form of the #100 lesson. The orchestrator's half of this contract is the
-  command doc §1b.
+  run. The orchestrator's half of this contract is the command doc §1b.
 
 **The host overlay.** How these notes reach a *particular* memory host — the
 vault write-back, its four-surface ownership partition, the wrap-coverage rail —
@@ -289,11 +283,8 @@ Interface (#94, completed by #100):
   (#100) rail, ties included. The FTS leg is best-effort *only while another
   leg is carrying*: a vault with no `notes_fts` still primes on concepts, but a
   broken FTS with nothing else retrieved raises into the degrade guard — FTS is
-  load-bearing, so its failure must not read as a clean empty match. A working
-  semantic leg does **not** rescue it: a broken index stays a loud fact.
-- `semantic_ranking(vault, query, limit) -> list[str] | None` — §5.1. `cli`
-  calls it only when the run will actually use the result (an index is open and
-  the run is not a holdout).
+  load-bearing, so its failure must not read as a clean empty match.
+- `semantic_ranking(vault, query) -> list[str] | None` — §5.1.
 - `note_bodies(conn, ids) -> dict[str, str]` — ids → body text, `type='note'`
   only (a `builds_on` id may name a decision or session; those never serve).
 
@@ -317,66 +308,25 @@ fuses the ranked ids it parses back. The stdlib-only, never-import-the-host
 invariant is untouched; the rail simply asks the host a question when the host
 is there to answer.
 
-Five properties make the seam safe to depend on:
-
-- **`None` is a fact, not an error.** No vault to scope to, no query text to
-  embed, no `weave` on PATH, a host that exits non-zero (embeddings unbuilt or
-  keyless), or one that hangs past the timeout all return `None` — *the leg did
-  not run* — which is deliberately distinct from `[]`, *ran and matched
-  nothing*. `prime` stamps the payload for `None`, including on runs that
-  primed fine on the other two legs, and names which cause it was: the host
-  served no ranking (`SEMANTIC_SKIPPED_NOTE`) versus no readable index to
-  resolve one against (`SEMANTIC_UNUSED_NOTE`, the case where `cli` rightly
-  never asked). They point at different fixes, so one note for both would send
-  half its readers after the wrong thing. A leg that contributes nothing
-  silently is indistinguishable from a dead one, and a dead-by-construction leg
-  is exactly what #100 was filed to fix.
-- **Byte-compatible degrade.** With the leg skipped, `served`, `block` and
-  `primed` are the #100 two-leg values exactly; only `note` differs, by design.
-- **The child environment is pinned per call**, never inherited. Both
-  `THINKWEAVE_VAULT` *and* `THINKWEAVE_WEAVE_DIR` are set from this vault (the
-  latter from the same `config.toml` `resolve_db_path` reads, and scrubbed when
-  the vault declares none): the leg must rank the vault the open index came
-  from, or the ids it returns hydrate to nothing. The query goes behind a `--`
-  sentinel for the same reason the leg exists — a query of exactly `-h` would
-  print the host's help, exit 0, and parse to a silent empty leg.
-  `$DEVLOOP_WEAVE_BIN` overrides the binary, because the plugin install route
-  leaves `weave` off PATH; an env var rather than a `loop.toml` knob, since no
-  module below `cli` reads config (§2), and prefixed because the rail shares an
-  environment with whatever the host exports.
-- **Scoping is a join, not a flag.** The host's similar mode ranks the whole
-  vault (its `--tags` filter is fts-mode-only), so the leg over-fetches a fixed
-  depth and `_by_semantic` hydrates the ids through the same `[loop-run]` join
-  the other legs use — an insight note, a source, or an id this index does not
-  hold simply drops out. The over-fetch depth is the seam's one corner cut,
-  marked `ponytail:` at its constant.
-- **Filtering a ranking must not re-base it.** Depth buys recall; this buys
-  precision, and they are separate concerns that the same filter step
-  threatens. Because nearly the whole ranking drops out at the join above,
-  renumbering the survivors 1..N would enter a 180th-place cosine match at
-  `1/(60+1)` — the largest score any leg can contribute — so the leg would
-  promote something on *every* query and prime serves top-3. Hence `_rrf`
-  takes explicit `(rank, row)` pairs rather than deriving rank from list
-  position, and `_by_semantic` carries its parsed positions through. A leg's
-  ranks are therefore not required to be contiguous. This generalizes: any
-  future leg that filters after ranking inherits the same obligation.
-
-  What this fixes is **ordering, not membership**. There is no similarity
-  floor anywhere in the design, so when the other legs are thin — no concepts,
-  a query whose terms miss — a deep semantic hit is still the best candidate
-  there is, and prime will serve it. That is inherent to threshold-free RRF
-  and the FTS leg has always behaved the same way: fusion ranks what it is
-  given, it does not decide what deserves to be there. A floor would be the
-  change that fixes membership, and nothing here is one.
+**Ordering, not membership.** Rank fidelity (`_rrf` takes explicit
+`(rank, row)` pairs; `_by_semantic` carries its parsed positions rather than
+renumbering the survivors of its `[loop-run]` filter) keeps a deep cosine match
+from scoring like the host's best. It does not keep it out: there is no
+similarity floor anywhere in the design, so when the other legs are thin a deep
+hit is still the best candidate there is and prime will serve it. That is
+inherent to threshold-free RRF — fusion ranks what it is given, it does not
+decide what deserves to be there — and the FTS leg has always behaved the same
+way. A floor would be the change that fixes membership; nothing here is one.
+Any future leg that filters after ranking inherits the same obligation.
 
 **No FTS double-count.** The host's similar mode does not fall back to full
 text: `Search.similar` raises `SemanticSearchUnavailable` and the CLI exits 1
 (the soft-fail-to-FTS posture is the MCP tool's, and it too returns a message
-rather than FTS rows). So a zero exit means a semantic ranking, and the
-exit code is the whole detection mechanism. If a future host ever made
-similar-mode fall back silently, this seam would fuse FTS rows twice and there
-is no structural guard against that — the pin is the host's exit code, stated
-here so a host-side change knows what it breaks.
+rather than FTS rows). So a zero exit means a semantic ranking, and the exit
+code is the whole detection mechanism. If a future host ever made similar-mode
+fall back silently, this seam would fuse FTS rows twice and there is no
+structural guard against that — the pin is the host's exit code, stated here so
+a host-side change knows what it breaks.
 
 Three enforcing seams — prose alone is banned by the epic. Two live here; the
 third can only live where a real index does:

@@ -148,17 +148,12 @@ uv run devloop prime <N> --run-id <run-id> \
    `weave_concepts` at claim time. A labels-only call with no `--query` comes
    back with a warning stamped in the payload's `note` — if you see it, the run
    was effectively unprimed: fix the call, don't shrug.
-2. **`--query` — the issue's own text.** Title, or title + body. This feeds
-   *two* legs: full text, and — when `--vault` is passed and the host's
-   embeddings are built — semantic similarity, which is what makes priming land
-   when the issue shares no words with the trajectory that would have helped.
-   The semantic leg runs by shelling out to `weave search --mode similar`; if it
-   cannot (no vault, no host, no embeddings), the payload's `note` says
-   "semantic leg skipped" and the run primes on the other two. That note is
-   information, not an error — but a run that always shows it on a host that
-   *does* have embeddings means `--vault` is missing from your call, or that
-   `weave` is not on PATH (the plugin install route puts it in the plugin's own
-   venv): export `DEVLOOP_WEAVE_BIN=/path/to/weave` and the leg comes back.
+2. **`--query` — the issue's own text.** Title, or title + body. It feeds two
+   legs: full text, and — with `--vault` and built embeddings — semantic
+   similarity, which lands the priming an issue's own words would miss.
+   A persistent "semantic leg skipped" note on a host that *has* embeddings
+   means `--vault` is missing, or `weave` is off PATH (the plugin route puts it
+   in the plugin's venv): export `DEVLOOP_WEAVE_BIN=/path/to/weave`.
 3. **`--decisions` — file-anchored ids, resolved by you at claim time.** Walk a
    granularity ladder and stop at the first rung that returns anything:
    files named in the issue body → `weave_graph(file_path=…,

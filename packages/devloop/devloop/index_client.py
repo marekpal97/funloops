@@ -12,13 +12,8 @@ fused by reciprocal rank fusion. One leg alone was dead by construction: the
 write side tags notes with ontology concepts while the read side was handed
 GitHub labels, so the concept join matched nothing on the live index.
 
-Third leg (funloops#2): semantic similarity, through a *composition seam*
-rather than a query of our own. Vectors live in the host's embeddings.db and
-embedding a query needs the host's provider stack, which a stdlib-only package
-cannot have — so the leg shells out to ``weave search --mode similar`` (the
-same subprocess posture as the ``gh`` and ``git`` seams) and fuses the ranked
-ids that come back. No host, no embeddings, no key → the leg is skipped and
-said so; it never degrades into silence.
+Third leg (funloops#2): semantic similarity, shelled out to the host — see
+``semantic_ranking``.
 """
 
 from __future__ import annotations
@@ -166,12 +161,10 @@ SEMANTIC_TIMEOUT = 60
 
 # `weave search` has no JSON mode; its one stable line shape is
 # ``  [<type>] <title> (<id>)`` optionally followed by `` [tag, tag]``, with
-# continuation lines (snippet, project) indented four. Titles carry
-# parentheses of their own, so the id is anchored as the last parenthesized
-# group *before the optional tag bracket at end of line* — "last group on the
-# line" would read a parenthesized tag as the id.
-_SEARCH_LINE = re.compile(r"^ {2}\[[^\]]*\] ")
-_SEARCH_ID = re.compile(r"\(([^()]+)\)(?: \[[^\]]*\])?$")
+# continuation lines (snippet, project) indented four. Anchored at both ends:
+# titles carry parentheses of their own, and a parenthesized tag would be read
+# as the id if the pattern just took the line's last group.
+_SEARCH_ID = re.compile(r"^ {2}\[[^\]]*\] .*\(([^()]+)\)(?: \[[^\]]*\])?\s*$")
 
 # The `weave` console script is off PATH on the plugin install route (its venv
 # is the plugin's), where a bare name would make every run report a skipped leg
@@ -181,9 +174,7 @@ _SEARCH_ID = re.compile(r"\(([^()]+)\)(?: \[[^\]]*\])?$")
 _WEAVE_BIN_ENV = "DEVLOOP_WEAVE_BIN"
 
 
-def semantic_ranking(
-    vault: str | None, query: str, limit: int = SEMANTIC_FETCH,
-) -> list[str] | None:
+def semantic_ranking(vault: str | None, query: str) -> list[str] | None:
     """Note ids ranked by embedding similarity to ``query``, via the host CLI.
 
     The composition seam: ``weave search --mode similar`` scoped to ``vault``,
@@ -198,10 +189,6 @@ def semantic_ranking(
     The vault is pinned per call rather than inherited: the leg must rank the
     same vault the index came from, not whatever ``THINKWEAVE_VAULT`` an ambient
     shell carries (ids from another vault would hydrate to nothing).
-
-    Similar mode does not fall back to full text — the host raises
-    ``SemanticSearchUnavailable`` and its CLI exits 1 — so a served ranking is
-    always semantic, and the FTS leg is never double-counted through this one.
     """
     if not vault or not query.strip():
         return None
@@ -222,8 +209,8 @@ def semantic_ranking(
             # print the host's help and exit 0 (which parses to nothing and
             # reads as ran-and-matched-nothing — the silent leg this forbids).
             [os.environ.get(_WEAVE_BIN_ENV) or "weave", "search",
-             "--mode", "similar", "--type", "note", "--limit", str(limit),
-             "--", query],
+             "--mode", "similar", "--type", "note",
+             "--limit", str(SEMANTIC_FETCH), "--", query],
             capture_output=True, text=True, timeout=SEMANTIC_TIMEOUT, check=False,
             env=env,
         )
@@ -231,13 +218,7 @@ def semantic_ranking(
         return None
     if proc.returncode != 0:
         return None
-    ids = []
-    for line in proc.stdout.splitlines():
-        if _SEARCH_LINE.match(line):
-            found = _SEARCH_ID.search(line.rstrip())
-            if found:
-                ids.append(found.group(1))
-    return ids
+    return [m.group(1) for m in map(_SEARCH_ID.match, proc.stdout.splitlines()) if m]
 
 
 def _by_semantic(conn: sqlite3.Connection, ids: list[str],
@@ -276,11 +257,9 @@ def _by_semantic(conn: sqlite3.Connection, ids: list[str],
 def _rrf(rankings: list[list[tuple[int, dict]]]) -> list[dict]:
     """Reciprocal rank fusion: ``score[id] = Σ 1/(RRF_K + rank_i)``, 1-indexed.
 
-    Each leg contributes ``(rank, row)`` pairs, and a leg's ranks need not be
-    contiguous: the semantic leg hands over the host's own positions, most of
-    which never survive its filter (:func:`_by_semantic`). Ranks are explicit
-    rather than re-derived from list position precisely so that filtering a
-    ranking cannot silently promote what is left.
+    Each leg contributes ``(rank, row)`` pairs — explicit, and not necessarily
+    contiguous, so that filtering a ranking cannot silently promote what is
+    left (:func:`_by_semantic`).
 
     Ties keep first-seen order (dict insertion + a stable sort), so a single
     ranking fuses to itself byte-for-byte — concept-only retrieval is unchanged
@@ -310,8 +289,7 @@ def trajectory_candidates(
 
     The FTS leg is best-effort only while another leg is carrying: a broken
     ``notes_fts`` with nothing else *retrieved* raises to the caller's
-    degrade-to-unprimed guard. The semantic leg does not rescue it — a broken
-    index is a loud fact, not something a working third leg papers over.
+    degrade-to-unprimed guard.
     """
     rankings = []
     if concepts:

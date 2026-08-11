@@ -166,20 +166,16 @@ def render_prime_block(
     return "\n".join(pieces).strip() + "\n", served
 
 
-# Stamped on a payload whose semantic leg never ran (funloops#2). A leg that
-# quietly contributes nothing is indistinguishable from one that is dead — the
-# exact failure #100 was filed to fix — so its absence is on the payload even
-# when the run primed fine on the other two legs.
+# A leg that quietly contributes nothing is indistinguishable from a dead one
+# (#100), so its absence is stamped even on a run that primed fine.
 SEMANTIC_SKIPPED_NOTE = (
     "semantic leg skipped — the host served no ranking (needs --vault, query "
     "text, and a `weave search --mode similar` with built embeddings; set "
     "DEVLOOP_WEAVE_BIN if `weave` is off PATH); fused on concepts + FTS only"
 )
 
-# The other way the leg goes unused, and a different fix: with no index open
-# there is nothing to hydrate a ranking against, so the caller rightly never
-# asked the host. Saying "the host served no ranking" there would send the
-# reader after embeddings when the index is what is missing.
+# The other cause, and a different fix — "host served no ranking" would send
+# the reader after embeddings when the index is what is missing.
 SEMANTIC_UNUSED_NOTE = (
     "semantic leg not attempted — no readable index to resolve a ranking "
     "against"
