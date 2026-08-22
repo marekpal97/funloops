@@ -26,7 +26,7 @@ The loop is two planes with one seam between them:
 
 The seam between the planes is the **CLI subcommand surface** (JSON on stdout,
 exit codes): `config · plan · claim · release · check · validate · prime ·
-triage · trajectory`. That surface is the package's one external interface — the
+triage · trajectory · board`. That surface is the package's one external interface — the
 orchestrator knows nothing else. It is reached through the `devloop` console
 script or `python -m devloop`; the two are one entry point, pinned byte-equal
 by `test_funloops_packaging.py`.
@@ -46,6 +46,7 @@ packages/devloop/
     __main__.py        `python -m devloop` → cli.main
     cli.py             entry point: argparse, config resolution, dispatch
     dag.py             tracker-as-DAG math + the body-grammar it parses
+    board.py           board hygiene: the grammar dag.py reads, as checks + sweep ops
     gates.py           Gate protocol + deterministic executors
     triage.py          risk-lane classification of shipped PRs
     paths.py           leaf util: the three-form path matcher
@@ -108,7 +109,23 @@ native_blockers?}` — which is the `github`↔`dag` contract; `dag` never sees
 `gh` output, only these dicts. Tracker *mutations* for claim/release stay in
 `cli.py` composed from `github.run`: the assign-vs-label claim convention is
 loop policy, not gh plumbing, and one-call-site wrappers would fail the
-deletion test.
+deletion test. For the `board` verb it also owns the richer **board-snapshot
+shape** — `{repo, labels[], issues[{…, sub_issues, blockers[], children[],
+parent}]}` with every relationship resolved to a `{repo, number, state}` ref
+(`fetch_board(repo)`) — and `apply_op(op)`, the one place the sweep's op
+vocabulary meets the network.
+
+**`board.py`** — the enforcing seam for the board grammar `dag.py` assumes
+(funloops#9): sub-issue = epic membership, native blocked-by = ordering, the
+`epic` anchor is blocked-by every open child, `[labels]` rungs are exclusive,
+titles don't re-encode order a native edge already carries. Pure checks over
+the board snapshot (`check_labels · check_epics · check_rungs · check_edges`),
+each yielding findings with a severity and — only where the fix is mechanical,
+never where it is a judgment (which rung, which track, is this epic done) — a
+sweep **op** (`create_label · delete_label · add_label · remove_label ·
+retitle · add_blocker`). `doctor()` runs them all; `plan_sweep()` turns a
+report into the deduped, ordered op list `board sweep --apply` replays.
+Conventions text: `issue-loop.command.md` §Board hygiene.
 
 **`index_client.py`** — §5.
 

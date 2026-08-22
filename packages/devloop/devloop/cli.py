@@ -23,6 +23,9 @@ Subcommands:
                time (reads the derived index read-only; holdout-aware)
   trajectory — assemble a per-issue trajectory payload for the memory feed
                (the optional host extension; shape: devloop-boundaries.md §4)
+  board      — doctor: lint one or more repos' boards against the grammar
+               dag.py reads (JSON report, exit 1 on errors); sweep: replay
+               the mechanical fixes (--plan by default, --apply runs them)
 
 Stdlib only. Config: the host repo's docs/agents/loop.toml, found by walking up
 from the cwd, else the copy shipped with the package (see find_config).
@@ -36,7 +39,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from devloop import dag, github, index_client, trajectory, triage
+from devloop import board, dag, github, index_client, trajectory, triage
 
 # Imported by name: `main` binds a local `gates` in the trajectory branch,
 # which would shadow a module of that name for the whole function.
@@ -322,6 +325,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_traj.add_argument("--pr-url", default="")
     p_traj.add_argument("--run-id", default="")
 
+    p_board = sub.add_parser("board", help="issue-board hygiene (doctor | sweep)", parents=[common])
+    p_board.add_argument("verb", choices=["doctor", "sweep"])
+    p_board.add_argument("--repo", action="append", default=[], metavar="OWNER/NAME",
+                         help="repo to check (repeatable); default: the cwd's clone")
+    p_board.add_argument("--apply", action="store_true",
+                         help="sweep: run the planned ops through gh (default: print the plan)")
+    p_board.add_argument("--only", default="", metavar="OP,OP",
+                         help="sweep: restrict to these op kinds (create_label, add_label, "
+                              "remove_label, add_blocker, retitle, delete_label)")
+
     return parser
 
 
@@ -470,4 +483,26 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"error": str(e)}))
             return 2
         print(json.dumps(payload, indent=2))
+    elif args.cmd == "board":
+        repos = args.repo or [github.run(["repo", "view", "--json", "nameWithOwner",
+                                          "--jq", ".nameWithOwner"]).strip()]
+        report = board.doctor([github.fetch_board(r) for r in repos], cfg)
+        if args.verb == "doctor":
+            print(json.dumps(report, indent=2))
+            return 0 if report["ok"] else 1
+        ops = board.plan_sweep(report)
+        if args.only:
+            ops = [o for o in ops if o["op"] in set(_split_csv(args.only))]
+        if not args.apply:
+            print(json.dumps({"ops": ops, "note": "dry run — pass --apply to execute"}, indent=2))
+            return 0
+        applied, failed = [], []
+        for op in ops:
+            try:
+                github.apply_op(op)
+                applied.append(op)
+            except subprocess.CalledProcessError as e:
+                failed.append({**op, "error": (e.stderr or "").strip()})
+        print(json.dumps({"applied": applied, "failed": failed}, indent=2))
+        return 1 if failed else 0
     return 0
