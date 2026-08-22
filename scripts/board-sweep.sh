@@ -30,7 +30,8 @@ mapfile -t REPOS < <(
   gh repo list "$OWNER" --limit 200 --json nameWithOwner,isArchived,hasIssuesEnabled \
     -q '.[] | select((.isArchived|not) and .hasIssuesEnabled) | .nameWithOwner' |
   while read -r r; do
-    n=$(gh api "repos/$r/issues?state=open&per_page=1" --jq 'map(select(.pull_request|not))|length' 2>/dev/null || echo 0)
+    # The issues endpoint lists PRs too, so a page of 1 can be all PR — count real issues.
+    n=$(gh api "repos/$r/issues?state=open&per_page=100" --jq 'map(select(.pull_request|not))|length' 2>/dev/null || echo 0)
     [ "$n" -gt 0 ] && echo "$r"
   done)
 [ "${#REPOS[@]}" -gt 0 ] || { echo "no repos with open issues"; exit 0; }
