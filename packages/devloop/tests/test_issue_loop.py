@@ -2724,3 +2724,66 @@ def test_boundary_doc_cli_surface_list_matches_the_parser():
     sub = next(a for a in cli.build_arg_parser()._actions
                if isinstance(a, _argparse._SubParsersAction))
     assert documented == set(sub.choices)
+
+
+# ---------------------------------------------------------------------------
+# Vault-routed Pocock skills (v1.2.3 forks in ~/.agents/skills) — devloop
+# consumes them; it never carries skill text or filesystem ADR conventions.
+
+
+def _agents_doc(name: str) -> str:
+    return (cli.REPO_ROOT / "docs" / "agents" / name).read_text(encoding="utf-8")
+
+
+def test_no_filesystem_adr_or_glossary_conventions_shipped():
+    """domain.md (the CONTEXT.md / docs/adr/ consumer-rules file) is gone:
+    the glossary is the vault's concept ontology and ADRs are vault decisions,
+    routed inside the installed skills themselves. Nothing devloop ships may
+    point a skill at docs/adr/ or CONTEXT.md as a store."""
+    docs = cli.REPO_ROOT / "docs" / "agents"
+    assert not (docs / "domain.md").exists()
+    for path in docs.glob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        assert "docs/agents/domain.md" not in text, path.name
+        assert "CONTEXT.md" not in text, path.name
+
+
+def test_issue_tracker_doc_carries_decision_ids_into_issue_bodies():
+    """Specs/tickets cite the grill-time dec-* ids so the loop's prime step
+    can read them back; an issue with none still runs."""
+    low = _agents_doc("issue-tracker.md").lower()
+    assert "dec-" in low and "to-spec" in low and "to-tickets" in low
+    assert "still runs" in low
+
+
+def test_plan_distill_is_the_sweep_behind_inline_capture():
+    """Primary fork capture moved into the vault-routed grilling skill; the
+    command is the headless / missed-fork sweep and must dedup against what the
+    grill already minted."""
+    low = _plan_distill_doc().lower()
+    assert "inline" in low and "sweep" in low
+    assert "plan_ref" in low and "dedup" in low
+
+
+def test_review_gate_skill_key_is_documented_optional():
+    """`skill` on the review gate mirrors simplify's: a Skill-tool name the
+    reviewer invokes, same return schema, default prompt when absent. It ships
+    commented out (opt-in) in both the host config and the template."""
+    for name in ("loop.toml", "loop.toml.template"):
+        text = _agents_doc(name)
+        review = text[text.index('kind = "review"'):text.index('kind = "simplify"')]
+        assert '# skill = "code-review"' in review, name
+    text = _agents_doc("issue-loop.command.md")
+    review = text[text.index("- `kind: review`"):text.index("- `kind: simplify`")]
+    assert 'skill = "<name>"' in review and "not installed" in review
+    assert "optional `skill`" in _agents_doc("issue-loop.md")
+
+
+def test_implementer_and_fix_rounds_ride_installed_tdd_and_diagnosing_skills():
+    """TDD standing order names the installed `tdd` skill; a repeated gate
+    failure routes through `diagnosing-bugs` before the next edit. Both are
+    'if listed' — absence degrades, never fails."""
+    text = _agents_doc("issue-loop.command.md")
+    assert "Skill tool with `tdd`" in text
+    assert "Skill tool with `diagnosing-bugs`" in text
+    assert "consecutive rounds" in text

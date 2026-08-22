@@ -1,17 +1,25 @@
 ---
 name: plan-distill
-description: "End-of-grill fork distillation: walk the grill session's decision-half, mint one plan-time decision per real design fork (alternatives-considered + falsifiable predicted_outcome + plan_ref), and skip every clarifying answer. Write surface is weave_create/weave add decisions only — no code edits, no PRs. Headless-safe."
+description: "End-of-grill fork SWEEP: the installed vault-routed grilling skill mints decisions inline as forks land; this command walks the transcript afterwards (or in headless runs where no inline offer happened) and mints any real fork it missed (alternatives-considered + falsifiable predicted_outcome + plan_ref), skipping every clarifying answer and every fork already minted. Write surface is weave_create/weave add decisions only — no code edits, no PRs. Headless-safe."
 argument-hint: "nothing — reads the just-finished grill transcript, mints plan-time decisions (no code changes, no PRs)"
 disable-model-invocation: true
 ---
 
-# Plan-Distill — mint plan-time decisions from grill forks
+# Plan-Distill — sweep grill forks into plan-time decisions
 
-Run this at the **end of a grill session** (`/grill-me`, `/grill-with-docs`, or
-the installed `grilling` skill), after the skill's confirmation gate has settled
-the plan. It reads the grill transcript and turns the **forks** — the places
-where a concrete alternative was considered and rejected — into **plan-time
-decisions** in the vault.
+**Primary capture is inline, not here.** The installed `grilling` skill is the
+vault-routed fork (`~/.agents/skills/grilling`, symlinked into
+`~/.claude/skills/`): it primes round 0 from the vault and mints a
+`weave_create(type=decision)` the moment a fork is confirmed, so a normal
+interactive `/grill-me` / `/grill-with-docs` ends with its `dec-*` ids already
+listed. This command is the **sweep** for what that path cannot cover: headless
+grills (`claude -p`) where no inline offer was made, and forks the inline pass
+missed. Run it at the **end of a grill session**, after the skill's
+confirmation gate has settled the plan. It reads the grill transcript and
+turns the **forks** — the places where a concrete alternative was considered
+and rejected — into **plan-time decisions** in the vault, **skipping any fork
+whose `dec-*` id the grill already announced** (dedup by `plan_ref` +
+`weave_search(type=['decision'], since=<session start>)` before minting).
 
 Plan-time predictions are the best RLVR rows the system can mint: made *before*
 implementation, so the later `/judge-prediction` scores a genuine forecast, not
@@ -27,14 +35,16 @@ Plan-distill is a distinct, deliberately-invoked front door for the plan-time
 forecast — a different surface, a different moment, not a second writer racing
 the loop for the same record.
 
-**This command rides the installed `grilling` skill; it never edits or forks
-it.** The Pocock skills v1.1.0 `grilling` skill already splits **facts** (explore
-the codebase) from **decisions** (require a human answer) and adds a confirmation
-gate before enacting the plan. This command distills from the **decision half
-only** — no new classification machinery. The installed
-`~/.claude/skills/grilling` / `grill-me` artifacts are machine-global; **do not
-edit them, do not fork them** — this repo-side companion command is the entire
-delta.
+**This command rides the installed `grilling` skill; it never edits it from
+this repo.** The skill (Pocock v1.2.3, vault-routed fork maintained in the
+machine-global `~/.agents/skills` repo, never in funloops) already splits
+**facts** (explore the codebase and the vault) from **decisions** (require a
+human answer), mints forks inline, and adds a confirmation gate before enacting
+the plan. This command distills from the **decision half only** — no new
+classification machinery. The installed `~/.claude/skills/grilling` /
+`grill-me` artifacts are machine-global; **do not edit them from this repo** —
+skill behaviour changes belong in `~/.agents/skills`, and this repo-side
+companion command is the entire devloop-side delta.
 
 ## Contract in one line
 

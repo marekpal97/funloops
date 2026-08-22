@@ -105,6 +105,9 @@ id = "review"
 kind = "review"
 required = true
 block_on = ["critical", "major"]   # finding severities that fail the gate
+# skill = "code-review"  # optional: installed review skill the reviewer subagent
+#                        # invokes via the Skill tool (same return schema). Absent or
+#                        # not installed → the command's default reviewer prompt.
 smells_baseline = true   # Fowler smells reported as judgement calls, never gate-failing
 
 # simplify runs LAST and is safe by construction: it can only SHRINK an

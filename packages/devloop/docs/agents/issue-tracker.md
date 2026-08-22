@@ -29,6 +29,17 @@ GitHub shares one number space across issues and PRs, so a bare `#42` may be eit
 
 Create a GitHub issue.
 
+## Decision ids in issue bodies
+
+Specs (`/to-spec`) and tickets (`/to-tickets`) list the thinkweave vault
+decisions they rest on — one `- dec-XXXX: <title>` line each, under the spec's
+*Implementation Decisions* or a ticket's `Decisions:` line. Those decisions are
+minted at grill time by the vault-routed `grilling` skill (or the
+`/plan-distill` sweep). `/issue-loop`'s prime step reads them back
+(`weave_graph(filter='decisions_for_file')` over the issue's paths and the
+cited ids), so an issue that cites no decision primes from file paths alone;
+it still runs.
+
 ## When a skill says "fetch the relevant ticket"
 
 Run `gh issue view <number> --comments`.
