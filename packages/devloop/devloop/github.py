@@ -90,11 +90,6 @@ def _refs(endpoint: str) -> list[dict]:
     return [_ref(json.loads(l)) for l in out.splitlines() if l.strip()]
 
 
-def fetch_repo_labels(repo: str) -> list[str]:
-    out = run(["api", "--paginate", "--jq", ".[].name", f"repos/{repo}/labels?per_page=100"])
-    return [l for l in out.splitlines() if l]
-
-
 def fetch_board(repo: str) -> dict:
     """Everything the board checks need, for one repo: the label set plus
     every issue with its native relationships resolved to ``{repo, number,
@@ -135,7 +130,8 @@ def fetch_board(repo: str) -> dict:
             except subprocess.CalledProcessError:
                 issue["parent"] = None  # 404: no parent
         issues.append(issue)
-    return {"repo": repo, "labels": fetch_repo_labels(repo), "issues": issues}
+    labels = run(["api", "--paginate", "--jq", ".[].name", f"repos/{repo}/labels?per_page=100"])
+    return {"repo": repo, "labels": [l for l in labels.splitlines() if l], "issues": issues}
 
 
 def apply_op(op: dict) -> None:

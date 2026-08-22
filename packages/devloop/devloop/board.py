@@ -76,7 +76,7 @@ def _epics(issues: list[dict]) -> set[int]:
 # Checks — each takes the board and returns findings
 
 
-def check_labels(board: dict, cfg: dict) -> list[dict]:
+def _check_labels(board: dict, cfg: dict, now: datetime) -> list[dict]:
     """The repo's label set must carry the whole triage table + epic + claimed,
     and none of GitHub's boilerplate five (unused noise on a loop board)."""
     repo, have = board["repo"], set(board["labels"])
@@ -101,7 +101,7 @@ def check_labels(board: dict, cfg: dict) -> list[dict]:
     return out
 
 
-def check_epics(board: dict, cfg: dict) -> list[dict]:
+def _check_epics(board: dict, cfg: dict, now: datetime) -> list[dict]:
     """Epic grammar: has sub-issues ⇒ labelled ``epic``; never runnable; anchored
     (blocked-by every open child so ``plan --dag <epic>`` scopes to the whole
     tree and the epic closes last); flagged when every child is closed."""
@@ -136,7 +136,7 @@ def check_epics(board: dict, cfg: dict) -> list[dict]:
     return out
 
 
-def check_rungs(board: dict, cfg: dict) -> list[dict]:
+def _check_rungs(board: dict, cfg: dict, now: datetime) -> list[dict]:
     """Exactly one triage rung per open non-epic issue; a ``track:`` lane
     wherever the repo uses lanes at all. Which rung / which lane is a human
     call — the only op is ``needs-triage`` on a rung-less issue."""
@@ -164,13 +164,12 @@ def check_rungs(board: dict, cfg: dict) -> list[dict]:
     return out
 
 
-def check_edges(board: dict, cfg: dict, now: datetime | None = None) -> list[dict]:
+def _check_edges(board: dict, cfg: dict, now: datetime) -> list[dict]:
     """Ordering grammar: titles don't re-encode what native edges already say;
     body ``Blocked-by:`` headers must have a native twin; cross-repo edges are
     legal but invisible to a single-repo ``plan``; runnable-and-unblocked
     issues that sit idle past IDLE_DAYS deserve a look."""
     repo, runnable = board["repo"], cfg["labels"]["runnable"]
-    now = now or datetime.now(UTC)
     out = []
     epics = _epics(board["issues"])
     for i in board["issues"]:
@@ -222,15 +221,14 @@ def check_edges(board: dict, cfg: dict, now: datetime | None = None) -> list[dic
     return out
 
 
-CHECKS = (check_labels, check_epics, check_rungs, check_edges)
+_CHECKS = (_check_labels, _check_epics, _check_rungs, _check_edges)
 
 
 def doctor(boards: list[dict], cfg: dict, now: datetime | None = None) -> dict:
-    """Run every check over every board. ``ok`` is false on any error."""
-    findings = []
-    for board in boards:
-        for check in CHECKS:
-            findings.extend(check(board, cfg, now) if check is check_edges else check(board, cfg))
+    """Run every check over every board. ``ok`` is false on any error.
+    ``now`` is injectable so the idle-age rule is testable."""
+    now = now or datetime.now(UTC)
+    findings = [f for board in boards for check in _CHECKS for f in check(board, cfg, now)]
     counts = {s: sum(1 for f in findings if f["severity"] == s) for s in ("error", "warn", "info")}
     return {"repos": [b["repo"] for b in boards], "ok": counts["error"] == 0,
             "counts": counts, "findings": findings}

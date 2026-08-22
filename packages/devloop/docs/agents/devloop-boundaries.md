@@ -119,7 +119,7 @@ vocabulary meets the network.
 (funloops#9): sub-issue = epic membership, native blocked-by = ordering, the
 `epic` anchor is blocked-by every open child, `[labels]` rungs are exclusive,
 titles don't re-encode order a native edge already carries. Pure checks over
-the board snapshot (`check_labels · check_epics · check_rungs · check_edges`),
+the board snapshot (labels · epics · rungs · edges — private; the interface is two functions),
 each yielding findings with a severity and — only where the fix is mechanical,
 never where it is a judgment (which rung, which track, is this epic done) — a
 sweep **op** (`create_label · delete_label · add_label · remove_label ·
