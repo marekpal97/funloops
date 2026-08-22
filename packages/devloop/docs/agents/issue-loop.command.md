@@ -209,8 +209,9 @@ blocks above (when `dispatch.persona` is on), and these standing orders:
 
 - Read the repo's architecture and design docs for the areas you touch before
   editing them; a documented standard overrides your instinct.
-- TDD per the probe (§0.5): when enforced, for each acceptance criterion
-  write the failing test FIRST, watch it fail, then implement to green.
+- TDD per the probe (§0.5): when enforced, call the Skill tool with `tdd`
+  (the installed skill) if it is listed, and for each acceptance
+  criterion write the failing test FIRST, watch it fail, then implement to green.
   The cycle is **red → green only** — refactoring belongs to the review
   stage's fix rounds, not the TDD cycle. The issue's "Slices" checklist is
   your plan. When degraded, still add tests for your own slice, but the
@@ -289,7 +290,12 @@ The rail emits the same `GateResult` the deterministic gates emit, plus
   divergent change, speculative generality, message chains, middle man,
   refused bequest) — smells are **judgement calls reported in the PR body,
   never gate-failing**, and a documented repo standard overrides the
-  baseline.
+  baseline. When the gate sets `skill = "<name>"`, the reviewer subagent is
+  told to call the Skill tool with that name on the diff (e.g. the installed
+  `code-review` skill's Standards + Spec axes, with the issue body as the
+  spec) and map its findings onto the same return schema; if the skill is not
+  listed in this session, fall back to the default reviewer prompt above and
+  note `review skill <name> not installed` in the run output.
 - `kind: simplify` — the over-engineering trim. Runs **last, only after every
   required gate is green**, and is safe by construction: it can only *shrink*
   the verified diff and must preserve verified behavior. See the dedicated
@@ -334,6 +340,10 @@ per-criterion verdicts, review findings) back to the implementer subagent
 (SendMessage to the same agent — it keeps its context) for a fix round.
 When `dispatch.persona` is on, re-splice **both dispatch blocks** (§1b) into
 the fix-round message.
+If the **same gate fails on consecutive rounds**, the next fix-round message
+also instructs the implementer to call the Skill tool with `diagnosing-bugs`
+(the installed skill, if listed) on the gate's evidence before
+editing again — a repeat failure is a diagnosis problem, not a typing problem.
 Re-run the pipeline **from the first failed gate**. After `max_fix_rounds`
 exhausted:
 

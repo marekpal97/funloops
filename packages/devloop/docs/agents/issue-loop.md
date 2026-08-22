@@ -117,7 +117,7 @@ threshold) touches no code.
 | `diff` | rail (deterministic) | forbidden paths, max changed lines |
 | `command` | rail (deterministic) | any shell command; pass = exit 0 |
 | `acceptance` | fresh LLM judge | the issue's own acceptance criteria, per-criterion, `threshold = all\|majority` |
-| `review` | fresh LLM reviewer | code-review findings vs `block_on` severities |
+| `review` | fresh LLM reviewer | code-review findings vs `block_on` severities; optional `skill` names an installed review skill the reviewer invokes (default reviewer prompt when absent) |
 | `simplify` | fresh subagent (vendored ponytail-review) | over-engineering trim — the one **applying** gate. Runs last; `required = false`; shrinks the verified diff, re-runs `rerun` gates, reverts to the pre-simplify tip if either goes red |
 
 Design rules baked in:

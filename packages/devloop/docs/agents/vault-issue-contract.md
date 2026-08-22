@@ -59,11 +59,14 @@ of the record — **no field is written by two owners.**
   concepts and judgment belong to wrap's LLM pass, not to a per-PR template.
   This is the sole owner of decisions: **a decision is never minted by both the
   loop and `/wrap`.** (Scope: this partition is loop-vs-`/wrap` *within a work
-  session*. Plan-time distillation — `/plan-distill`
-  ([`plan-distill.command.md`](plan-distill.command.md)), human-invoked at
-  grill/plan time, outside the loop — mints its own *forecast* decisions on a
-  separate surface at a separate moment; it is not a second writer racing the
-  loop for this record.)
+  session*. Plan-time *forecast* decisions are minted outside the loop, at
+  grill time: inline by the installed vault-routed `grilling` skill as each
+  fork is confirmed, and by the `/plan-distill` sweep
+  ([`plan-distill.command.md`](plan-distill.command.md)) for headless grills
+  or missed forks. A spec or ticket then cites those `dec-*` ids in its body
+  (see `issue-tracker.md`), which is how the loop's prime step finds them. A
+  separate surface at a separate moment; not a second writer racing the loop
+  for this record.)
 
 The boundary that keeps this a partition: the loop writes the *deterministic*
 per-issue record (trajectory), and `/wrap` writes the *synthesised* cross-issue

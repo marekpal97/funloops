@@ -85,7 +85,10 @@ Two complementary lenses. Run each in a **fresh subagent** so their contexts
 don't cross-contaminate; neither may edit code.
 
 - **Deepening axis — `/improve-codebase-architecture`.** The installed Matt
-  Pocock skill (machine-global at `~/.claude/skills/improve-codebase-architecture/`).
+  Pocock skill (machine-global at `~/.claude/skills/improve-codebase-architecture/`,
+  the vault-routed fork: it reads settled decisions via
+  `weave_graph(filter='decisions_for_file')` and records rejected candidates
+  as vault decisions, never `docs/adr/`).
   It finds where modules are too shallow and proposes deeper interfaces /
   better seams. Feed it ARCHITECTURE.md context; collect its proposals. **If the
   skill is not installed on this machine** (the directory is absent), skip the
