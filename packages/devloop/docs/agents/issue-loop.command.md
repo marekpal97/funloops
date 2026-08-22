@@ -667,7 +667,7 @@ mechanical (a sweep op) or a human verdict (finding only):
 | The epic is **blocked-by every open child** (anchor: `plan --dag <epic>` scopes to the tree, epic closes last) | `epic-unanchored` | op `add_blocker` |
 | Epic closes when its last child closes, or gets an explicit re-scope comment | `epic-delivered` | human |
 | Ordering = native **blocked-by**; a body `Blocked-by: #N` header with no native twin is the mint-time gap | `text-only-blocker` | op `add_blocker` (never when #N is the issue's own parent — that is the inverted-root error, flagged only) |
-| Titles describe the work; `W1a:` / `A3:` / `S5:` prefixes are retired once a native edge carries the order | `title-order-prefix` | op `retitle` |
+| Titles describe the work; `W1a:` / `A3:` / `S5:` prefixes are retired once a native edge carries the order, or the issue is closed (no order left to encode); `EPIC:` / `PRD:` prefixes go once the `epic` label is on | `title-order-prefix` | op `retitle` |
 | Exactly **one** triage rung per open non-epic issue (`triage-labels.md` table) | `rung-contradictory` (error) / `rung-missing` (warn) | human / op `add_label needs-triage` (the rung that asserts only "no verdict yet" — it queues the issue for `/triage`) |
 | `track:*` = subsystem lane, on every open issue where the repo uses lanes | `track-missing` | human |
 | The repo's label set carries the whole triage table + `epic` + the loop's `[labels]`, and none of GitHub's boilerplate five | `label-missing` / `label-boilerplate` | op `create_label` / `delete_label` |

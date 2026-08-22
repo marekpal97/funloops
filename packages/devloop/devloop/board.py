@@ -27,6 +27,8 @@ RUNG_ROLES = ("needs-triage", "needs-info", "ready-for-agent", "ready-for-human"
 BOILERPLATE_LABELS = ("good first issue", "help wanted", "invalid", "question", "duplicate")
 # W1a: / A3: / S2-pre: / QW: — the title-ordering grammars the boards grew.
 ORDER_PREFIX_RE = re.compile(r"^\s*\[?([A-Z]{1,2}\d*[a-z]?(-\w+)?)\]?\s*:\s+")
+# EPIC: / PRD: — the third and fourth epic conventions; the `epic` label is the one.
+EPIC_PREFIX_RE = re.compile(r"^\s*\[?(EPIC|PRD)\]?\s*:\s+", re.IGNORECASE)
 # `Blocked-by: #12, #13` body headers (pre-#95 grammar) — only native edges gate.
 TEXT_BLOCKER_RE = re.compile(r"Blocked-by:\s*([^\n|]*)", re.IGNORECASE)
 IDLE_DAYS = 14
@@ -170,18 +172,26 @@ def check_edges(board: dict, cfg: dict, now: datetime | None = None) -> list[dic
     repo, runnable = board["repo"], cfg["labels"]["runnable"]
     now = now or datetime.now(UTC)
     out = []
+    epics = _epics(board["issues"])
     for i in board["issues"]:
-        if not _is_open(i):
-            continue
         n = i["number"]
         blockers, parent = i.get("blockers", []), i.get("parent")
+        # A prefix is redundant once the order lives elsewhere: a native edge
+        # (open issue), the epic label, or closure — a finished issue has no
+        # order left to encode, and the board shows closed titles too.
         has_edge = bool(blockers) or parent is not None or bool(i.get("children"))
+        redundant = has_edge or not _is_open(i)
         m = ORDER_PREFIX_RE.match(i.get("title", ""))
-        if m and has_edge:
+        if m is None:
+            m = EPIC_PREFIX_RE.match(i.get("title", ""))
+            redundant = n in epics or not _is_open(i)
+        if m and redundant:
             clean = i["title"][m.end():].strip()
             out.append(_finding("title-order-prefix", "warn", repo, n,
                                 f"#{n} title prefix '{m.group(1)}:' duplicates a native edge",
                                 {"op": "retitle", "number": n, "title": clean}))
+        if not _is_open(i):
+            continue
         # Numbers, not (repo, number): a body header can't say which repo it
         # means, and a transferred issue's header points at its old home.
         native = {b["number"] for b in blockers}

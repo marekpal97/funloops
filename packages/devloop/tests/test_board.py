@@ -133,6 +133,18 @@ def test_title_prefix_is_stripped_only_when_a_native_edge_exists():
         {"repo": REPO, "op": "retitle", "number": 1, "title": "prime v4 — semantic leg"}]
 
 
+def test_closed_issues_and_epic_prefixes_are_stripped_too():
+    done = _issue(1, "C1: wire the seam", state="CLOSED")
+    epic = _issue(2, "EPIC: multi-harness", labels=("epic", "track:A"))
+    prd = _issue(3, "PRD: a grouping surface", labels=("epic", "track:A"))
+    leaf = _issue(4, "PRD: not an epic, no edge")
+    old = _issue(5, "EPIC: pre-sub-issue era", state="CLOSED")
+    report = board.doctor([_board(done, epic, prd, leaf, old)], CFG, now=NOW)
+    assert {(x["number"], x["op"]["title"]) for x in _checks(report, "title-order-prefix")} == {
+        (1, "wire the seam"), (2, "multi-harness"), (3, "a grouping surface"),
+        (5, "pre-sub-issue era")}
+
+
 def test_text_only_blocker_becomes_a_native_edge_unless_it_is_the_parent():
     child = _issue(1, body="Wave: 1 | Blocked-by: #5, #7 | Parallel-safe: no",
                    blockers=[_ref(7, "CLOSED", repo="other/repo")], parent=_ref(5))
