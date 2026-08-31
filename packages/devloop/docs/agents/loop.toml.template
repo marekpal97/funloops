@@ -87,6 +87,17 @@ required = true
 forbidden_paths = [".github/workflows/"]
 max_changed_lines = 2000
 
+# Regenerate-and-diff of the committed architecture map — drift in a
+# module's public surface fails naming the module (funloops#27). ← EDIT:
+# seed the map once (`devloop map`, then commit map.json) or the first
+# check fails reporting every module as drifted.
+[[gates]]
+id = "map"
+kind = "command"
+required = true
+cmd = "devloop map --check"
+timeout_sec = 120
+
 [[gates]]
 id = "tests"
 kind = "command"

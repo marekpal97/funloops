@@ -257,12 +257,14 @@ def test_repo_loop_toml_parses_and_gate_ids_unique():
 
 
 def test_gate_pipeline_order_is_pinned():
-    """The full pipeline order is a contract: diff-guard → tests → acceptance
-    → review → simplify. simplify runs LAST, after review, so it only ever
-    shrinks an already-verified diff."""
+    """The full pipeline order is a contract: diff-guard → map → tests →
+    acceptance → review → simplify. The cheap deterministic gates run first
+    (map before tests: a stale map fails in ms, not after the suite); simplify
+    runs LAST, after review, so it only ever shrinks an already-verified
+    diff."""
     cfg = cli.load_config()
     ids = [g["id"] for g in cfg["gates"]]
-    assert ids == ["diff-guard", "tests", "acceptance", "review", "simplify"]
+    assert ids == ["diff-guard", "map", "tests", "acceptance", "review", "simplify"]
 
 
 def test_simplify_gate_shape():

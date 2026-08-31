@@ -398,12 +398,14 @@ def _committed_modules(root: Path) -> dict[str, dict]:
     return modules
 
 
-def _in_focus(dirname: str, focus: list[str]) -> bool:
-    for f in focus:
-        f = f.rstrip("/")
-        if dirname == f or dirname.startswith(f + "/") or f.startswith(dirname + "/"):
-            return True
-    return False
+def _focus_dirs(focus: list[str], modules: dict) -> list[str]:
+    """A focus naming a module means its directory; anything else is a dir."""
+    return [str(PurePosixPath(f).parent) if f.rstrip("/") in modules else f.rstrip("/")
+            for f in (x.rstrip("/") for x in focus)]
+
+
+def _in_focus(dirname: str, focus_dirs: list[str]) -> bool:
+    return any(dirname == fd or dirname.startswith(fd + "/") for fd in focus_dirs)
 
 
 def _module_line(path: str, entry: dict) -> str:
@@ -430,9 +432,10 @@ def catalog(root: Path, *, budget_lines: int, focus: list[str]) -> str:
     groups: dict[str, dict] = {}
     for path, entry in modules.items():
         groups.setdefault(str(PurePosixPath(path).parent), {})[path] = entry
+    focus_dirs = _focus_dirs(focus, modules)
     lines = []
     for d in sorted(groups):
-        if _in_focus(d, focus):
+        if _in_focus(d, focus_dirs):
             lines.extend(_module_line(p, groups[d][p]) for p in sorted(groups[d]))
         else:
             syms = sum(len(e["symbols"]) for e in groups[d].values() if "symbols" in e)
