@@ -21,7 +21,6 @@
   },
   "packages/devloop/devloop/board.py": {
    "imports_external": [
-    "__future__",
     "datetime",
     "re"
    ],
@@ -55,8 +54,7 @@
     },
     {
      "kind": "variable",
-     "name": "REQUIRED_LABELS",
-     "signature": "= {EPIC_LABEL: ('Grouping surface: has sub-issues, closes last, never runnable', '5319e7'), 'needs-triage': ('Maintainer"
+     "name": "REQUIRED_LABELS"
     },
     {
      "kind": "variable",
@@ -82,7 +80,6 @@
   },
   "packages/devloop/devloop/cli.py": {
    "imports_external": [
-    "__future__",
     "argparse",
     "json",
     "pathlib",
@@ -108,13 +105,11 @@
     },
     {
      "kind": "variable",
-     "name": "DEAD_VOCAB_NOTE",
-     "signature": "= 'called with GH labels as concepts and no --query \u2014 prime v3 retrieval is likely dead by vocabulary; pass ontology --c"
+     "name": "DEAD_VOCAB_NOTE"
     },
     {
      "kind": "variable",
-     "name": "DEFAULT_CONFIG",
-     "signature": "= {'loop': {'max_issues_per_run': 3, 'max_parallel': 1, 'max_fix_rounds': 2, 'training_mode': True, 'draft_pr': True, 'b"
+     "name": "DEFAULT_CONFIG"
     },
     {
      "kind": "variable",
@@ -160,11 +155,11 @@
   },
   "packages/devloop/devloop/codemap.py": {
    "imports_external": [
-    "__future__",
     "ast",
     "hashlib",
     "json",
-    "pathlib"
+    "pathlib",
+    "subprocess"
    ],
    "imports_internal": [
     "packages/devloop/devloop/index_client.py"
@@ -197,30 +192,34 @@
      "signature": "= {'__pycache__', 'node_modules', 'dist', 'build', 'venv'}"
     },
     {
+     "kind": "variable",
+     "name": "VAR_SIG_MAX",
+     "signature": "= 120"
+    },
+    {
      "kind": "function",
      "name": "catalog",
-     "signature": "(root: Path, *, budget_lines: int, focus: list[str]) -> str"
+     "signature": "(root, *, budget_lines: int, focus: list[str]) -> str"
     },
     {
      "kind": "function",
      "name": "check",
-     "signature": "(root: Path, *, producer: str | None=None, db: str | None=None) -> dict"
+     "signature": "(root, *, producer: str | None=None, db: str | None=None) -> dict"
     },
     {
      "kind": "function",
      "name": "generate",
-     "signature": "(root: Path, *, producer: str | None=None, db: str | None=None) -> dict"
+     "signature": "(root, *, producer: str | None=None, db: str | None=None) -> dict"
     },
     {
      "kind": "function",
      "name": "slice_modules",
-     "signature": "(root: Path, paths: list[str]) -> dict"
+     "signature": "(root, paths: list[str]) -> dict"
     }
    ]
   },
   "packages/devloop/devloop/dag.py": {
    "imports_external": [
-    "__future__",
     "re"
    ],
    "imports_internal": [],
@@ -265,7 +264,6 @@
   },
   "packages/devloop/devloop/gates.py": {
    "imports_external": [
-    "__future__",
     "pathlib",
     "subprocess"
    ],
@@ -343,7 +341,6 @@
   },
   "packages/devloop/devloop/github.py": {
    "imports_external": [
-    "__future__",
     "json",
     "subprocess"
    ],
@@ -379,7 +376,6 @@
   },
   "packages/devloop/devloop/index_client.py": {
    "imports_external": [
-    "__future__",
     "os",
     "pathlib",
     "re",
@@ -428,7 +424,6 @@
   },
   "packages/devloop/devloop/paths.py": {
    "imports_external": [
-    "__future__",
     "fnmatch"
    ],
    "imports_internal": [],
@@ -456,9 +451,7 @@
    "symbols": []
   },
   "packages/devloop/devloop/trajectory/mint.py": {
-   "imports_external": [
-    "__future__"
-   ],
+   "imports_external": [],
    "imports_internal": [],
    "responsibility": "write face: trajectory-note payload assembly",
    "symbols": [
@@ -471,7 +464,6 @@
   },
   "packages/devloop/devloop/trajectory/prime.py": {
    "imports_external": [
-    "__future__",
     "datetime",
     "hashlib",
     "json",
@@ -520,9 +512,7 @@
    ]
   },
   "packages/devloop/devloop/triage.py": {
-   "imports_external": [
-    "__future__"
-   ],
+   "imports_external": [],
    "imports_internal": [
     "packages/devloop/devloop/cli.py",
     "packages/devloop/devloop/paths.py"
@@ -554,7 +544,6 @@
   },
   "packages/devloop/tests/test_devloop_boundaries.py": {
    "imports_external": [
-    "__future__",
     "ast",
     "pathlib"
    ],
@@ -566,7 +555,6 @@
   },
   "packages/devloop/tests/test_funloops_packaging.py": {
    "imports_external": [
-    "__future__",
     "json",
     "pathlib",
     "subprocess",
@@ -598,7 +586,6 @@
   },
   "packages/devloop/tests/test_judgment_plane.py": {
    "imports_external": [
-    "__future__",
     "argparse",
     "json",
     "pathlib",
@@ -617,10 +604,11 @@
   },
   "packages/devloop/tests/test_map.py": {
    "imports_external": [
-    "__future__",
+    "hashlib",
     "json",
     "pytest",
     "sqlite3",
+    "subprocess",
     "textwrap"
    ],
    "imports_internal": [
@@ -628,7 +616,7 @@
     "packages/devloop/devloop/codemap.py"
    ],
    "responsibility": null,
-   "tests": 14
+   "tests": 24
   }
  },
  "version": 1

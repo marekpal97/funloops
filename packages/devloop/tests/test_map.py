@@ -1,21 +1,33 @@
 """Seams for the map rail (issue #27, dec-462f4b28): committed map.json
 projected from codegraph's SQLite (primary) or Python ast (fallback).
 
-The seams, one per acceptance criterion:
+The seams, one per acceptance criterion plus the fix-round-1 hardening:
 - byte-determinism: two runs on an unchanged repo → identical bytes
-- ``map --check`` failure names the drifted module
-- sidecar (map.notes.json) staleness names its module
-- the codegraph version pin fails loudly on a bump; the fixture db doubles
-  as the schema contract (projection queries run against a 1.6.0-shaped db)
+- ``map --check`` is PURE and its failure names the drifted module — it never
+  writes, so it cannot self-clear on a second run
+- sidecar (map.notes.json) staleness names its module; the interface hash is
+  module-identifying (two empty modules never share a hash)
+- the codegraph version pin fails loudly on a bump; the fixture db doubles as
+  the schema contract (projection queries run against a 1.6.0-shaped db);
+  a stale or corrupt index fails loudly instead of mapping old code
 - ast fallback produces the same map.json shape — asserted against a FIXED
-  hand-written expected entry, never projection A == projection A
+  hand-written expected entry shared with the codegraph fixture, which
+  deliberately exercises the divergence-prone syntaxes: a string literal
+  (quote normalization), a ``__future__`` import, a truncated long value
+- publics under module-level if/try/with and tuple-unpacked constants are
+  visible to the ast producer
+- unparseable files get a deterministic marker, never a traceback
+- the map is git-anchored: root resolves to the repo toplevel, untracked
+  files stay out
 - catalog respects --budget-lines by expanding only the focus subtree
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
+import subprocess
 import textwrap
 
 import pytest
@@ -26,13 +38,19 @@ from devloop.cli import main
 # ---------------------------------------------------------------------------
 # Fixture repo (ast producer) and fixture codegraph db (codegraph producer).
 # Both describe the SAME tiny source tree, so the shape-parity expectations
-# below are one hand-written dict, not a cross-projection comparison.
+# below are one hand-written dict, not a cross-projection comparison. The
+# tree deliberately includes the syntaxes the producers can diverge on:
+# a double-quoted string constant, a __future__ import, a value long enough
+# to exceed the signature cap.
 
 CORE_SRC = textwrap.dedent(
     """\
+    from __future__ import annotations
+
     import json
     from fx import helper
 
+    GREETING = "hi"
     LIMIT = 5
 
     def run(x: int) -> str:
@@ -43,10 +61,23 @@ CORE_SRC = textwrap.dedent(
     """
 )
 
-# Hand-written expected entries (the independent source of truth).
+HELPER_SRC = (
+    'TRUNC = ("aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", '
+    '"cccccccccccccccccccc", "dddddddddddddddddddd", "eeeeeeeeeeeeeeeeeeee", '
+    '"ffffffffffffffffffff")\n'
+    "\n\n"
+    "def fmt(x: int) -> str:\n"
+    "    return str(x)\n"
+)
+
+# Hand-written expected entries (the independent source of truth). Note:
+# GREETING normalizes to single quotes on BOTH producers; TRUNC's value is
+# over the cap so its signature is omitted on BOTH; __future__ never lands
+# in imports_external.
 EXPECTED_CORE = {
     "responsibility": None,
     "symbols": [
+        {"kind": "variable", "name": "GREETING", "signature": "= 'hi'"},
         {"kind": "variable", "name": "LIMIT", "signature": "= 5"},
         {"kind": "function", "name": "run", "signature": "(x: int) -> str"},
     ],
@@ -55,7 +86,10 @@ EXPECTED_CORE = {
 }
 EXPECTED_HELPER = {
     "responsibility": None,
-    "symbols": [{"kind": "function", "name": "fmt", "signature": "(x: int) -> str"}],
+    "symbols": [
+        {"kind": "variable", "name": "TRUNC"},
+        {"kind": "function", "name": "fmt", "signature": "(x: int) -> str"},
+    ],
     "imports_internal": [],
     "imports_external": [],
 }
@@ -73,7 +107,7 @@ def make_repo(tmp_path):
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     (pkg / "core.py").write_text(CORE_SRC)
-    (pkg / "helper.py").write_text("def fmt(x: int) -> str:\n    return str(x)\n")
+    (pkg / "helper.py").write_text(HELPER_SRC)
     tests = tmp_path / "tests"
     tests.mkdir()
     (tests / "test_core.py").write_text(
@@ -113,25 +147,41 @@ CREATE TABLE project_metadata (
 """
 
 
-def make_codegraph_db(path, version: str):
+def make_codegraph_db(path, version: str, root):
+    """1.6.0-shaped index of make_repo's tree, content hashes real (sha256 of
+    the on-disk bytes, codegraph's own convention) so freshness passes."""
     db = sqlite3.connect(path)
     db.executescript(CODEGRAPH_SCHEMA)
     db.execute("INSERT INTO project_metadata VALUES ('indexed_with_version', ?, 0)", (version,))
     for f in ("fx/__init__.py", "fx/core.py", "fx/helper.py", "tests/test_core.py"):
-        db.execute("INSERT INTO files VALUES (?, 'h', 'python', 1, 0, 0, 0, NULL, 0)", (f,))
-    node = ("INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, "
+        h = hashlib.sha256((root / f).read_bytes()).hexdigest()
+        db.execute("INSERT INTO files VALUES (?, ?, 'python', 1, 0, 0, 0, NULL, 0)", (f, h))
+
+    def node(id, kind, name, qual, fpath, sig, line=1):
+        db.execute(
+            "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, "
             "start_line, end_line, start_column, end_column, signature, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, 'python', 1, 1, 0, 0, ?, 0)")
-    db.execute(node, ("n1", "function", "run", "run", "fx/core.py", "(x: int) -> str"))
-    db.execute(node, ("n2", "variable", "LIMIT", "LIMIT", "fx/core.py", "= 5"))
-    db.execute(node, ("n3", "function", "_private", "_private", "fx/core.py", "() -> None"))
+            "VALUES (?, ?, ?, ?, ?, 'python', ?, ?, 0, 0, ?, 0)",
+            (id, kind, name, qual, fpath, line, line, sig))
+
+    # codegraph stores raw source text: double quotes stay double here.
+    node("n1", "variable", "GREETING", "GREETING", "fx/core.py", '= "hi"', 6)
+    node("n2", "variable", "LIMIT", "LIMIT", "fx/core.py", "= 5", 7)
+    # duplicate module-level binding: first (by line) wins, deterministically
+    node("n2b", "variable", "LIMIT", "LIMIT", "fx/core.py", "= 6", 99)
+    node("n3", "function", "run", "run", "fx/core.py", "(x: int) -> str", 9)
+    node("n4", "function", "_private", "_private", "fx/core.py", "() -> None", 12)
     # nested symbol: '::'-qualified, must be excluded from the public surface
-    db.execute(node, ("n4", "function", "inner", "run::inner", "fx/core.py", "()"))
-    db.execute(node, ("n5", "import", "json", "json", "fx/core.py", None))
-    db.execute(node, ("n6", "import", "fx.helper", "fx.helper", "fx/core.py", None))
-    db.execute(node, ("n7", "function", "fmt", "fmt", "fx/helper.py", "(x: int) -> str"))
-    db.execute(node, ("n8", "function", "test_a", "test_a", "tests/test_core.py", "()"))
-    db.execute(node, ("n9", "function", "test_b", "test_b", "tests/test_core.py", "()"))
+    node("n5", "function", "inner", "run::inner", "fx/core.py", "()", 10)
+    node("n6", "import", "json", "json", "fx/core.py", None, 3)
+    node("n7", "import", "fx.helper", "fx.helper", "fx/core.py", None, 4)
+    # NO __future__ import node: real codegraph never records one.
+    # codegraph pre-truncates long values into unparseable text — omitted.
+    node("n8", "variable", "TRUNC", "TRUNC", "fx/helper.py",
+         '= ("aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", "...', 1)
+    node("n9", "function", "fmt", "fmt", "fx/helper.py", "(x: int) -> str", 4)
+    node("n10", "function", "test_a", "test_a", "tests/test_core.py", "()", 1)
+    node("n11", "function", "test_b", "test_b", "tests/test_core.py", "()", 5)
     db.execute("INSERT INTO edges (source, target, kind) VALUES "
                "('file:fx/core.py', 'file:fx/helper.py', 'imports')")
     db.commit()
@@ -172,7 +222,7 @@ def test_ast_projection_matches_expected_shape(tmp_path):
 
 def test_codegraph_projection_matches_same_expected_shape(tmp_path):
     root = make_repo(tmp_path)
-    db = make_codegraph_db(tmp_path / "cg.db", codemap.CODEGRAPH_VERSION)
+    db = make_codegraph_db(tmp_path / "cg.db", codemap.CODEGRAPH_VERSION, root)
     report = codemap.generate(root, producer="codegraph", db=db)
     assert report["producer"] == "codegraph"
     doc = read_map(root)
@@ -183,12 +233,13 @@ def test_codegraph_projection_matches_same_expected_shape(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# AC: contract test pins the codegraph version; a bump fails loudly
+# AC: contract test pins the codegraph version; a bump fails loudly.
+# A stale or corrupt index fails just as loudly, before any projection.
 
 
 def test_codegraph_version_bump_fails_loudly(tmp_path):
     root = make_repo(tmp_path)
-    db = make_codegraph_db(tmp_path / "cg.db", "9.9.9")
+    db = make_codegraph_db(tmp_path / "cg.db", "9.9.9", root)
     with pytest.raises(codemap.MapError, match=r"9\.9\.9.*1\.6\.0|1\.6\.0.*9\.9\.9"):
         codemap.generate(root, producer="codegraph", db=db)
 
@@ -199,8 +250,34 @@ def test_codegraph_producer_without_index_fails_loudly(tmp_path):
         codemap.generate(root, producer="codegraph")
 
 
+def test_stale_codegraph_index_fails_loudly(tmp_path):
+    root = make_repo(tmp_path)
+    db = make_codegraph_db(tmp_path / "cg.db", codemap.CODEGRAPH_VERSION, root)
+    helper = root / "fx" / "helper.py"
+    helper.write_text(helper.read_text() + "\n\ndef extra() -> int:\n    return 1\n")
+    with pytest.raises(codemap.MapError, match=r"behind the worktree.*fx/helper\.py"):
+        codemap.generate(root, producer="codegraph", db=db)
+
+
+def test_file_missing_from_index_fails_loudly(tmp_path):
+    root = make_repo(tmp_path)
+    db = make_codegraph_db(tmp_path / "cg.db", codemap.CODEGRAPH_VERSION, root)
+    (root / "fx" / "extra.py").write_text("def novel() -> None:\n    pass\n")
+    with pytest.raises(codemap.MapError, match=r"behind the worktree.*fx/extra\.py"):
+        codemap.generate(root, producer="codegraph", db=db)
+
+
+def test_corrupt_codegraph_index_raises_maperror(tmp_path):
+    root = make_repo(tmp_path)
+    bad = tmp_path / "cg.db"
+    bad.write_bytes(b"this is not a sqlite database.......")
+    with pytest.raises(codemap.MapError):
+        codemap.generate(root, producer="codegraph", db=bad)
+
+
 # ---------------------------------------------------------------------------
-# AC: --check fails naming the drifted module
+# AC: --check fails naming the drifted module — and is PURE: it never writes,
+# so a second run cannot self-clear the gate.
 
 
 def test_check_green_on_fresh_map(tmp_path):
@@ -211,14 +288,19 @@ def test_check_green_on_fresh_map(tmp_path):
     assert report["drifted"] == []
 
 
-def test_check_names_the_drifted_module(tmp_path):
+def test_check_is_pure_and_names_the_drifted_module(tmp_path):
     root = make_repo(tmp_path)
     codemap.generate(root)
+    committed = (root / "map.json").read_bytes()
     helper = root / "fx" / "helper.py"
     helper.write_text(helper.read_text() + "\n\ndef extra() -> int:\n    return 1\n")
     report = codemap.check(root)
     assert report["ok"] is False
     assert report["drifted"] == ["fx/helper.py"]
+    assert (root / "map.json").read_bytes() == committed
+    again = codemap.check(root)
+    assert again["ok"] is False
+    assert again["drifted"] == ["fx/helper.py"]
 
 
 def test_check_exit_codes_via_cli(tmp_path, capsys):
@@ -233,8 +315,15 @@ def test_check_exit_codes_via_cli(tmp_path, capsys):
     assert "fx/helper.py" in out["drifted"]
 
 
+def test_check_refuses_read_view_combination(tmp_path, capsys):
+    root = make_repo(tmp_path)
+    codemap.generate(root)
+    assert main(["map", "--check", "--slice", "fx/", "--root", str(root)]) == 2
+    assert main(["map", "--check", "--catalog", "--root", str(root)]) == 2
+
+
 # ---------------------------------------------------------------------------
-# AC: sidecar staleness names the module
+# AC: sidecar staleness names the module; the hash is module-identifying
 
 
 def test_fresh_note_lands_as_responsibility(tmp_path):
@@ -259,6 +348,114 @@ def test_stale_note_names_its_module(tmp_path):
     assert [s["module"] for s in report["stale_notes"]] == ["fx/helper.py"]
     # a stale note never serves: the responsibility drops out rather than lie
     assert read_map(root)["modules"]["fx/helper.py"]["responsibility"] is None
+
+
+def test_interface_hash_is_module_identifying(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "e"\n')
+    (tmp_path / "e1.py").write_text("")
+    (tmp_path / "e2.py").write_text("")
+    report = codemap.generate(tmp_path)
+    hashes = {u["module"]: u["hash"] for u in report["unannotated"]}
+    assert hashes["e1.py"] != hashes["e2.py"]
+
+
+# ---------------------------------------------------------------------------
+# ast producer coverage: guarded defs, tuple constants, duplicate bindings,
+# unparseable files
+
+
+GUARDED_SRC = textwrap.dedent(
+    """\
+    import sys
+
+    if sys.version_info >= (3, 11):
+        def compat() -> int:
+            return 1
+    else:
+        def compat() -> int:
+            return 2
+
+    try:
+        import tomllib
+    except ImportError:
+        def loads(s): ...
+
+    A, B = 1, 2
+    """
+)
+
+
+def test_guarded_defs_and_tuple_constants_are_visible(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "g"\n')
+    (tmp_path / "guarded.py").write_text(GUARDED_SRC)
+    codemap.generate(tmp_path)
+    syms = read_map(tmp_path)["modules"]["guarded.py"]["symbols"]
+    assert [(s["kind"], s["name"]) for s in syms] == [
+        ("variable", "A"), ("variable", "B"),
+        ("function", "compat"), ("function", "loads"),
+    ]
+    by_name = {s["name"]: s for s in syms}
+    assert by_name["A"]["signature"] == "= 1"
+    assert by_name["B"]["signature"] == "= 2"
+    assert by_name["compat"]["signature"] == "() -> int"
+
+
+def test_duplicate_toplevel_assignment_yields_one_entry(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "d"\n')
+    (tmp_path / "d.py").write_text("X = 1\nX = 2\n")
+    codemap.generate(tmp_path)
+    syms = read_map(tmp_path)["modules"]["d.py"]["symbols"]
+    assert syms == [{"kind": "variable", "name": "X", "signature": "= 1"}]
+
+
+def test_unparseable_files_are_marked_not_fatal(tmp_path):
+    root = make_repo(tmp_path)
+    (root / "bad.py").write_text("def broken(:\n")
+    (root / "legacy.py").write_bytes(b"# caf\xe9\nX = 1\n")
+    codemap.generate(root)
+    doc = read_map(root)
+    assert doc["modules"]["bad.py"]["unparsed"] is True
+    assert doc["modules"]["legacy.py"]["unparsed"] is True
+    assert codemap.check(root)["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Git anchoring: root resolves to the repo toplevel; only tracked files map
+
+
+def test_git_root_and_tracked_files_anchor_the_map(tmp_path):
+    root = make_repo(tmp_path)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    (root / "scratch_local.py").write_text("def junk() -> None:\n    pass\n")
+    report = codemap.generate(root / "fx")  # subdir invocation
+    assert report["shards"] == ["map.json"]
+    doc = read_map(root)
+    assert "fx/core.py" in doc["modules"]
+    assert "scratch_local.py" not in doc["modules"]
+    assert not (root / "fx" / "map.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# generate prunes what no longer exists
+
+
+def test_generate_prunes_orphaned_shards_and_reports_orphan_notes(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "ws"\n')
+    (tmp_path / "rootmod.py").write_text("def top() -> None:\n    pass\n")
+    p1 = tmp_path / "packages" / "p1"
+    p1.mkdir(parents=True)
+    (p1 / "pyproject.toml").write_text('[project]\nname = "p1"\n')
+    (p1 / "src.py").write_text("def inner() -> None:\n    pass\n")
+    codemap.generate(tmp_path)
+    assert (p1 / "map.json").exists()
+    (p1 / "src.py").unlink()
+    (tmp_path / "map.notes.json").write_text(json.dumps(
+        {"gone.py": {"hash": "x", "note": "orphan"}}))
+    report = codemap.generate(tmp_path)
+    assert report["removed_shards"] == ["packages/p1/map.json"]
+    assert not (p1 / "map.json").exists()
+    assert report["orphan_notes"] == ["gone.py"]
 
 
 # ---------------------------------------------------------------------------

@@ -9,8 +9,26 @@ Two producers, one shape:
   (``CODEGRAPH_VERSION``) wrote at ``<root>/.codegraph/codegraph.db``.
   Opened through ``index_client.open_ro`` so index_client stays the
   package's one sqlite3 importer (boundary spec §5's allowlist seam).
+  The projection refuses a stale index: every mapped file's sha256 must
+  match ``files.content_hash``, and a .py on disk missing from the index
+  (or vice versa) fails loudly — the map never describes old code.
 - ``ast`` (fallback): stdlib ast over the tree — for repos without Node
-  or an index (a fresh loop worktree never carries one).
+  or an index (a fresh loop worktree never carries one). A file that
+  cannot be read or parsed gets a deterministic ``"unparsed": true``
+  entry instead of aborting the map.
+
+Producer parity is by construction, not by luck: every signature is
+normalized through the same functions (`_function_sig` over parsed arg
+nodes; `_variable_sig_from_text`, which re-parses the value expression
+and unparses it, omitting anything unparseable or longer than
+``VAR_SIG_MAX`` rather than truncating mid-token), and ``__future__``
+never counts as an external import.
+
+The map is git-anchored: the root resolves to ``git rev-parse
+--show-toplevel`` (so a subdirectory invocation cannot mint a second key
+space) and the file list comes from ``git ls-files`` (so untracked
+scratch files never enter the committed artifact); outside a git repo
+both fall back to the given root and a pruned rglob.
 
 The committed artifact pins its producer: generate/check reuse the
 ``generator`` recorded in existing shards, so a machine that happens to
@@ -23,14 +41,16 @@ keyed by module path with the interface hash the note described::
     {"pkg/mod.py": {"hash": "<12 hex>", "note": "one line"}}
 
 Current hashes surface in generate/check reports (``unannotated`` /
-``stale_notes``). A note whose hash no longer matches its module's
-public surface is stale: ``check`` fails naming the module, and the
+``stale_notes``); the hash covers the module path too, so a note pasted
+onto the wrong module registers as stale. A note whose hash no longer
+matches is stale: ``check`` fails naming the module, and the
 responsibility drops to null rather than serve a lie.
 
-``check`` regenerates in place and compares against the bytes that were
-on disk — on a clean worktree exactly "regenerate + git diff
---exit-code", the gate shape the decision names — so a red check leaves
-the corrected map.json behind to inspect and commit.
+``check`` is PURE: it regenerates in memory and compares against the
+bytes on disk, never writing — a red check stays red until ``devloop
+map`` (the one mutating entry point) regenerates the shards and the
+result is committed. ``generate`` also prunes shards that no longer
+have modules and reports sidecar keys with no module (``orphan_notes``).
 
 Test modules (under a ``tests`` dir or named ``test_*.py``) carry a
 ``tests`` count instead of a symbols list: they dominate raw symbol
@@ -42,6 +62,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import subprocess
 from pathlib import Path, PurePosixPath
 
 from devloop import index_client
@@ -50,14 +71,51 @@ CODEGRAPH_VERSION = "1.6.0"  # pinned; project_metadata.indexed_with_version mus
 MAP_NAME = "map.json"
 NOTES_NAME = "map.notes.json"
 SKIP_DIRS = {"__pycache__", "node_modules", "dist", "build", "venv"}
+# Variable values longer than this omit the signature entirely (never cut
+# mid-token): codegraph pre-truncates long values into unparseable text, so
+# omission is the only rule both producers can agree on.
+VAR_SIG_MAX = 120
 
 
 class MapError(Exception):
     """Configuration/contract failure (exit 2 territory), never code drift."""
 
 
+# ---------------------------------------------------------------------------
+# Git anchoring
+
+
+def _git(root, *args: str) -> str | None:
+    try:
+        r = subprocess.run(["git", "-C", str(root), *args],
+                           capture_output=True, text=True)
+    except OSError:
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _resolve_root(root) -> Path:
+    top = _git(root, "rev-parse", "--show-toplevel")
+    return Path(top.strip()) if top else Path(root).resolve()
+
+
 def _pruned(rel: PurePosixPath) -> bool:
     return any(p.startswith(".") or p in SKIP_DIRS for p in rel.parts)
+
+
+def _py_files(root: Path) -> list[str]:
+    out = _git(root, "ls-files", "-z", "--", "*.py")
+    if out is not None:
+        return sorted(f for f in out.split("\0") if f)
+    return sorted(
+        str(p.relative_to(root).as_posix())
+        for p in root.rglob("*.py")
+        if not _pruned(PurePosixPath(p.relative_to(root).as_posix()))
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shared shape helpers — the parity layer both producers go through
 
 
 def _is_test(path: str) -> bool:
@@ -67,6 +125,49 @@ def _is_test(path: str) -> bool:
 
 def _collapse(sig: str) -> str:
     return " ".join(sig.split())
+
+
+def _function_sig(args: ast.arguments, returns: ast.expr | None) -> str:
+    sig = f"({ast.unparse(args)})"
+    if returns is not None:
+        sig += f" -> {ast.unparse(returns)}"
+    return sig
+
+
+def _function_sig_from_text(text: str) -> str | None:
+    try:
+        fn = ast.parse(f"def _f{_collapse(text)}: pass").body[0]
+    except SyntaxError:
+        return _collapse(text) or None
+    return _function_sig(fn.args, fn.returns)
+
+
+def _class_sig(bases: list[ast.expr], keywords) -> str | None:
+    parts = [ast.unparse(b) for b in bases] + [ast.unparse(k) for k in keywords]
+    return f"({', '.join(parts)})" if parts else None
+
+
+def _class_sig_from_text(text: str) -> str | None:
+    try:
+        cls = ast.parse(f"class _C{_collapse(text)}: pass").body[0]
+    except SyntaxError:
+        return _collapse(text) or None
+    return _class_sig(cls.bases, cls.keywords)
+
+
+def _variable_sig_from_text(text: str) -> str | None:
+    """One rule for both producers: re-parse the value, unparse it, omit
+    anything unparseable (codegraph's pre-truncated long values) or over
+    VAR_SIG_MAX (the ast side's full text for the same values)."""
+    text = _collapse(text)
+    if text.startswith("="):
+        try:
+            value = ast.unparse(ast.parse(text[1:].strip(), mode="eval"))
+        except (SyntaxError, ValueError):
+            return None
+        sig = f"= {value}"
+        return sig if len(sig) <= VAR_SIG_MAX else None
+    return (text or None) if len(text) <= VAR_SIG_MAX else None
 
 
 def _raw() -> dict:
@@ -80,7 +181,7 @@ def _finish(raw: dict, path: str) -> dict:
     else:
         entry["symbols"] = sorted(raw["symbols"], key=lambda s: (s["name"], s["kind"]))
     entry["imports_internal"] = sorted(raw["internal"] - {path})
-    entry["imports_external"] = sorted(raw["external"])
+    entry["imports_external"] = sorted(raw["external"] - {"__future__"})
     return entry
 
 
@@ -103,7 +204,22 @@ def _resolve(dotted: str, files: list[str]) -> str | None:
 # Producer: codegraph (primary)
 
 
-def _project_codegraph(conn) -> dict[str, dict]:
+def _check_freshness(conn, root: Path, disk_files: list[str]) -> None:
+    indexed = {p: h for p, h in conn.execute(
+        "SELECT path, content_hash FROM files WHERE language='python'")}
+    stale = set(disk_files) ^ set(indexed)
+    for p in set(disk_files) & set(indexed):
+        if hashlib.sha256((root / p).read_bytes()).hexdigest() != indexed[p]:
+            stale.add(p)
+    if stale:
+        names = sorted(stale)
+        shown = ", ".join(names[:10]) + (f" +{len(names) - 10} more" if len(names) > 10 else "")
+        raise MapError(
+            f"codegraph index is behind the worktree ({shown}) — "
+            "reindex or use --producer ast")
+
+
+def _project_codegraph(conn, root: Path, disk_files: list[str]) -> dict[str, dict]:
     row = conn.execute(
         "SELECT value FROM project_metadata WHERE key='indexed_with_version'"
     ).fetchone()
@@ -114,22 +230,31 @@ def _project_codegraph(conn) -> dict[str, dict]:
             "re-verify the projection contract (test_map.py) before bumping "
             "codemap.CODEGRAPH_VERSION"
         )
+    _check_freshness(conn, root, disk_files)
     files = sorted(p for (p,) in conn.execute(
         "SELECT path FROM files WHERE language='python'"))
     raw = {p: _raw() for p in files}
+    seen: set[tuple[str, str]] = set()
     for path, kind, name, qual, sig in conn.execute(
         "SELECT file_path, kind, name, qualified_name, signature FROM nodes "
-        "WHERE kind IN ('function','class','variable')"
+        "WHERE kind IN ('function','class','variable') "
+        "ORDER BY file_path, start_line, id"
     ):
         if path not in raw or name != qual:  # unindexed file, or nested ('::')
             continue
+        if (path, name) in seen:  # duplicate binding: first by line wins
+            continue
+        seen.add((path, name))
         if _is_test(path):
             if kind == "function" and name.startswith("test_"):
                 raw[path]["tests"] += 1
         elif not name.startswith("_"):
+            norm = {"function": _function_sig_from_text,
+                    "class": _class_sig_from_text}.get(kind, _variable_sig_from_text)
             sym = {"kind": kind, "name": name}
-            if sig:
-                sym["signature"] = _collapse(sig)
+            normalized = norm(sig) if sig else None
+            if normalized:
+                sym["signature"] = normalized
             raw[path]["symbols"].append(sym)
     for src, tgt in conn.execute(
         "SELECT source, target FROM edges WHERE kind='imports' "
@@ -149,46 +274,65 @@ def _project_codegraph(conn) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 # Producer: ast (fallback)
 
+_NESTING = (ast.If, ast.Try, ast.With) + (
+    (ast.TryStar,) if hasattr(ast, "TryStar") else ())
 
-def _ast_signature(node: ast.AST) -> str | None:
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        sig = f"({ast.unparse(node.args)})"
-        if node.returns is not None:
-            sig += f" -> {ast.unparse(node.returns)}"
-        return _collapse(sig)
-    if isinstance(node, ast.ClassDef) and node.bases:
-        return _collapse(f"({', '.join(ast.unparse(b) for b in node.bases)})")
-    if isinstance(node, ast.Assign):
-        return _collapse(f"= {ast.unparse(node.value)}")[:120]
-    if isinstance(node, ast.AnnAssign):
-        if node.value is not None:
-            return _collapse(f"= {ast.unparse(node.value)}")[:120]
-        return _collapse(f": {ast.unparse(node.annotation)}")
-    return None
+
+def _module_stmts(body):
+    """Module-level statements, descending into if/try/with blocks — a
+    version-guarded def is public surface too."""
+    for node in body:
+        yield node
+        if isinstance(node, _NESTING):
+            blocks = [node.body, getattr(node, "orelse", []),
+                      getattr(node, "finalbody", [])]
+            blocks += [h.body for h in getattr(node, "handlers", [])]
+            for block in blocks:
+                yield from _module_stmts(block)
 
 
 def _ast_module(tree: ast.Module, path: str, files: list[str]) -> dict:
     raw = _raw()
-    for node in tree.body:
-        names: list[tuple[str, str]] = []  # (name, kind)
+    seen: set[str] = set()
+
+    def add(name: str, kind: str, sig: str | None) -> None:
+        if name in seen:  # duplicate binding (reassignment, if/else twin)
+            return
+        seen.add(name)
+        if _is_test(path):
+            if kind == "function" and name.startswith("test_"):
+                raw["tests"] += 1
+        elif not name.startswith("_"):
+            sym = {"kind": kind, "name": name}
+            if sig:
+                sym["signature"] = sig
+            raw["symbols"].append(sym)
+
+    for node in _module_stmts(tree.body):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            names = [(node.name, "function")]
+            add(node.name, "function", _function_sig(node.args, node.returns))
         elif isinstance(node, ast.ClassDef):
-            names = [(node.name, "class")]
+            add(node.name, "class", _class_sig(node.bases, node.keywords))
         elif isinstance(node, ast.Assign):
-            names = [(t.id, "variable") for t in node.targets if isinstance(t, ast.Name)]
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    add(t.id, "variable",
+                        _variable_sig_from_text(f"= {ast.unparse(node.value)}"))
+                elif isinstance(t, (ast.Tuple, ast.List)):
+                    vals = (node.value.elts
+                            if isinstance(node.value, (ast.Tuple, ast.List))
+                            and len(node.value.elts) == len(t.elts)
+                            else [None] * len(t.elts))
+                    for e, v in zip(t.elts, vals):
+                        if isinstance(e, ast.Name):
+                            add(e.id, "variable",
+                                _variable_sig_from_text(f"= {ast.unparse(v)}")
+                                if v is not None else None)
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            names = [(node.target.id, "variable")]
-        for name, kind in names:
-            if _is_test(path):
-                if kind == "function" and name.startswith("test_"):
-                    raw["tests"] += 1
-            elif not name.startswith("_"):
-                sym = {"kind": kind, "name": name}
-                sig = _ast_signature(node)
-                if sig:
-                    sym["signature"] = sig
-                raw["symbols"].append(sym)
+            text = (f"= {ast.unparse(node.value)}" if node.value is not None
+                    else f": {ast.unparse(node.annotation)}")
+            add(node.target.id, "variable", _variable_sig_from_text(text))
+
     pkg = list(PurePosixPath(path).parent.parts)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -221,15 +365,19 @@ def _ast_module(tree: ast.Module, path: str, files: list[str]) -> dict:
     return _finish(raw, path)
 
 
-def _project_ast(root: Path) -> dict[str, dict]:
-    files = sorted(
-        str(p.relative_to(root).as_posix())
-        for p in root.rglob("*.py")
-        if not _pruned(PurePosixPath(p.relative_to(root).as_posix()))
-    )
+def _project_ast(root: Path, files: list[str]) -> dict[str, dict]:
     out = {}
     for path in files:
-        tree = ast.parse((root / path).read_text(encoding="utf-8"), filename=path)
+        try:
+            tree = ast.parse((root / path).read_text(encoding="utf-8"), filename=path)
+        except (SyntaxError, UnicodeDecodeError, ValueError, OSError):
+            # deterministic marker (no message text: it varies by Python
+            # version) — the map records the file exists and says why it
+            # carries no surface, instead of aborting the whole map.
+            marker = _finish(_raw(), path)
+            marker["unparsed"] = True
+            out[path] = marker
+            continue
         out[path] = _ast_module(tree, path, files)
     return out
 
@@ -254,8 +402,10 @@ def _map_files(root: Path) -> list[Path]:
     )
 
 
-def _interface_hash(entry: dict) -> str:
-    surface = entry["tests"] if "tests" in entry else entry["symbols"]
+def _interface_hash(path: str, entry: dict) -> str:
+    surface = [path,
+               entry["tests"] if "tests" in entry else entry["symbols"],
+               entry.get("unparsed", False)]
     return hashlib.sha1(
         json.dumps(surface, sort_keys=True).encode("utf-8")
     ).hexdigest()[:12]
@@ -275,20 +425,21 @@ def _load_notes(root: Path, shard: str) -> dict:
 def _assemble(root: Path, modules: dict[str, dict], producer: str):
     """Fold sidecar notes in; render one deterministic doc per shard.
 
-    Returns ({shard relpath: rendered bytes-as-str}, stale, unannotated).
+    Returns ({shard relpath: rendered text}, stale, unannotated, orphans).
     """
     gen = ({"producer": "codegraph", "codegraph": CODEGRAPH_VERSION}
            if producer == "codegraph" else {"producer": "ast"})
     shards: dict[str, dict] = {}
     for path, entry in modules.items():
         shards.setdefault(_shard_dir(root, path), {})[path] = entry
-    rendered, stale, unannotated = {}, [], []
+    rendered, stale, unannotated, orphans = {}, [], [], []
     for sdir in sorted(shards):
         notes = _load_notes(root, sdir)
+        orphans.extend(sorted(set(notes) - set(shards[sdir])))
         folded = {}
         for path in sorted(shards[sdir]):
             entry = shards[sdir][path]
-            h = _interface_hash(entry)
+            h = _interface_hash(path, entry)
             note = notes.get(path)
             if isinstance(note, dict) and note.get("hash") == h:
                 entry = {**entry, "responsibility": note.get("note")}
@@ -300,7 +451,7 @@ def _assemble(root: Path, modules: dict[str, dict], producer: str):
         doc = {"version": 1, "generator": gen, "modules": folded}
         rel = MAP_NAME if sdir == "." else f"{sdir}/{MAP_NAME}"
         rendered[rel] = json.dumps(doc, indent=1, sort_keys=True) + "\n"
-    return rendered, stale, unannotated
+    return rendered, stale, unannotated, sorted(orphans)
 
 
 def _resolve_producer(root: Path, producer: str | None, db: str | None):
@@ -325,47 +476,64 @@ def _resolve_producer(root: Path, producer: str | None, db: str | None):
     return producer, db_path
 
 
-def _build(root: Path, producer: str | None, db: str | None):
+def _build(root: Path, producer: str | None, db: str | None) -> dict:
+    """Project + assemble, no writes. ``root`` must already be resolved."""
     producer, db_path = _resolve_producer(root, producer, db)
+    files = _py_files(root)
     if producer == "codegraph":
         if not db_path.is_file():
             raise MapError(
                 f"codegraph index not found at {db_path} — run `codegraph init` "
                 "there, pass --db, or regenerate with --producer ast")
-        conn = index_client.open_ro(str(db_path))
         try:
-            modules = _project_codegraph(conn)
+            conn = index_client.open_ro(str(db_path))
+        except index_client.Error as e:
+            raise MapError(f"cannot open codegraph index {db_path}: {e}") from None
+        try:
+            modules = _project_codegraph(conn, root, files)
+        except index_client.Error as e:
+            raise MapError(f"codegraph index unreadable ({db_path}): {e}") from None
         finally:
             conn.close()
     else:
-        modules = _project_ast(root)
-    rendered, stale, unannotated = _assemble(root, modules, producer)
-    return producer, rendered, stale, unannotated
+        modules = _project_ast(root, files)
+    rendered, stale, unannotated, orphans = _assemble(root, modules, producer)
+    return {"producer": producer, "rendered": rendered, "stale": stale,
+            "unannotated": unannotated, "orphan_notes": orphans,
+            "module_count": len(modules)}
 
 
 # ---------------------------------------------------------------------------
 # Public interface
 
 
-def generate(root: Path, *, producer: str | None = None, db: str | None = None) -> dict:
-    """Regenerate and write every shard; report what an annotator needs."""
-    root = Path(root)
-    producer, rendered, stale, unannotated = _build(root, producer, db)
-    for rel, text in rendered.items():
+def generate(root, *, producer: str | None = None, db: str | None = None) -> dict:
+    """Regenerate and write every shard, prune orphaned ones; report what an
+    annotator needs. The ONE mutating entry point."""
+    root = _resolve_root(root)
+    existing = {str(p.relative_to(root).as_posix()) for p in _map_files(root)}
+    b = _build(root, producer, db)
+    for rel, text in b["rendered"].items():
         (root / rel).write_text(text, encoding="utf-8")
-    n = sum(len(json.loads(t)["modules"]) for t in rendered.values())
-    return {"producer": producer, "shards": sorted(rendered), "modules": n,
-            "stale_notes": stale, "unannotated": unannotated}
+    removed = sorted(existing - set(b["rendered"]))
+    for rel in removed:
+        (root / rel).unlink()
+    return {"producer": b["producer"], "shards": sorted(b["rendered"]),
+            "modules": b["module_count"], "stale_notes": b["stale"],
+            "unannotated": b["unannotated"], "removed_shards": removed,
+            "orphan_notes": b["orphan_notes"]}
 
 
-def check(root: Path, *, producer: str | None = None, db: str | None = None) -> dict:
-    """Regenerate + diff against what was on disk; fail naming the module."""
-    root = Path(root)
+def check(root, *, producer: str | None = None, db: str | None = None) -> dict:
+    """Regenerate in memory + diff against the bytes on disk; fail naming the
+    module. Pure: never writes, so a red check cannot self-clear — the fix is
+    `devloop map` plus a commit."""
+    root = _resolve_root(root)
     old = {str(p.relative_to(root).as_posix()): p.read_text(encoding="utf-8")
            for p in _map_files(root)}
-    producer, rendered, stale, _ = _build(root, producer, db)
-    drifted = []
-    for rel, text in rendered.items():
+    b = _build(root, producer, db)
+    drifted, generator_changed = [], []
+    for rel, text in b["rendered"].items():
         if old.get(rel) == text:
             continue
         try:
@@ -375,17 +543,18 @@ def check(root: Path, *, producer: str | None = None, db: str | None = None) -> 
         after = json.loads(text)["modules"]
         changed = sorted(k for k in set(before) | set(after)
                          if before.get(k) != after.get(k))
-        drifted.extend(changed or [f"{rel} (generator)"])
-        (root / rel).write_text(text, encoding="utf-8")
-    for rel in sorted(set(old) - set(rendered)):
-        drifted.append(f"{rel} (removed shard)")
-    ok = not drifted and not stale
-    return {"ok": ok, "producer": producer, "shards": sorted(rendered),
-            "drifted": drifted, "stale_notes": stale}
+        if changed:
+            drifted.extend(changed)
+        else:
+            generator_changed.append(rel)
+    removed_shards = sorted(set(old) - set(b["rendered"]))
+    ok = not (drifted or generator_changed or removed_shards or b["stale"])
+    return {"ok": ok, "producer": b["producer"], "shards": sorted(b["rendered"]),
+            "drifted": drifted, "generator_changed": generator_changed,
+            "removed_shards": removed_shards, "stale_notes": b["stale"]}
 
 
 def _committed_modules(root: Path) -> dict[str, dict]:
-    root = Path(root)
     files = _map_files(root)
     if not files:
         raise MapError(f"no {MAP_NAME} under {root} — run `devloop map` first")
@@ -410,13 +579,13 @@ def _in_focus(dirname: str, focus_dirs: list[str]) -> bool:
 
 def _module_line(path: str, entry: dict) -> str:
     if "tests" in entry:
-        return f"{path} — {entry['tests']} tests"
+        return f"{path} - {entry['tests']} tests"
     resp = entry.get("responsibility")
-    n = f"({len(entry['symbols'])} symbols)"
-    return f"{path} — {resp} {n}" if resp else f"{path} {n}"
+    n = f"({len(entry.get('symbols', []))} symbols)"
+    return f"{path} - {resp} {n}" if resp else f"{path} {n}"
 
 
-def catalog(root: Path, *, budget_lines: int, focus: list[str]) -> str:
+def catalog(root, *, budget_lines: int, focus: list[str]) -> str:
     """Tier-1 rollup over the committed shards.
 
     Everything expands when it fits the budget; over budget, only the
@@ -425,7 +594,7 @@ def catalog(root: Path, *, budget_lines: int, focus: list[str]) -> str:
     alone exceeding the budget still overflows; upgrade path is a
     recursive tree fold.
     """
-    modules = _committed_modules(root)
+    modules = _committed_modules(_resolve_root(root))
     full = [_module_line(p, modules[p]) for p in sorted(modules)]
     if len(full) <= budget_lines:
         return "\n".join(full)
@@ -445,13 +614,13 @@ def catalog(root: Path, *, budget_lines: int, focus: list[str]) -> str:
                 parts.append(f"{syms} symbols")
             if tests:
                 parts.append(f"{tests} tests")
-            lines.append(f"{d}/ — " + ", ".join(parts))
+            lines.append(f"{d}/ - " + ", ".join(parts))
     return "\n".join(lines)
 
 
-def slice_modules(root: Path, paths: list[str]) -> dict:
+def slice_modules(root, paths: list[str]) -> dict:
     """Tier-2 detail: full entries for modules under the given paths."""
-    modules = _committed_modules(root)
+    modules = _committed_modules(_resolve_root(root))
     prefixes = [p.rstrip("/") for p in paths]
     keep = {m: e for m, e in modules.items()
             if any(m == p or m.startswith(p + "/") for p in prefixes)}

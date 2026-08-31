@@ -530,6 +530,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if failed else 0
     elif args.cmd == "map":
         root = Path(args.root).resolve()
+        if args.check and (args.catalog or args.slice):
+            # a gate flag silently ignored is a gate that verifies nothing
+            print(json.dumps({"error": "--check cannot be combined with the "
+                                       "read views --catalog/--slice"}))
+            return 2
         try:
             if args.catalog:
                 print(codemap.catalog(root, budget_lines=args.budget_lines,

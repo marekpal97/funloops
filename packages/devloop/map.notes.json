@@ -1,54 +1,54 @@
 {
  "packages/devloop/devloop/__main__.py": {
-  "hash": "97d170e1550e",
+  "hash": "85816d69bd07",
   "note": "python -m devloop -> cli.main"
  },
  "packages/devloop/devloop/board.py": {
-  "hash": "a36018af8a4e",
+  "hash": "aeb0be3c35c2",
   "note": "board hygiene: the grammar dag.py reads, as checks + sweep ops"
  },
  "packages/devloop/devloop/cli.py": {
-  "hash": "b0520d1514a4",
+  "hash": "a8a94e0a7438",
   "note": "entry point: argparse, config resolution, dispatch — the package's one external interface"
  },
  "packages/devloop/devloop/codemap.py": {
-  "hash": "431998e7c176",
+  "hash": "9cfcd047a008",
   "note": "architecture rail: map.json shards projected from codegraph's SQLite, ast fallback"
  },
  "packages/devloop/devloop/dag.py": {
-  "hash": "b3a46d5c1db4",
+  "hash": "ae1201180197",
   "note": "tracker-as-DAG math + the body-grammar it parses"
  },
  "packages/devloop/devloop/gates.py": {
-  "hash": "a34a2e9974bf",
+  "hash": "90456e9e9127",
   "note": "Gate protocol + deterministic executors"
  },
  "packages/devloop/devloop/github.py": {
-  "hash": "01f15ca02aed",
+  "hash": "da690dfdc668",
   "note": "gh plumbing: issue snapshot + tracker mutations"
  },
  "packages/devloop/devloop/index_client.py": {
-  "hash": "eaaa3ef028bf",
+  "hash": "82042f6f35c5",
   "note": "the sqlite-RO seam into the derived index"
  },
  "packages/devloop/devloop/paths.py": {
-  "hash": "154b0c5fc1bd",
+  "hash": "d3932267e339",
   "note": "leaf util: the three-form path matcher"
  },
  "packages/devloop/devloop/trajectory/__init__.py": {
-  "hash": "97d170e1550e",
+  "hash": "e90cb1b6060a",
   "note": "re-exports the trajectory module's public interface"
  },
  "packages/devloop/devloop/trajectory/mint.py": {
-  "hash": "5894702c129e",
+  "hash": "c3922524b7ff",
   "note": "write face: trajectory-note payload assembly"
  },
  "packages/devloop/devloop/trajectory/prime.py": {
-  "hash": "6dadc58a6533",
+  "hash": "5acf618a6516",
   "note": "read face: claim-time prior-trajectory context"
  },
  "packages/devloop/devloop/triage.py": {
-  "hash": "df3034f6d0db",
+  "hash": "f69e35c48f78",
   "note": "risk-lane classification of shipped PRs"
  }
 }
