@@ -89,7 +89,7 @@ def test_nested_repo_does_not_inherit_an_ancestor_overlay(tmp_path):
     assert cli.find_constitution(inner) == [cli.PACKAGE_CONSTITUTION]
 
 
-def test_the_package_checkout_serves_its_own_copy_once(tmp_path):
+def test_the_package_checkout_serves_its_own_copy_once():
     """Walking up from inside packages/devloop finds the packaged file itself;
     it must not be served twice (once as default, once as 'overlay')."""
     assert cli.find_constitution(cli.REPO_ROOT / "devloop") == [

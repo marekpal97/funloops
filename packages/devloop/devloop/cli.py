@@ -107,8 +107,7 @@ def find_constitution(start: Path | None = None) -> list[Path]:
     # ponytail: byte-equality dedupes the reachable case (worktrees of the
     # same commit); a DIVERGED copy of the packaged file in another checkout
     # still serves twice. Upgrade path: anchor on repo-relative position.
-    if overlay is None or overlay == PACKAGE_CONSTITUTION or \
-            overlay.read_bytes() == PACKAGE_CONSTITUTION.read_bytes():
+    if overlay is None or overlay.read_bytes() == PACKAGE_CONSTITUTION.read_bytes():
         return [PACKAGE_CONSTITUTION]
     return [PACKAGE_CONSTITUTION, overlay]
 
