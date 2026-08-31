@@ -64,8 +64,11 @@ Eight public names. `trajectory/` is **one module** with two implementation
 files — its interface is what `trajectory/__init__.py` re-exports; `mint.py`
 and `prime.py` are internal seams, not siblings (§4). There is no `config.py`,
 no `utils.py`, no `git.py` (§2.1, §6). `docs/agents/` is the other plane's home
-and imports nothing: the command doc, the vendored skills, this spec, and the
-repo's `loop.toml` beside the host-neutral `loop.toml.template`.
+and imports nothing: the command doc, the vendored skills, this spec, the
+packaged constitution (the default every installing repo inherits and may
+extend via its own `docs/agents/constitution.md`; resolution contract
+`cli.find_constitution`), and the repo's `loop.toml` beside the host-neutral
+`loop.toml.template`.
 
 Per-module interfaces:
 
