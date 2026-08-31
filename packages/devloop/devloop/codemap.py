@@ -17,18 +17,24 @@ Two producers, one shape:
   cannot be read or parsed gets a deterministic ``"unparsed": true``
   entry instead of aborting the map.
 
-Producer parity is by construction, not by luck: every signature is
-normalized through the same functions (`_function_sig` over parsed arg
-nodes; `_variable_sig_from_text`, which re-parses the value expression
-and unparses it, omitting anything unparseable or longer than
-``VAR_SIG_MAX`` rather than truncating mid-token), and ``__future__``
-never counts as an external import.
+Producer parity is by construction: every signature is normalized
+through the same functions (`_function_sig` over parsed arg nodes;
+`_variable_sig_from_text`, which re-parses the value expression and
+unparses it, omitting anything unparseable or longer than
+``VAR_SIG_MAX`` — set to codegraph's own truncation point — rather than
+cutting mid-token), only module-level imports count on either side, and
+``__future__`` never counts as an external import. Residual divergence
+is still possible where codegraph's extraction itself differs on exotic
+syntax; the committed ``generator`` pin keeps any flip explicit.
 
 The map is git-anchored: the root resolves to ``git rev-parse
 --show-toplevel`` (so a subdirectory invocation cannot mint a second key
-space) and the file list comes from ``git ls-files`` (so untracked
-scratch files never enter the committed artifact); outside a git repo
-both fall back to the given root and a pruned rglob.
+space) and the file list is ``git ls-files`` — TRACKED files only, a
+stated rule: the gate compares against the committed map and the PR
+ships tracked content, so an unstaged new module is invisible to both
+until ``git add``. Outside a git repo both fall back to the given root
+and a pruned rglob. A tracked file deleted from the working tree drops
+out of the map (codegraph producer: it fails freshness instead).
 
 The committed artifact pins its producer: generate/check reuse the
 ``generator`` recorded in existing shards, so a machine that happens to
@@ -51,6 +57,10 @@ bytes on disk, never writing — a red check stays red until ``devloop
 map`` (the one mutating entry point) regenerates the shards and the
 result is committed. ``generate`` also prunes shards that no longer
 have modules and reports sidecar keys with no module (``orphan_notes``).
+Both prune and overwrite touch ONLY files ``_is_shard`` recognizes as
+devloop-authored — a foreign map.json (tilemap, style file) is left
+alone, and a foreign file squatting a shard path is a refusal, not an
+overwrite.
 
 Test modules (under a ``tests`` dir or named ``test_*.py``) carry a
 ``tests`` count instead of a symbols list: they dominate raw symbol
@@ -72,9 +82,11 @@ MAP_NAME = "map.json"
 NOTES_NAME = "map.notes.json"
 SKIP_DIRS = {"__pycache__", "node_modules", "dist", "build", "venv"}
 # Variable values longer than this omit the signature entirely (never cut
-# mid-token): codegraph pre-truncates long values into unparseable text, so
-# omission is the only rule both producers can agree on.
-VAR_SIG_MAX = 120
+# mid-token). 102 is codegraph 1.6.0's own truncation point for stored
+# variable signatures (measured on a live index): a matching cap keeps the
+# producers aligned across the whole range — anything codegraph would
+# truncate, the ast side omits too.
+VAR_SIG_MAX = 102
 
 
 class MapError(Exception):
@@ -88,9 +100,9 @@ class MapError(Exception):
 def _git(root, *args: str) -> str | None:
     try:
         r = subprocess.run(["git", "-C", str(root), *args],
-                           capture_output=True, text=True)
-    except OSError:
-        return None
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None  # a hung git (network fs, stale lock) degrades to the fallback
     return r.stdout if r.returncode == 0 else None
 
 
@@ -104,6 +116,11 @@ def _pruned(rel: PurePosixPath) -> bool:
 
 
 def _py_files(root: Path) -> list[str]:
+    # ponytail: TRACKED files only, by choice — the gate compares against the
+    # committed map and the PR ships tracked content, so an unstaged new
+    # module is invisible here exactly as it is invisible to the PR; `git
+    # add` makes it appear in both. The trade: gate stays green until the
+    # add. Upgrade path: union --others --exclude-standard.
     out = _git(root, "ls-files", "-z", "--", "*.py")
     if out is not None:
         return sorted(f for f in out.split("\0") if f)
@@ -138,7 +155,7 @@ def _function_sig_from_text(text: str) -> str | None:
     try:
         fn = ast.parse(f"def _f{_collapse(text)}: pass").body[0]
     except SyntaxError:
-        return _collapse(text) or None
+        return None  # unparseable (e.g. truncated) text: omit, never emit fragments
     return _function_sig(fn.args, fn.returns)
 
 
@@ -151,23 +168,25 @@ def _class_sig_from_text(text: str) -> str | None:
     try:
         cls = ast.parse(f"class _C{_collapse(text)}: pass").body[0]
     except SyntaxError:
-        return _collapse(text) or None
+        return None  # unparseable text: omit, never emit fragments
     return _class_sig(cls.bases, cls.keywords)
 
 
 def _variable_sig_from_text(text: str) -> str | None:
-    """One rule for both producers: re-parse the value, unparse it, omit
-    anything unparseable (codegraph's pre-truncated long values) or over
-    VAR_SIG_MAX (the ast side's full text for the same values)."""
+    """One rule for both producers: re-parse the value (or annotation),
+    unparse it, omit anything unparseable (codegraph's pre-truncated long
+    values) or over VAR_SIG_MAX (the ast side's full text for the same
+    values)."""
     text = _collapse(text)
-    if text.startswith("="):
-        try:
-            value = ast.unparse(ast.parse(text[1:].strip(), mode="eval"))
-        except (SyntaxError, ValueError):
-            return None
-        sig = f"= {value}"
-        return sig if len(sig) <= VAR_SIG_MAX else None
-    return (text or None) if len(text) <= VAR_SIG_MAX else None
+    prefix = text[:1]
+    if prefix not in ("=", ":"):
+        return None
+    try:
+        value = ast.unparse(ast.parse(text[1:].strip(), mode="eval"))
+    except (SyntaxError, ValueError):
+        return None
+    sig = f"{prefix} {value}"
+    return sig if len(sig) <= VAR_SIG_MAX else None
 
 
 def _raw() -> dict:
@@ -209,7 +228,12 @@ def _check_freshness(conn, root: Path, disk_files: list[str]) -> None:
         "SELECT path, content_hash FROM files WHERE language='python'")}
     stale = set(disk_files) ^ set(indexed)
     for p in set(disk_files) & set(indexed):
-        if hashlib.sha256((root / p).read_bytes()).hexdigest() != indexed[p]:
+        try:
+            data = (root / p).read_bytes()
+        except OSError:
+            stale.add(p)  # listed by git but unreadable/gone: the index can't match
+            continue
+        if hashlib.sha256(data).hexdigest() != indexed[p]:
             stale.add(p)
     if stale:
         names = sorted(stale)
@@ -280,7 +304,8 @@ _NESTING = (ast.If, ast.Try, ast.With) + (
 
 def _module_stmts(body):
     """Module-level statements, descending into if/try/with blocks — a
-    version-guarded def is public surface too."""
+    version-guarded def is public surface too. The block set is deliberate,
+    not exhaustive: match/for/while/async-with definitions stay invisible."""
     for node in body:
         yield node
         if isinstance(node, _NESTING):
@@ -309,7 +334,12 @@ def _ast_module(tree: ast.Module, path: str, files: list[str]) -> dict:
             raw["symbols"].append(sym)
 
     for node in _module_stmts(tree.body):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            # module-level only (guarded blocks included): codegraph's
+            # file-level import view never sees a function-local import,
+            # so counting them here would break producer parity.
+            _add_imports(node, path, files, raw)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             add(node.name, "function", _function_sig(node.args, node.returns))
         elif isinstance(node, ast.ClassDef):
             add(node.name, "class", _class_sig(node.bases, node.keywords))
@@ -333,47 +363,56 @@ def _ast_module(tree: ast.Module, path: str, files: list[str]) -> dict:
                     else f": {ast.unparse(node.annotation)}")
             add(node.target.id, "variable", _variable_sig_from_text(text))
 
-    pkg = list(PurePosixPath(path).parent.parts)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                hit = _resolve(alias.name, files)
-                if hit:
-                    raw["internal"].add(hit)
-                else:
-                    raw["external"].add(alias.name.split(".")[0])
-        elif isinstance(node, ast.ImportFrom):
-            if node.level == 0:
-                for alias in node.names:
-                    hit = (_resolve(f"{node.module}.{alias.name}", files)
-                           or _resolve(node.module or "", files))
-                    if hit:
-                        raw["internal"].add(hit)
-                    elif node.module:
-                        raw["external"].add(node.module.split(".")[0])
-            else:  # relative: anchored at the file's own package, never external
-                base = pkg if node.level == 1 else pkg[: len(pkg) - (node.level - 1)]
-                anchor = "/".join(base + (node.module or "").split("."))
-                anchor = anchor.strip("/")
-                for alias in node.names:
-                    for cand in (f"{anchor}/{alias.name}.py",
-                                 f"{anchor}/{alias.name}/__init__.py",
-                                 f"{anchor}.py", f"{anchor}/__init__.py"):
-                        if cand.strip("/") in files:
-                            raw["internal"].add(cand.strip("/"))
-                            break
     return _finish(raw, path)
+
+
+def _add_imports(node, path: str, files: list[str], raw: dict) -> None:
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            hit = _resolve(alias.name, files)
+            if hit:
+                raw["internal"].add(hit)
+            else:
+                raw["external"].add(alias.name.split(".")[0])
+    elif node.level == 0:
+        for alias in node.names:
+            hit = (_resolve(f"{node.module}.{alias.name}", files)
+                   or _resolve(node.module or "", files))
+            if hit:
+                raw["internal"].add(hit)
+            elif node.module:
+                raw["external"].add(node.module.split(".")[0])
+    else:  # relative: anchored at the file's own package, never external
+        pkg = list(PurePosixPath(path).parent.parts)
+        base = pkg if node.level == 1 else pkg[: len(pkg) - (node.level - 1)]
+        anchor = "/".join(base + (node.module or "").split("."))
+        anchor = anchor.strip("/")
+        for alias in node.names:
+            for cand in (f"{anchor}/{alias.name}.py",
+                         f"{anchor}/{alias.name}/__init__.py",
+                         f"{anchor}.py", f"{anchor}/__init__.py"):
+                if cand.strip("/") in files:
+                    raw["internal"].add(cand.strip("/"))
+                    break
 
 
 def _project_ast(root: Path, files: list[str]) -> dict[str, dict]:
     out = {}
     for path in files:
         try:
-            tree = ast.parse((root / path).read_text(encoding="utf-8"), filename=path)
-        except (SyntaxError, UnicodeDecodeError, ValueError, OSError):
-            # deterministic marker (no message text: it varies by Python
-            # version) — the map records the file exists and says why it
-            # carries no surface, instead of aborting the whole map.
+            text = (root / path).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue  # tracked but deleted from the working tree: no source, no module
+        except (OSError, UnicodeDecodeError):
+            text = None
+        try:
+            tree = ast.parse(text, filename=path) if text is not None else None
+        except (SyntaxError, ValueError):
+            tree = None
+        if tree is None:
+            # present but unreadable/unparseable: deterministic marker (no
+            # message text — it varies by Python version) instead of
+            # aborting the whole map.
             marker = _finish(_raw(), path)
             marker["unparsed"] = True
             out[path] = marker
@@ -395,10 +434,24 @@ def _shard_dir(root: Path, path: str) -> str:
     return "."
 
 
+def _is_shard(p: Path) -> bool:
+    """Only files this tool authored count as shards. map.json is a common
+    filename (tilemaps, Mapbox/ArcGIS styles, asset manifests) — a foreign
+    one is never pruned, never overwritten, never read as ours."""
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return (isinstance(doc, dict) and doc.get("version") == 1
+            and isinstance(doc.get("generator"), dict)
+            and "producer" in doc["generator"])
+
+
 def _map_files(root: Path) -> list[Path]:
     return sorted(
         p for p in root.rglob(MAP_NAME)
         if not _pruned(PurePosixPath(p.relative_to(root).as_posix()))
+        and _is_shard(p)
     )
 
 
@@ -513,8 +566,15 @@ def generate(root, *, producer: str | None = None, db: str | None = None) -> dic
     root = _resolve_root(root)
     existing = {str(p.relative_to(root).as_posix()) for p in _map_files(root)}
     b = _build(root, producer, db)
+    foreign = sorted(rel for rel in b["rendered"]
+                     if rel not in existing and (root / rel).exists())
+    if foreign:
+        raise MapError(
+            f"{', '.join(foreign)}: a file already exists there and is not a "
+            "devloop shard — refusing to overwrite it")
     for rel, text in b["rendered"].items():
         (root / rel).write_text(text, encoding="utf-8")
+    # prune only shards WE authored (per _is_shard) that no longer have modules
     removed = sorted(existing - set(b["rendered"]))
     for rel in removed:
         (root / rel).unlink()
@@ -548,10 +608,15 @@ def check(root, *, producer: str | None = None, db: str | None = None) -> dict:
         else:
             generator_changed.append(rel)
     removed_shards = sorted(set(old) - set(b["rendered"]))
+    # orphan_notes is advisory, not part of ok: an orphaned sidecar entry is
+    # inert (nothing folds it into map.json), unlike a stale note which
+    # would describe a live module wrongly — surfacing without gating spares
+    # a sidecar-edit commit for every file deletion.
     ok = not (drifted or generator_changed or removed_shards or b["stale"])
     return {"ok": ok, "producer": b["producer"], "shards": sorted(b["rendered"]),
             "drifted": drifted, "generator_changed": generator_changed,
-            "removed_shards": removed_shards, "stale_notes": b["stale"]}
+            "removed_shards": removed_shards, "stale_notes": b["stale"],
+            "orphan_notes": b["orphan_notes"]}
 
 
 def _committed_modules(root: Path) -> dict[str, dict]:

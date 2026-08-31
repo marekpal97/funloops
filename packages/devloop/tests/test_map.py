@@ -54,6 +54,7 @@ CORE_SRC = textwrap.dedent(
     LIMIT = 5
 
     def run(x: int) -> str:
+        import os as _os  # function-local: not part of the module's import surface
         return helper.fmt(x)
 
     def _private() -> None:
@@ -61,7 +62,11 @@ CORE_SRC = textwrap.dedent(
     """
 )
 
+# BAND's normalized value sits INSIDE the 103-120 band where codegraph's own
+# 102-char truncation bites but a higher ast-side cap would not — the exact
+# parity band review round 2 measured live (board.RUNG_ROLES, gates.JUDGMENT).
 HELPER_SRC = (
+    f'BAND = "{"b" * 104}"\n'
     'TRUNC = ("aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", '
     '"cccccccccccccccccccc", "dddddddddddddddddddd", "eeeeeeeeeeeeeeeeeeee", '
     '"ffffffffffffffffffff")\n'
@@ -87,6 +92,7 @@ EXPECTED_CORE = {
 EXPECTED_HELPER = {
     "responsibility": None,
     "symbols": [
+        {"kind": "variable", "name": "BAND"},
         {"kind": "variable", "name": "TRUNC"},
         {"kind": "function", "name": "fmt", "signature": "(x: int) -> str"},
     ],
@@ -177,9 +183,13 @@ def make_codegraph_db(path, version: str, root):
     node("n7", "import", "fx.helper", "fx.helper", "fx/core.py", None, 4)
     # NO __future__ import node: real codegraph never records one.
     # codegraph pre-truncates long values into unparseable text — omitted.
+    # BAND is stored truncated at 102 chars + ellipsis (the measured 1.6.0
+    # behavior); TRUNC is far over every cap.
     node("n8", "variable", "TRUNC", "TRUNC", "fx/helper.py",
-         '= ("aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", "...', 1)
-    node("n9", "function", "fmt", "fmt", "fx/helper.py", "(x: int) -> str", 4)
+         '= ("aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", "...', 2)
+    node("n8b", "variable", "BAND", "BAND", "fx/helper.py",
+         '= "' + "b" * 99 + "...", 1)
+    node("n9", "function", "fmt", "fmt", "fx/helper.py", "(x: int) -> str", 5)
     node("n10", "function", "test_a", "test_a", "tests/test_core.py", "()", 1)
     node("n11", "function", "test_b", "test_b", "tests/test_core.py", "()", 5)
     db.execute("INSERT INTO edges (source, target, kind) VALUES "
@@ -417,6 +427,81 @@ def test_unparseable_files_are_marked_not_fatal(tmp_path):
     assert doc["modules"]["bad.py"]["unparsed"] is True
     assert doc["modules"]["legacy.py"]["unparsed"] is True
     assert codemap.check(root)["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Shard identity: map.json is a common filename (tilemaps, style files) —
+# a foreign one is never pruned, never overwritten, never read as ours
+
+FOREIGN_MAP = json.dumps({"version": 8, "tiles": [[1, 2], [3, 4]]})
+
+
+def test_foreign_map_json_is_never_pruned_or_read(tmp_path):
+    root = make_repo(tmp_path)
+    assets = root / "assets"
+    assets.mkdir()
+    (assets / "map.json").write_text(FOREIGN_MAP)
+    report = codemap.generate(root)
+    assert report["removed_shards"] == []
+    assert (assets / "map.json").read_text() == FOREIGN_MAP
+    check = codemap.check(root)
+    assert check["ok"] is True
+    assert check["removed_shards"] == []
+    # and a foreign file never contributes modules to the read views
+    assert "tiles" not in codemap.slice_modules(root, [""])["modules"]
+
+
+def test_generate_refuses_to_overwrite_foreign_map_json(tmp_path):
+    root = make_repo(tmp_path)
+    (root / "map.json").write_text(FOREIGN_MAP)  # squats the root shard's path
+    with pytest.raises(codemap.MapError, match="not a devloop shard"):
+        codemap.generate(root)
+    assert (root / "map.json").read_text() == FOREIGN_MAP
+
+
+# ---------------------------------------------------------------------------
+# A tracked file deleted from the working tree: dropped by the ast producer,
+# named as stale by the codegraph producer — never a raw traceback
+
+
+def _git_repo(root):
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    return root
+
+
+def test_deleted_tracked_file_is_stale_not_a_traceback(tmp_path):
+    root = _git_repo(make_repo(tmp_path))
+    db = make_codegraph_db(tmp_path / "cg.db", codemap.CODEGRAPH_VERSION, root)
+    (root / "fx" / "helper.py").unlink()  # rm without git rm: still in the index
+    with pytest.raises(codemap.MapError, match=r"behind the worktree.*fx/helper\.py"):
+        codemap.generate(root, producer="codegraph", db=db)
+
+
+def test_deleted_tracked_file_drops_from_ast_map(tmp_path):
+    root = _git_repo(make_repo(tmp_path))
+    codemap.generate(root)
+    (root / "fx" / "helper.py").unlink()
+    report = codemap.check(root)
+    assert report["ok"] is False
+    assert "fx/helper.py" in report["drifted"]
+    codemap.generate(root)
+    assert "fx/helper.py" not in read_map(root)["modules"]
+
+
+# ---------------------------------------------------------------------------
+# check surfaces orphan notes (advisory: an orphan can't mislead the map,
+# unlike a stale note, so it reports without failing the gate)
+
+
+def test_check_reports_orphan_notes_without_failing(tmp_path):
+    root = make_repo(tmp_path)
+    codemap.generate(root)
+    (root / "map.notes.json").write_text(json.dumps(
+        {"gone.py": {"hash": "x", "note": "orphan"}}))
+    report = codemap.check(root)
+    assert report["ok"] is True
+    assert report["orphan_notes"] == ["gone.py"]
 
 
 # ---------------------------------------------------------------------------

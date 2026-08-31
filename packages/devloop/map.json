@@ -194,7 +194,7 @@
     {
      "kind": "variable",
      "name": "VAR_SIG_MAX",
-     "signature": "= 120"
+     "signature": "= 102"
     },
     {
      "kind": "function",
@@ -514,7 +514,6 @@
   "packages/devloop/devloop/triage.py": {
    "imports_external": [],
    "imports_internal": [
-    "packages/devloop/devloop/cli.py",
     "packages/devloop/devloop/paths.py"
    ],
    "responsibility": "risk-lane classification of shipped PRs",
@@ -566,11 +565,9 @@
   },
   "packages/devloop/tests/test_issue_loop.py": {
    "imports_external": [
-    "argparse",
     "json",
     "pytest",
-    "sqlite3",
-    "subprocess"
+    "sqlite3"
    ],
    "imports_internal": [
     "packages/devloop/devloop/cli.py",
@@ -616,7 +613,7 @@
     "packages/devloop/devloop/codemap.py"
    ],
    "responsibility": null,
-   "tests": 24
+   "tests": 29
   }
  },
  "version": 1

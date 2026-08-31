@@ -712,6 +712,12 @@ uv run devloop map --catalog --budget-lines 40 --slice packages/devloop/devloop
 uv run devloop map --slice packages/devloop/devloop      # tier-2 JSON detail
 ```
 
+The map is git-anchored: any invocation directory resolves to the repo
+toplevel, and only **tracked** files map — untracked scratch never enters the
+artifact, and a new module appears once `git add`ed (exactly when it enters
+the PR). `devloop map` prunes only shards it authored; a foreign `map.json`
+(a tilemap, a style file) is never touched.
+
 Dispatch context: splice `--catalog` (tier-1, budget-capped; the `--slice`
 paths keep the issue's subtree expanded while the rest rolls up) and
 `--slice` (tier-2) for the files the issue touches. Test modules appear as

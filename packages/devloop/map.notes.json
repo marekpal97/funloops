@@ -12,7 +12,7 @@
   "note": "entry point: argparse, config resolution, dispatch — the package's one external interface"
  },
  "packages/devloop/devloop/codemap.py": {
-  "hash": "9cfcd047a008",
+  "hash": "d7614e138e09",
   "note": "architecture rail: map.json shards projected from codegraph's SQLite, ast fallback"
  },
  "packages/devloop/devloop/dag.py": {

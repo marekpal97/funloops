@@ -351,7 +351,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_map.add_argument("--slice", default="", metavar="PATH,PATH",
                        help="tier-2 detail for these subtrees (with --catalog: "
                             "the subtrees kept expanded)")
-    p_map.add_argument("--root", default=".", help="repo root to map")
+    p_map.add_argument("--root", default=".",
+                       help="any path inside the repo to map — resolved to "
+                            "its git toplevel (the cwd by default)")
     p_map.add_argument("--producer", default=None, choices=["codegraph", "ast"],
                        help="override the committed generator (default: reuse "
                             "it; else codegraph if an index exists, else ast)")
