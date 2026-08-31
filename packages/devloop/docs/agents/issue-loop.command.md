@@ -692,3 +692,35 @@ executes ops the pure layer emitted; it cannot close an issue, pick a rung, or
 choose a track — those stay findings for a human (or a `/triage` session) to
 resolve. Safe to run unattended: the weekly slow loop runs `doctor` across all
 boards and `sweep --apply` for the op kinds listed in its cron line.
+
+## 6. Architecture map — `devloop map` (funloops#27, dec-462f4b28)
+
+The committed `map.json` shard(s) (one per pyproject-owning dir) are the
+architecture rail: module → responsibility → public symbols + signatures →
+imports, sorted and byte-deterministic, projected from a pinned codegraph
+index when one exists (`.codegraph/codegraph.db`) and from stdlib ast
+otherwise — same shape either way, and the committed `generator` field pins
+which producer the repo uses. The gate is one `[[gates]]` **command** entry
+(kind: command, no new gate kind): a PR that changes a module's public
+surface must carry the regenerated map, so the map delta is reviewable in
+every diff.
+
+```bash
+uv run devloop map                       # regenerate + write the shards
+uv run devloop map --check               # regenerate + diff; exit 1 naming each drifted module
+uv run devloop map --catalog --budget-lines 40 --slice packages/devloop/devloop
+uv run devloop map --slice packages/devloop/devloop      # tier-2 JSON detail
+```
+
+Dispatch context: splice `--catalog` (tier-1, budget-capped; the `--slice`
+paths keep the issue's subtree expanded while the rest rolls up) and
+`--slice` (tier-2) for the files the issue touches. Test modules appear as
+`N tests` lines and stay out of tier-2 unless the issue's paths name them.
+
+Responsibility one-liners live in `map.notes.json` beside each shard, keyed
+by module with the interface hash the note described; `map`/`map --check`
+report `unannotated` and `stale_notes` with current hashes. A stale note
+fails the check naming its module — re-read the module, rewrite the
+one-liner, paste the reported hash. When the implementer's diff drifts the
+map, the fix is mechanical: `uv run devloop map` in the worktree, commit the
+regenerated shard (and any note refresh) with the slice.

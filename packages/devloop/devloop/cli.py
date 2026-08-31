@@ -26,6 +26,10 @@ Subcommands:
   board      — doctor: lint one or more repos' boards against the grammar
                dag.py reads (JSON report, exit 1 on errors); sweep: replay
                the mechanical fixes (--plan by default, --apply runs them)
+  map        — regenerate the committed map.json shard(s) (architecture rail,
+               dec-462f4b28); --check regenerates + diffs, exit 1 naming the
+               drifted module; --catalog/--slice are read views of the
+               committed shards
 
 Stdlib only. Config: the host repo's docs/agents/loop.toml, found by walking up
 from the cwd, else the copy shipped with the package (see find_config).
@@ -39,7 +43,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from devloop import board, dag, github, index_client, trajectory, triage
+from devloop import board, codemap, dag, github, index_client, trajectory, triage
 
 # Imported by name: `main` binds a local `gates` in the trajectory branch,
 # which would shadow a module of that name for the whole function.
@@ -335,6 +339,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          help="sweep: restrict to these op kinds (create_label, add_label, "
                               "remove_label, add_blocker, retitle, delete_label)")
 
+    p_map = sub.add_parser("map", help="committed architecture map (map.json shards)", parents=[common])
+    p_map.add_argument("--check", action="store_true",
+                       help="regenerate + diff against the committed shards; "
+                            "exit 1 naming each drifted module / stale note")
+    p_map.add_argument("--catalog", action="store_true",
+                       help="print the tier-1 rollup of the committed shards")
+    p_map.add_argument("--budget-lines", type=int, default=40,
+                       help="catalog line budget: over it, only the subtree "
+                            "containing --slice paths stays expanded")
+    p_map.add_argument("--slice", default="", metavar="PATH,PATH",
+                       help="tier-2 detail for these subtrees (with --catalog: "
+                            "the subtrees kept expanded)")
+    p_map.add_argument("--root", default=".", help="repo root to map")
+    p_map.add_argument("--producer", default=None, choices=["codegraph", "ast"],
+                       help="override the committed generator (default: reuse "
+                            "it; else codegraph if an index exists, else ast)")
+    p_map.add_argument("--db", default=None,
+                       help="codegraph sqlite path (default <root>/.codegraph/codegraph.db)")
+
     return parser
 
 
@@ -505,4 +528,22 @@ def main(argv: list[str] | None = None) -> int:
                 failed.append({**op, "error": (e.stderr or "").strip()})
         print(json.dumps({"applied": applied, "failed": failed}, indent=2))
         return 1 if failed else 0
+    elif args.cmd == "map":
+        root = Path(args.root).resolve()
+        try:
+            if args.catalog:
+                print(codemap.catalog(root, budget_lines=args.budget_lines,
+                                      focus=_split_csv(args.slice)))
+            elif args.slice:
+                print(json.dumps(codemap.slice_modules(root, _split_csv(args.slice)), indent=2))
+            elif args.check:
+                report = codemap.check(root, producer=args.producer, db=args.db)
+                print(json.dumps(report, indent=2))
+                return 0 if report["ok"] else 1
+            else:
+                report = codemap.generate(root, producer=args.producer, db=args.db)
+                print(json.dumps(report, indent=2))
+        except codemap.MapError as e:
+            print(json.dumps({"error": str(e)}))
+            return 2
     return 0

@@ -26,7 +26,7 @@ The loop is two planes with one seam between them:
 
 The seam between the planes is the **CLI subcommand surface** (JSON on stdout,
 exit codes): `config · plan · claim · release · check · validate · prime ·
-triage · trajectory · board`. That surface is the package's one external interface — the
+triage · trajectory · board · map`. That surface is the package's one external interface — the
 orchestrator knows nothing else. It is reached through the `devloop` console
 script or `python -m devloop`; the two are one entry point, pinned byte-equal
 by `test_funloops_packaging.py`.
@@ -47,6 +47,7 @@ packages/devloop/
     cli.py             entry point: argparse, config resolution, dispatch
     dag.py             tracker-as-DAG math + the body-grammar it parses
     board.py           board hygiene: the grammar dag.py reads, as checks + sweep ops
+    codemap.py         architecture rail: map.json projected from codegraph's SQLite (ast fallback)
     gates.py           Gate protocol + deterministic executors
     triage.py          risk-lane classification of shipped PRs
     paths.py           leaf util: the three-form path matcher
@@ -60,7 +61,7 @@ packages/devloop/
   tests/
 ```
 
-Eight public names. `trajectory/` is **one module** with two implementation
+Nine public names. `trajectory/` is **one module** with two implementation
 files — its interface is what `trajectory/__init__.py` re-exports; `mint.py`
 and `prime.py` are internal seams, not siblings (§4). There is no `config.py`,
 no `utils.py`, no `git.py` (§2.1, §6). `docs/agents/` is the other plane's home
@@ -126,6 +127,18 @@ sweep **op** (`create_label · delete_label · add_label · remove_label ·
 retitle · add_blocker`). `doctor()` runs them all; `plan_sweep()` turns a
 report into the deduped, ordered op list `board sweep --apply` replays.
 Conventions text: `issue-loop.command.md` §Board hygiene.
+
+**`codemap.py`** — the architecture rail (funloops#27, dec-462f4b28):
+`CODEGRAPH_VERSION`, `MapError`, `generate`, `check`, `catalog`,
+`slice_modules`. Projects the committed, byte-deterministic map.json shards
+(module → responsibility → public symbols + signatures → imports; one shard
+per pyproject-owning dir) from a pinned codegraph index, with a stdlib-ast
+fallback of identical shape for repos without Node or an index. The committed
+`generator` field pins the producer; responsibility one-liners live in a
+hash-keyed map.notes.json sidecar so staleness is mechanical. The gate is one
+`[[gates]]` **command** entry (`devloop map --check`) — no new gate kind. The
+codegraph db is opened through `index_client.open_ro`/`Error`, keeping
+index_client the package's only sqlite3 importer (§5's allowlist seam).
 
 **`index_client.py`** — §5.
 
