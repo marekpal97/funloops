@@ -201,20 +201,22 @@ When `dispatch.persona` is off (`--set dispatch.persona=false`), splice
 neither block anywhere — every dispatch prompt (implementer, fix round,
 reviewer, acceptance judge) is byte-identical to a run with the feature absent.
 
-**The constitution — every implementer dispatch, no toggle.** Splice the body
-of the packaged `constitution.md` beside this file (everything below its
-provenance header) after the dispatch blocks above — or alone when
-`dispatch.persona` is off: the constitution is universal incident-backed
-rules, not part of the persona feature. When the host repo carries its own
-`docs/agents/constitution.md` (found by the same upward walk that resolves
-loop.toml, stopping at the first `.git`), append that file's body after the
-packaged rules — a repo overlay **extends** the default, **never replaces**
-it (`cli.find_constitution` is the resolution contract; dec-1746aec3). This
-is the constitution's only splice point until `devloop pack` lands and
-absorbs it; its closing reading-the-ladder clause travels inside it, never as
-a separate block after the persona. Amendments to either layer are run past a
-human — a PR a person reviews; `watched_paths` already lands any
-`docs/agents/` diff in the skim lane.
+**The constitution — every implementer dispatch, no toggle.** The
+`constitution` array in `devloop config` output is the resolved reading
+order: the packaged `constitution.md` first, then the host repo's own
+`docs/agents/constitution.md` when it carries one — a repo overlay
+**extends** the default, **never replaces** it (dec-1746aec3;
+`cli.find_constitution` behind the verb). Splice each listed file's body
+(everything below its provenance header) after the dispatch blocks above —
+or alone when `dispatch.persona` is off: the constitution is universal
+incident-backed rules, not part of the persona feature. If `constitution`
+carries an `error` instead of paths, STOP and surface it — dispatching
+without the rules is the fail-open its own rule 7 names, not an acceptable
+degradation. This is the constitution's only splice point until `devloop
+pack` lands and absorbs it; its closing reading-the-ladder clause travels
+inside it, never as a separate block after the persona. Amendments to either
+layer are run past a human — a PR a person reviews; the shipped
+`watched_paths` defaults land any `docs/agents/` diff in the skim lane.
 
 Read the issue: `gh issue view <N> --comments`. Then dispatch an
 **implementer subagent** with worktree isolation (Agent tool,

@@ -215,10 +215,14 @@ def test_template_bakes_in_no_host_specifics():
     assert "thinkweave" not in low
     assert "packages/devloop" not in low
     cfg = cli.load_config(TEMPLATE)
-    # Path lists start empty: a host adds its own, and an inherited list would
-    # silently classify the wrong files as sensitive.
+    # sensitive_paths starts empty: a host adds its own, and an inherited list
+    # would silently classify the wrong files as sensitive. watched_paths ships
+    # exactly devloop's own convention — docs/agents/ is where every adopting
+    # repo's loop.toml and constitution overlay live (issue #26: the amendment
+    # convention relies on a human seeing that diff), and watched only caps a
+    # PR at yellow, so a wrong inherited entry costs a skim, not a red lane.
     assert cfg["triage"]["sensitive_paths"] == []
-    assert cfg["triage"]["watched_paths"] == []
+    assert cfg["triage"]["watched_paths"] == ["docs/agents/"]
 
 
 # --- the template's delivery mechanism (review round 1, major) --------------

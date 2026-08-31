@@ -20,8 +20,13 @@ test.
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 from devloop import cli, paths
 
@@ -91,6 +96,39 @@ def test_the_package_checkout_serves_its_own_copy_once(tmp_path):
         cli.PACKAGE_CONSTITUTION]
 
 
+def test_an_identical_copy_in_another_checkout_is_served_once(tmp_path):
+    """The loop's own operating mode: devloop imported from one checkout, cwd
+    inside a git worktree of the same repo. The walk finds that worktree's
+    tracked copy of the packaged file — same bytes, different path — and the
+    rules must not be spliced twice."""
+    repo = _repo(
+        tmp_path,
+        overlay=cli.PACKAGE_CONSTITUTION.read_text(encoding="utf-8"))
+    assert cli.find_constitution(repo) == [cli.PACKAGE_CONSTITUTION]
+
+
+def test_a_missing_packaged_default_is_loud(tmp_path, monkeypatch):
+    """A wheel that shipped no docs/ must not resolve to a nonexistent path
+    the orchestrator splices as silence — losing all twelve rules unannounced
+    is the fail-open rule 7 names. Resolution refuses instead."""
+    monkeypatch.setattr(cli, "PACKAGE_CONSTITUTION",
+                        tmp_path / "absent" / "constitution.md")
+    with pytest.raises(FileNotFoundError):
+        cli.find_constitution(_repo(tmp_path))
+
+
+def test_config_verb_emits_the_resolved_constitution(tmp_path):
+    """The orchestrator's runnable half of the resolution contract: `devloop
+    config` carries a `constitution` array — packaged default first, host
+    overlay appended — so the doc can say 'run this', not 'walk like this'."""
+    repo = _repo(tmp_path, overlay="13. local rule (#1)\n")
+    out = subprocess.run([sys.executable, "-m", "devloop", "config"],
+                         cwd=repo, capture_output=True, text=True, check=True)
+    assert json.loads(out.stdout)["constitution"] == [
+        str(cli.PACKAGE_CONSTITUTION),
+        str(repo / "docs" / "agents" / "constitution.md")]
+
+
 # ---------------------------------------------------------------------------
 # The packaged file's own contract (the issue's criteria verbatim)
 
@@ -108,7 +146,11 @@ def test_twelve_rules_each_citing_an_incident():
     rules = re.findall(r"^\d+\.\s.*$", _body(cli.PACKAGE_CONSTITUTION),
                        re.MULTILINE)
     assert len(rules) == 12, f"{len(rules)} rules — the report's set is twelve"
-    incident = re.compile(r"\b[0-9a-f]{7,}\b|PR #\d+|#\d+|dec-[0-9a-f]+")
+    # An issue/PR number, a decision id, or a commit sha — where a sha must
+    # carry a digit, so English spelled in a-f ("defaced") never counts.
+    incident = re.compile(
+        r"#\d+|dec-[0-9a-f]+|\b(?=[0-9a-f]{7,40}\b)[0-9a-f]*\d[0-9a-f]*\b")
+    assert not incident.search("a defaced facade decade")
     for rule in rules:
         assert incident.search(rule), f"rule cites no incident: {rule}"
 
@@ -155,8 +197,14 @@ def test_no_post_persona_rider_anywhere():
 def test_watched_paths_cover_the_constitution():
     """dec-1746aec3's predicted outcome: constitution.md stays under
     watched_paths, so an amendment PR is at most skim-lane, never invisible.
-    Real matcher, real shipped config — not a recomputed pattern."""
-    cfg = cli.load_config(cli.PACKAGE_CONFIG)
-    repo_rel = "packages/devloop/docs/agents/constitution.md"
-    assert any(paths.match(repo_rel, pat)
-               for pat in cfg["triage"]["watched_paths"])
+    Real matcher, real shipped configs — not a recomputed pattern. Both
+    audiences: funloops keeps its copy under packages/devloop/, an adopting
+    repo's overlay lives at the repo root — each shipped config must cover
+    its own arrangement."""
+    funloops = cli.load_config(cli.PACKAGE_CONFIG)
+    assert any(paths.match("packages/devloop/docs/agents/constitution.md", p)
+               for p in funloops["triage"]["watched_paths"])
+    template = cli.load_config(cli.REPO_ROOT / "docs" / "agents"
+                               / "loop.toml.template")
+    assert any(paths.match("docs/agents/constitution.md", p)
+               for p in template["triage"]["watched_paths"])

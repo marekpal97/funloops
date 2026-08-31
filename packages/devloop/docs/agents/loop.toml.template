@@ -64,7 +64,10 @@ green_enabled = false
 # public API surface, auth/crypto, migrations, this gate pipeline.
 sensitive_paths = []
 # ← EDIT: watched paths cap a PR at yellow — a human skims, the gate never fails.
-watched_paths = []
+# docs/agents/ ships live, not commented: it is devloop's own convention (the
+# loop.toml and constitution overlay live there in every adopting repo), and
+# the constitution's amendment path relies on a human seeing the diff.
+watched_paths = ["docs/agents/"]
 green_max_diff_lines = 150       # green requires the diff below this
 green_requires_first_try = true  # green requires fix_rounds == 0
 red_min_diff_lines = 800         # "big diff" → red

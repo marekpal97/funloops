@@ -88,11 +88,27 @@ def find_constitution(start: Path | None = None) -> list[Path]:
     replace-on-find (the gate pipeline is the repo's), the constitution is
     extend-on-find — the packaged default always applies and a repo's
     ``docs/agents/constitution.md`` is appended after it, never substituted
-    (dec-1746aec3). The walk finding the packaged file itself (the funloops
-    checkout) serves it once, keeping the splice single.
+    (dec-1746aec3). The walk finding the packaged file itself — by path (this
+    checkout) or by identical bytes (another checkout/worktree of it) —
+    serves it once, keeping the splice single.
+
+    A missing packaged default raises rather than resolving: an install that
+    shipped no ``docs/`` (the wheel packages only ``devloop/``) must not hand
+    the orchestrator a path that splices as silence — a dispatch that loses
+    all twelve rules unannounced is the fail-open the constitution's own
+    rule 7 names. loop.toml's missing-file degrade is honest because defaults
+    exist in code; the constitution has no in-code fallback.
     """
+    if not PACKAGE_CONSTITUTION.is_file():
+        raise FileNotFoundError(
+            f"packaged constitution missing: {PACKAGE_CONSTITUTION} — this "
+            "install shipped no docs/; do not dispatch without the rules")
     overlay = _find_upward(CONSTITUTION_REL, start)
-    if overlay is None or overlay == PACKAGE_CONSTITUTION:
+    # ponytail: byte-equality dedupes the reachable case (worktrees of the
+    # same commit); a DIVERGED copy of the packaged file in another checkout
+    # still serves twice. Upgrade path: anchor on repo-relative position.
+    if overlay is None or overlay == PACKAGE_CONSTITUTION or \
+            overlay.read_bytes() == PACKAGE_CONSTITUTION.read_bytes():
         return [PACKAGE_CONSTITUTION]
     return [PACKAGE_CONSTITUTION, overlay]
 
@@ -370,6 +386,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.cmd == "config":
+        # The orchestrator's half of the constitution contract: splice the
+        # listed files in order; an "error" entry means STOP and surface it.
+        try:
+            cfg["constitution"] = [str(p) for p in find_constitution()]
+        except FileNotFoundError as exc:
+            cfg["constitution"] = {"error": str(exc)}
         print(json.dumps(cfg, indent=2))
     elif args.cmd == "plan":
         limit = args.limit if args.limit is not None else cfg["loop"]["max_issues_per_run"]
