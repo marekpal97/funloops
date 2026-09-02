@@ -611,7 +611,7 @@
     "packages/devloop/devloop/codemap.py"
    ],
    "responsibility": null,
-   "tests": 34
+   "tests": 39
   }
  },
  "version": 1

@@ -61,12 +61,20 @@ map`` (the one mutating entry point) regenerates the shards and the
 result is committed. ``generate`` also prunes shards that no longer
 have modules and reports sidecar keys with no module (``orphan_notes``).
 Every prune, overwrite and read decision goes through the
-shard/damaged/foreign trichotomy (``_classify_map_file``): a healthy
-shard of ours is managed; a DAMAGED shard of ours (merge conflict,
-half-write — not valid JSON, or git HEAD's copy parses as a shard) is
-healed by ``generate`` and reported by ``check`` under ``damaged``; a
-foreign map.json (tilemap, style file — valid JSON without our marker)
-is left alone, and one squatting a shard path is a refusal, never an
+shard/damaged/foreign trichotomy (``_classify_map_file``), and all
+three entry points consume the same sets. A healthy shard of ours is
+managed. A DAMAGED file (merge conflict, half-write — not valid JSON,
+or git HEAD's copy parses as a shard) is healed by ``generate`` where a
+shard renders; where none renders, HEAD proof makes it a prunable
+orphan of ours (recoverable from git), and WITHOUT that proof it is
+treated like foreign — never deleted, never failing the gate (a JSONC
+tile config lands here). ``check`` reports the ours-damaged set under
+``damaged``; the read views skip any damaged file with a warning
+rather than dying — they are how the map reaches a dispatch. A HEAD
+copy that parses as a shard also carries the producer pin through a
+heal, so healing never flips the generator just because an index
+exists. A foreign map.json (valid JSON without our marker) is left
+alone, and one squatting a shard path is a refusal, never an
 overwrite.
 
 Test modules (under a ``tests`` dir or named ``test_*.py``) carry a
@@ -107,7 +115,8 @@ class MapError(Exception):
 def _git(root, *args: str) -> str | None:
     try:
         r = subprocess.run(["git", "-C", str(root), *args],
-                           capture_output=True, text=True, timeout=10)
+                           capture_output=True, text=True, errors="replace",
+                           timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None  # a hung git (network fs, stale lock) degrades to the fallback
     return r.stdout if r.returncode == 0 else None
@@ -464,54 +473,76 @@ def _shard_doc(doc) -> bool:
             and "producer" in doc["generator"])
 
 
-def _classify_map_file(p: Path, root: Path):
-    """('shard'|'damaged'|'foreign', text, doc) — the trichotomy behind every
-    prune, overwrite and read decision. map.json is a common filename
-    (tilemaps, style files, manifests): a foreign one is never touched.
-
-    Damaged-ours evidence, either of: the text is not valid JSON at all (a
-    merge conflict or half-write — real tilemaps parse; ponytail: a genuinely
-    foreign NON-JSON map.json is the one shape misclassified, accepted as
-    vanishingly rare), or git HEAD's copy of the path parses as a shard
-    (it WAS ours, whatever state it is in now). Valid JSON without our
-    marker — an object or an array — stays foreign."""
+def _head_shard_doc(root: Path, rel: str) -> dict | None:
+    """git HEAD's copy of the path, iff it parses as a shard — the proof a
+    now-damaged file was ours, and the survivor of its producer pin."""
+    head = _git(root, "show", f"HEAD:{rel}")
+    if head is None:
+        return None
     try:
-        if p.stat().st_size > _SHARD_MAX_BYTES:
-            return "foreign", None, None
+        doc = json.loads(head)
+    except json.JSONDecodeError:
+        return None
+    return doc if _shard_doc(doc) else None
+
+
+def _sniff_marker(p: Path) -> bool:
+    # sort_keys puts "generator" near the top of every shard we render, so
+    # a prefix sniff rescues an oversized shard of OURS from the size guard
+    # without ever reading a giant tilemap in full
+    with p.open("rb") as f:
+        head = f.read(2048)
+    return b'"generator"' in head and b'"producer"' in head
+
+
+def _classify_map_file(p: Path, root: Path):
+    """('shard'|'damaged'|'foreign', text, doc, head_doc) — the trichotomy
+    behind every prune, overwrite and read decision. map.json is a common
+    filename (tilemaps, style files, manifests): a foreign one is never
+    touched.
+
+    Damaged evidence, either of: the text is not valid JSON at all (a merge
+    conflict or half-write), or git HEAD's copy of the path parses as a
+    shard (it WAS ours, whatever state it is in now). head_doc is that HEAD
+    shard when it exists — proof of ownership AND the surviving producer
+    pin; a damaged file WITHOUT it only gets healed where a shard renders,
+    and is otherwise treated like foreign (a JSONC tile config must never
+    be deleted or fail the gate). Valid JSON without our marker — object or
+    array — stays foreign."""
+    rel = str(p.relative_to(root).as_posix())
+    try:
+        if p.stat().st_size > _SHARD_MAX_BYTES and not _sniff_marker(p):
+            return "foreign", None, None, None
         text = p.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return "foreign", None, None
+        return "foreign", None, None, None
     try:
         doc = json.loads(text)
     except json.JSONDecodeError:
-        return "damaged", text, None
+        return "damaged", text, None, _head_shard_doc(root, rel)
     if _shard_doc(doc):
-        return "shard", text, doc
-    head = _git(root, "show", f"HEAD:{p.relative_to(root).as_posix()}")
-    if head is not None:
-        try:
-            if _shard_doc(json.loads(head)):
-                return "damaged", text, None
-        except json.JSONDecodeError:
-            pass
-    return "foreign", text, doc
+        return "shard", text, doc, None
+    head_doc = _head_shard_doc(root, rel)
+    if head_doc is not None:
+        return "damaged", text, None, head_doc
+    return "foreign", text, doc, None
 
 
 def _scan_map_files(root: Path):
     """One pass over every candidate map.json: ({rel: (text, doc)} for our
-    shards, [rel...] for damaged ones). Foreign files are dropped here and
-    never seen again."""
-    shards, damaged = {}, []
+    shards, {rel: head_doc | None} for damaged ones). Foreign files are
+    dropped here and never seen again."""
+    shards, damaged = {}, {}
     for p in sorted(root.rglob(MAP_NAME)):
         rel = str(p.relative_to(root).as_posix())
         if _pruned(PurePosixPath(rel)):
             continue
-        kind, text, doc = _classify_map_file(p, root)
+        kind, text, doc, head_doc = _classify_map_file(p, root)
         if kind == "shard":
             shards[rel] = (text, doc)
         elif kind == "damaged":
-            damaged.append(rel)
-    return shards, sorted(damaged)
+            damaged[rel] = head_doc
+    return shards, damaged
 
 
 def _interface_hash(path: str, entry: dict) -> str:
@@ -566,10 +597,15 @@ def _assemble(root: Path, modules: dict[str, dict], producer: str):
     return rendered, stale, unannotated, sorted(orphans)
 
 
-def _resolve_producer(root: Path, shards: dict, producer: str | None, db: str | None):
+def _resolve_producer(root: Path, shards: dict, damaged: dict,
+                      producer: str | None, db: str | None):
     db_path = Path(db) if db else root / ".codegraph" / "codegraph.db"
     if producer is None:
-        gens = {doc["generator"].get("producer") for _, doc in shards.values()} - {None}
+        # a damaged shard's pin survives in its HEAD copy — healing must
+        # never flip the producer just because an index happens to exist
+        gens = ({doc["generator"].get("producer") for _, doc in shards.values()}
+                | {hd["generator"].get("producer")
+                   for hd in damaged.values() if hd is not None}) - {None}
         if len(gens) > 1:
             raise MapError(
                 "committed shards disagree on generator.producer — regenerate "
@@ -584,7 +620,7 @@ def _resolve_producer(root: Path, shards: dict, producer: str | None, db: str | 
 def _build(root: Path, producer: str | None, db: str | None) -> dict:
     """Project + assemble, no writes. ``root`` must already be resolved."""
     disk_shards, damaged = _scan_map_files(root)
-    producer, db_path = _resolve_producer(root, disk_shards, producer, db)
+    producer, db_path = _resolve_producer(root, disk_shards, damaged, producer, db)
     files = _py_files(root)
     if producer == "codegraph":
         if not db_path.is_file():
@@ -632,8 +668,12 @@ def generate(root, *, producer: str | None = None, db: str | None = None) -> dic
             "devloop shard — move it, or delete it and re-run")
     for rel, text in b["rendered"].items():
         (root / rel).write_text(text, encoding="utf-8")
-    # prune only shards WE authored that no longer have modules
-    removed = sorted(existing - set(b["rendered"]))
+    # prune shards WE authored that no longer have modules — including a
+    # damaged one whose HEAD copy proves it was ours (recoverable from git);
+    # a damaged file WITHOUT that proof is left alone like a foreign one
+    orphaned_damaged = {rel for rel, hd in b["damaged"].items()
+                        if hd is not None and rel not in b["rendered"]}
+    removed = sorted((existing - set(b["rendered"])) | orphaned_damaged)
     for rel in removed:
         (root / rel).unlink()
     return {"producer": b["producer"], "shards": sorted(b["rendered"]),
@@ -649,9 +689,12 @@ def check(root, *, producer: str | None = None, db: str | None = None) -> dict:
     root = _resolve_root(root)
     b = _build(root, producer, db)
     old = b["disk_shards"]
-    # a damaged shard at a rendered path is reported as such, not as a wall
-    # of per-module drift — `devloop map` is the heal
-    damaged = sorted(set(b["damaged"]) & set(b["rendered"]))
+    # a damaged shard is reported as such, not as a wall of per-module
+    # drift — `devloop map` is the remedy (heal at a rendered path, prune
+    # for a HEAD-proven orphan). A damaged file with neither a rendered
+    # path nor HEAD proof is not ours to flag (the JSONC-tilemap ponytail).
+    damaged = sorted(rel for rel, hd in b["damaged"].items()
+                     if rel in b["rendered"] or hd is not None)
     drifted, generator_changed = [], []
     for rel, text in b["rendered"].items():
         if rel in damaged or old.get(rel, (None,))[0] == text:
@@ -677,18 +720,24 @@ def check(root, *, producer: str | None = None, db: str | None = None) -> dict:
             "stale_notes": b["stale"], "orphan_notes": b["orphan_notes"]}
 
 
-def _committed_modules(root: Path) -> dict[str, dict]:
+def _committed_modules(root: Path):
+    """(modules, damaged rels). A damaged file degrades the read views to a
+    warning — they are how the map reaches a dispatch and must not die on
+    a state `devloop map` (or nothing, for a JSONC tilemap) can clear —
+    except when NO healthy shard remains, where an error is the only
+    honest output."""
     shards, damaged = _scan_map_files(root)
-    if damaged:
-        raise MapError(
-            f"{', '.join(damaged)}: damaged (unparseable or conflicted) — "
-            "run `devloop map` to regenerate")
+    skipped = sorted(damaged)
     if not shards:
+        if skipped:
+            raise MapError(
+                f"{', '.join(skipped)}: damaged (unparseable or conflicted) "
+                f"and no healthy {MAP_NAME} remains — run `devloop map`")
         raise MapError(f"no {MAP_NAME} under {root} — run `devloop map` first")
     modules: dict[str, dict] = {}
     for _, doc in shards.values():
         modules.update(doc.get("modules", {}))
-    return modules
+    return modules, skipped
 
 
 def _focus_dirs(focus: list[str], modules: dict) -> list[str]:
@@ -718,10 +767,12 @@ def catalog(root, *, budget_lines: int, focus: list[str]) -> str:
     alone exceeding the budget still overflows; upgrade path is a
     recursive tree fold.
     """
-    modules = _committed_modules(_resolve_root(root))
+    modules, skipped = _committed_modules(_resolve_root(root))
+    warn = [f"! {rel}: damaged map.json skipped — run `devloop map`"
+            for rel in skipped]
     full = [_module_line(p, modules[p]) for p in sorted(modules)]
     if len(full) <= budget_lines:
-        return "\n".join(full)
+        return "\n".join(full + warn)
     groups: dict[str, dict] = {}
     for path, entry in modules.items():
         groups.setdefault(str(PurePosixPath(path).parent), {})[path] = entry
@@ -739,13 +790,16 @@ def catalog(root, *, budget_lines: int, focus: list[str]) -> str:
             if tests:
                 parts.append(f"{tests} tests")
             lines.append(f"{d}/ - " + ", ".join(parts))
-    return "\n".join(lines)
+    return "\n".join(lines + warn)
 
 
 def slice_modules(root, paths: list[str]) -> dict:
     """Tier-2 detail: full entries for modules under the given paths."""
-    modules = _committed_modules(_resolve_root(root))
+    modules, skipped = _committed_modules(_resolve_root(root))
     prefixes = [p.rstrip("/") for p in paths]
     keep = {m: e for m, e in modules.items()
             if any(m == p or m.startswith(p + "/") for p in prefixes)}
-    return {"modules": keep}
+    out = {"modules": keep}
+    if skipped:
+        out["skipped_damaged"] = skipped
+    return out

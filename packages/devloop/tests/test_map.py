@@ -520,12 +520,112 @@ def test_future_version_shard_is_still_ours(tmp_path):
     assert read_map(root)["version"] == 1
 
 
-def test_catalog_names_the_damaged_shard(tmp_path):
+def make_two_shard_repo(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "ws"\n')
+    (tmp_path / "rootmod.py").write_text("def top() -> None:\n    pass\n")
+    p1 = tmp_path / "packages" / "p1"
+    p1.mkdir(parents=True)
+    (p1 / "pyproject.toml").write_text('[project]\nname = "p1"\n')
+    (p1 / "src.py").write_text("def inner() -> None:\n    pass\n")
+    return tmp_path
+
+
+def test_read_views_skip_damaged_shard_with_a_warning(tmp_path):
+    # the read views are how the map reaches a dispatch — a damaged file
+    # must never kill them; it degrades to a warning naming the remedy
+    root = make_two_shard_repo(tmp_path)
+    codemap.generate(root)
+    (root / "packages" / "p1" / "map.json").write_text(CONFLICTED)
+    out = codemap.catalog(root, budget_lines=40, focus=[])
+    assert any(line.startswith("rootmod.py") for line in out.splitlines())
+    assert "packages/p1/map.json" in out and "damaged" in out and "devloop map" in out
+    sl = codemap.slice_modules(root, ["rootmod.py"])
+    assert "rootmod.py" in sl["modules"]
+    assert sl["skipped_damaged"] == ["packages/p1/map.json"]
+
+
+def test_only_damaged_maps_is_an_error_naming_the_damage(tmp_path):
+    # zero healthy shards: nothing to show, so the error names the damage
     root = make_repo(tmp_path)
     codemap.generate(root)
     (root / "map.json").write_text(CONFLICTED)
-    with pytest.raises(codemap.MapError, match=r"map\.json.*damaged.*devloop map"):
+    with pytest.raises(codemap.MapError, match=r"map\.json.*damaged"):
         codemap.catalog(root, budget_lines=40, focus=[])
+
+
+# ---------------------------------------------------------------------------
+# The three entry points agree about a damaged file OUTSIDE the rendered set
+# (the round-4 repro): with HEAD proof it is ours — check flags it, generate
+# prunes it; without proof it is treated like foreign — untouched, non-fatal
+
+
+def test_damaged_orphan_with_head_proof_is_flagged_and_pruned(tmp_path):
+    root = _git_repo(make_two_shard_repo(tmp_path))
+    codemap.generate(root)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "healthy"], cwd=root, check=True)
+    p1_map = root / "packages" / "p1" / "map.json"
+    (root / "packages" / "p1" / "src.py").unlink()
+    p1_map.write_text(CONFLICTED)  # HEAD still holds the healthy shard
+    report = codemap.check(root)
+    assert report["ok"] is False
+    assert report["damaged"] == ["packages/p1/map.json"]
+    heal = codemap.generate(root)
+    assert "packages/p1/map.json" in heal["removed_shards"]
+    assert not p1_map.exists()
+    assert codemap.check(root)["ok"] is True
+
+
+def test_damaged_orphan_without_head_proof_is_left_like_foreign(tmp_path):
+    # e.g. a JSONC tilemap, or a conflict committed before we ever saw it:
+    # no evidence it was ours — never delete, never fail the gate, and the
+    # read views still work (skip + warning)
+    root = make_two_shard_repo(tmp_path)
+    codemap.generate(root)
+    jsonc = root / "assets"
+    jsonc.mkdir()
+    (jsonc / "map.json").write_text("// tile config\n{\"tiles\": [1]}\n")
+    assert codemap.check(root)["ok"] is True
+    report = codemap.generate(root)
+    assert report["removed_shards"] == []
+    assert (jsonc / "map.json").exists()
+    assert "rootmod.py" in codemap.slice_modules(root, ["rootmod.py"])["modules"]
+
+
+# ---------------------------------------------------------------------------
+# Healing never flips the committed producer: the pin survives in HEAD's copy
+
+
+def test_heal_preserves_the_committed_producer(tmp_path):
+    root = _git_repo(make_repo(tmp_path))
+    codemap.generate(root)  # producer ast (no index)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "ast map"], cwd=root, check=True)
+    # a codegraph index appears at the default location...
+    cg = root / ".codegraph"
+    cg.mkdir()
+    (cg / "codegraph.db").write_bytes(b"garbage that must never be opened")
+    # ...and the shard gets conflicted: the pin now lives only in HEAD
+    (root / "map.json").write_text(CONFLICTED)
+    heal = codemap.generate(root)
+    assert heal["producer"] == "ast"
+    assert heal["healed"] == ["map.json"]
+    assert read_map(root)["generator"] == {"producer": "ast"}
+
+
+# ---------------------------------------------------------------------------
+# The size guard never fires on our own shard
+
+
+def test_oversized_own_shard_is_still_ours(tmp_path, monkeypatch):
+    root = make_repo(tmp_path)
+    codemap.generate(root)
+    monkeypatch.setattr(codemap, "_SHARD_MAX_BYTES",
+                        (root / "map.json").stat().st_size - 1)
+    assert codemap.check(root)["ok"] is True
+    codemap.generate(root)  # no refusal about its own output
 
 
 # ---------------------------------------------------------------------------
