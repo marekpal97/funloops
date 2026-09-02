@@ -21,11 +21,14 @@ Producer parity is by construction: every signature is normalized
 through the same functions (`_function_sig` over parsed arg nodes;
 `_variable_sig_from_text`, which re-parses the value expression and
 unparses it, omitting anything unparseable or longer than
-``VAR_SIG_MAX`` — set to codegraph's own truncation point — rather than
-cutting mid-token), only module-level imports count on either side, and
-``__future__`` never counts as an external import. Residual divergence
-is still possible where codegraph's extraction itself differs on exotic
-syntax; the committed ``generator`` pin keeps any flip explicit.
+``VAR_SIG_MAX`` — with the omission decided on the RAW source length,
+codegraph's own truncation input — rather than cutting mid-token), only
+module-level imports count on either side, and ``__future__`` never
+counts as an external import. The one known residual is import-edge
+granularity: codegraph's file-level edge lands on a package's
+__init__.py where the ast side's per-alias resolution reaches the
+defining module. The committed ``generator`` pin keeps any flip
+explicit.
 
 The map is git-anchored: the root resolves to ``git rev-parse
 --show-toplevel`` (so a subdirectory invocation cannot mint a second key
@@ -57,9 +60,13 @@ bytes on disk, never writing — a red check stays red until ``devloop
 map`` (the one mutating entry point) regenerates the shards and the
 result is committed. ``generate`` also prunes shards that no longer
 have modules and reports sidecar keys with no module (``orphan_notes``).
-Both prune and overwrite touch ONLY files ``_is_shard`` recognizes as
-devloop-authored — a foreign map.json (tilemap, style file) is left
-alone, and a foreign file squatting a shard path is a refusal, not an
+Every prune, overwrite and read decision goes through the
+shard/damaged/foreign trichotomy (``_classify_map_file``): a healthy
+shard of ours is managed; a DAMAGED shard of ours (merge conflict,
+half-write — not valid JSON, or git HEAD's copy parses as a shard) is
+healed by ``generate`` and reported by ``check`` under ``damaged``; a
+foreign map.json (tilemap, style file — valid JSON without our marker)
+is left alone, and one squatting a shard path is a refusal, never an
 overwrite.
 
 Test modules (under a ``tests`` dir or named ``test_*.py``) carry a
@@ -316,7 +323,18 @@ def _module_stmts(body):
                 yield from _module_stmts(block)
 
 
-def _ast_module(tree: ast.Module, path: str, files: list[str]) -> dict:
+def _ast_var_sig(src: str, prefix: str, value_node) -> str | None:
+    """codegraph truncates the RAW source text at VAR_SIG_MAX before storing
+    it, so the omission decision must be made on the raw segment length —
+    normalization shortens text (collapsed lines, single quotes) and a
+    normalized-only cap would keep values codegraph drops."""
+    seg = ast.get_source_segment(src, value_node)
+    if seg is None or len(prefix) + 1 + len(seg) > VAR_SIG_MAX:
+        return None
+    return _variable_sig_from_text(f"{prefix} {ast.unparse(value_node)}")
+
+
+def _ast_module(tree: ast.Module, path: str, files: list[str], src: str) -> dict:
     raw = _raw()
     seen: set[str] = set()
 
@@ -346,8 +364,7 @@ def _ast_module(tree: ast.Module, path: str, files: list[str]) -> dict:
         elif isinstance(node, ast.Assign):
             for t in node.targets:
                 if isinstance(t, ast.Name):
-                    add(t.id, "variable",
-                        _variable_sig_from_text(f"= {ast.unparse(node.value)}"))
+                    add(t.id, "variable", _ast_var_sig(src, "=", node.value))
                 elif isinstance(t, (ast.Tuple, ast.List)):
                     vals = (node.value.elts
                             if isinstance(node.value, (ast.Tuple, ast.List))
@@ -356,12 +373,11 @@ def _ast_module(tree: ast.Module, path: str, files: list[str]) -> dict:
                     for e, v in zip(t.elts, vals):
                         if isinstance(e, ast.Name):
                             add(e.id, "variable",
-                                _variable_sig_from_text(f"= {ast.unparse(v)}")
-                                if v is not None else None)
+                                _ast_var_sig(src, "=", v) if v is not None else None)
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            text = (f"= {ast.unparse(node.value)}" if node.value is not None
-                    else f": {ast.unparse(node.annotation)}")
-            add(node.target.id, "variable", _variable_sig_from_text(text))
+            add(node.target.id, "variable",
+                _ast_var_sig(src, "=", node.value) if node.value is not None
+                else _ast_var_sig(src, ":", node.annotation))
 
     return _finish(raw, path)
 
@@ -417,7 +433,7 @@ def _project_ast(root: Path, files: list[str]) -> dict[str, dict]:
             marker["unparsed"] = True
             out[path] = marker
             continue
-        out[path] = _ast_module(tree, path, files)
+        out[path] = _ast_module(tree, path, files, text)
     return out
 
 
@@ -434,25 +450,68 @@ def _shard_dir(root: Path, path: str) -> str:
     return "."
 
 
-def _is_shard(p: Path) -> bool:
-    """Only files this tool authored count as shards. map.json is a common
-    filename (tilemaps, Mapbox/ArcGIS styles, asset manifests) — a foreign
-    one is never pruned, never overwritten, never read as ours."""
-    try:
-        doc = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    return (isinstance(doc, dict) and doc.get("version") == 1
+# Our shards are tens of KB; anything bigger is someone else's data and is
+# never even parsed (a geo tilemap can be tens of MB).
+_SHARD_MAX_BYTES = 2_000_000
+
+
+def _shard_doc(doc) -> bool:
+    # any int version >= 1: a future schema bump must still recognize (and
+    # be able to regenerate over) the shards its predecessor wrote
+    return (isinstance(doc, dict) and isinstance(doc.get("version"), int)
+            and doc.get("version") >= 1
             and isinstance(doc.get("generator"), dict)
             and "producer" in doc["generator"])
 
 
-def _map_files(root: Path) -> list[Path]:
-    return sorted(
-        p for p in root.rglob(MAP_NAME)
-        if not _pruned(PurePosixPath(p.relative_to(root).as_posix()))
-        and _is_shard(p)
-    )
+def _classify_map_file(p: Path, root: Path):
+    """('shard'|'damaged'|'foreign', text, doc) — the trichotomy behind every
+    prune, overwrite and read decision. map.json is a common filename
+    (tilemaps, style files, manifests): a foreign one is never touched.
+
+    Damaged-ours evidence, either of: the text is not valid JSON at all (a
+    merge conflict or half-write — real tilemaps parse; ponytail: a genuinely
+    foreign NON-JSON map.json is the one shape misclassified, accepted as
+    vanishingly rare), or git HEAD's copy of the path parses as a shard
+    (it WAS ours, whatever state it is in now). Valid JSON without our
+    marker — an object or an array — stays foreign."""
+    try:
+        if p.stat().st_size > _SHARD_MAX_BYTES:
+            return "foreign", None, None
+        text = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return "foreign", None, None
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError:
+        return "damaged", text, None
+    if _shard_doc(doc):
+        return "shard", text, doc
+    head = _git(root, "show", f"HEAD:{p.relative_to(root).as_posix()}")
+    if head is not None:
+        try:
+            if _shard_doc(json.loads(head)):
+                return "damaged", text, None
+        except json.JSONDecodeError:
+            pass
+    return "foreign", text, doc
+
+
+def _scan_map_files(root: Path):
+    """One pass over every candidate map.json: ({rel: (text, doc)} for our
+    shards, [rel...] for damaged ones). Foreign files are dropped here and
+    never seen again."""
+    shards, damaged = {}, []
+    for p in sorted(root.rglob(MAP_NAME)):
+        rel = str(p.relative_to(root).as_posix())
+        if _pruned(PurePosixPath(rel)):
+            continue
+        kind, text, doc = _classify_map_file(p, root)
+        if kind == "shard":
+            shards[rel] = (text, doc)
+        elif kind == "damaged":
+            damaged.append(rel)
+    return shards, sorted(damaged)
 
 
 def _interface_hash(path: str, entry: dict) -> str:
@@ -507,17 +566,10 @@ def _assemble(root: Path, modules: dict[str, dict], producer: str):
     return rendered, stale, unannotated, sorted(orphans)
 
 
-def _resolve_producer(root: Path, producer: str | None, db: str | None):
+def _resolve_producer(root: Path, shards: dict, producer: str | None, db: str | None):
     db_path = Path(db) if db else root / ".codegraph" / "codegraph.db"
     if producer is None:
-        gens = set()
-        for f in _map_files(root):
-            try:
-                gens.add(json.loads(f.read_text(encoding="utf-8"))
-                         .get("generator", {}).get("producer"))
-            except json.JSONDecodeError:
-                pass  # corrupt shard: drift detection reports it
-        gens -= {None}
+        gens = {doc["generator"].get("producer") for _, doc in shards.values()} - {None}
         if len(gens) > 1:
             raise MapError(
                 "committed shards disagree on generator.producer — regenerate "
@@ -531,7 +583,8 @@ def _resolve_producer(root: Path, producer: str | None, db: str | None):
 
 def _build(root: Path, producer: str | None, db: str | None) -> dict:
     """Project + assemble, no writes. ``root`` must already be resolved."""
-    producer, db_path = _resolve_producer(root, producer, db)
+    disk_shards, damaged = _scan_map_files(root)
+    producer, db_path = _resolve_producer(root, disk_shards, producer, db)
     files = _py_files(root)
     if producer == "codegraph":
         if not db_path.is_file():
@@ -553,7 +606,8 @@ def _build(root: Path, producer: str | None, db: str | None) -> dict:
     rendered, stale, unannotated, orphans = _assemble(root, modules, producer)
     return {"producer": producer, "rendered": rendered, "stale": stale,
             "unannotated": unannotated, "orphan_notes": orphans,
-            "module_count": len(modules)}
+            "module_count": len(modules),
+            "disk_shards": disk_shards, "damaged": damaged}
 
 
 # ---------------------------------------------------------------------------
@@ -564,24 +618,28 @@ def generate(root, *, producer: str | None = None, db: str | None = None) -> dic
     """Regenerate and write every shard, prune orphaned ones; report what an
     annotator needs. The ONE mutating entry point."""
     root = _resolve_root(root)
-    existing = {str(p.relative_to(root).as_posix()) for p in _map_files(root)}
     b = _build(root, producer, db)
-    foreign = sorted(rel for rel in b["rendered"]
-                     if rel not in existing and (root / rel).exists())
+    existing = set(b["disk_shards"])
+    damaged = set(b["damaged"])
+    healed, foreign = [], []
+    for rel in sorted(b["rendered"]):
+        if rel in existing or not (root / rel).exists():
+            continue
+        (healed if rel in damaged else foreign).append(rel)
     if foreign:
         raise MapError(
             f"{', '.join(foreign)}: a file already exists there and is not a "
-            "devloop shard — refusing to overwrite it")
+            "devloop shard — move it, or delete it and re-run")
     for rel, text in b["rendered"].items():
         (root / rel).write_text(text, encoding="utf-8")
-    # prune only shards WE authored (per _is_shard) that no longer have modules
+    # prune only shards WE authored that no longer have modules
     removed = sorted(existing - set(b["rendered"]))
     for rel in removed:
         (root / rel).unlink()
     return {"producer": b["producer"], "shards": sorted(b["rendered"]),
             "modules": b["module_count"], "stale_notes": b["stale"],
             "unannotated": b["unannotated"], "removed_shards": removed,
-            "orphan_notes": b["orphan_notes"]}
+            "orphan_notes": b["orphan_notes"], "healed": healed}
 
 
 def check(root, *, producer: str | None = None, db: str | None = None) -> dict:
@@ -589,17 +647,16 @@ def check(root, *, producer: str | None = None, db: str | None = None) -> dict:
     module. Pure: never writes, so a red check cannot self-clear — the fix is
     `devloop map` plus a commit."""
     root = _resolve_root(root)
-    old = {str(p.relative_to(root).as_posix()): p.read_text(encoding="utf-8")
-           for p in _map_files(root)}
     b = _build(root, producer, db)
+    old = b["disk_shards"]
+    # a damaged shard at a rendered path is reported as such, not as a wall
+    # of per-module drift — `devloop map` is the heal
+    damaged = sorted(set(b["damaged"]) & set(b["rendered"]))
     drifted, generator_changed = [], []
     for rel, text in b["rendered"].items():
-        if old.get(rel) == text:
+        if rel in damaged or old.get(rel, (None,))[0] == text:
             continue
-        try:
-            before = json.loads(old.get(rel, "{}")).get("modules", {})
-        except json.JSONDecodeError:
-            before = {}
+        before = old[rel][1].get("modules", {}) if rel in old else {}
         after = json.loads(text)["modules"]
         changed = sorted(k for k in set(before) | set(after)
                          if before.get(k) != after.get(k))
@@ -612,23 +669,25 @@ def check(root, *, producer: str | None = None, db: str | None = None) -> dict:
     # inert (nothing folds it into map.json), unlike a stale note which
     # would describe a live module wrongly — surfacing without gating spares
     # a sidecar-edit commit for every file deletion.
-    ok = not (drifted or generator_changed or removed_shards or b["stale"])
+    ok = not (drifted or generator_changed or removed_shards or damaged
+              or b["stale"])
     return {"ok": ok, "producer": b["producer"], "shards": sorted(b["rendered"]),
             "drifted": drifted, "generator_changed": generator_changed,
-            "removed_shards": removed_shards, "stale_notes": b["stale"],
-            "orphan_notes": b["orphan_notes"]}
+            "removed_shards": removed_shards, "damaged": damaged,
+            "stale_notes": b["stale"], "orphan_notes": b["orphan_notes"]}
 
 
 def _committed_modules(root: Path) -> dict[str, dict]:
-    files = _map_files(root)
-    if not files:
+    shards, damaged = _scan_map_files(root)
+    if damaged:
+        raise MapError(
+            f"{', '.join(damaged)}: damaged (unparseable or conflicted) — "
+            "run `devloop map` to regenerate")
+    if not shards:
         raise MapError(f"no {MAP_NAME} under {root} — run `devloop map` first")
     modules: dict[str, dict] = {}
-    for f in files:
-        try:
-            modules.update(json.loads(f.read_text(encoding="utf-8")).get("modules", {}))
-        except json.JSONDecodeError as e:
-            raise MapError(f"{f}: not valid JSON ({e}) — regenerate with `devloop map`") from None
+    for _, doc in shards.values():
+        modules.update(doc.get("modules", {}))
     return modules
 
 

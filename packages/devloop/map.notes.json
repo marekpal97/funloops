@@ -4,7 +4,7 @@
   "note": "python -m devloop -> cli.main"
  },
  "packages/devloop/devloop/board.py": {
-  "hash": "aeb0be3c35c2",
+  "hash": "22fd639a708e",
   "note": "board hygiene: the grammar dag.py reads, as checks + sweep ops"
  },
  "packages/devloop/devloop/cli.py": {
@@ -20,7 +20,7 @@
   "note": "tracker-as-DAG math + the body-grammar it parses"
  },
  "packages/devloop/devloop/gates.py": {
-  "hash": "90456e9e9127",
+  "hash": "2c971dd90cde",
   "note": "Gate protocol + deterministic executors"
  },
  "packages/devloop/devloop/github.py": {

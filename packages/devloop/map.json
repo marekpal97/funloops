@@ -58,8 +58,7 @@
     },
     {
      "kind": "variable",
-     "name": "RUNG_ROLES",
-     "signature": "= ('needs-triage', 'needs-info', 'ready-for-agent', 'ready-for-human', 'wontfix', 'arch-proposal')"
+     "name": "RUNG_ROLES"
     },
     {
      "kind": "variable",
@@ -284,8 +283,7 @@
     },
     {
      "kind": "variable",
-     "name": "JUDGMENT",
-     "signature": "= {'acceptance': validate_acceptance, 'review': validate_review, 'simplify': validate_simplify}"
+     "name": "JUDGMENT"
     },
     {
      "kind": "variable",
@@ -613,7 +611,7 @@
     "packages/devloop/devloop/codemap.py"
    ],
    "responsibility": null,
-   "tests": 29
+   "tests": 34
   }
  },
  "version": 1

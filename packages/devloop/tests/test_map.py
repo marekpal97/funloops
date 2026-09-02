@@ -62,11 +62,16 @@ CORE_SRC = textwrap.dedent(
     """
 )
 
-# BAND's normalized value sits INSIDE the 103-120 band where codegraph's own
-# 102-char truncation bites but a higher ast-side cap would not — the exact
-# parity band review round 2 measured live (board.RUNG_ROLES, gates.JUDGMENT).
+# BAND is board.RUNG_ROLES's shape: RAW source over codegraph's 102-char
+# truncation point (a two-line tuple: 106 chars with the '= ' prefix) while
+# the NORMALIZED text is under it (98 chars) — the raw-vs-normalized band
+# review round 3 measured live. Both producers must omit its signature.
+BAND_VALUE = (
+    '("bbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccc",\n'
+    '        "dddddddddddddddddddd", "eeeeeeeeeeeeeeeeeeee")'
+)
 HELPER_SRC = (
-    f'BAND = "{"b" * 104}"\n'
+    f"BAND = {BAND_VALUE}\n"
     'TRUNC = ("aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", '
     '"cccccccccccccccccccc", "dddddddddddddddddddd", "eeeeeeeeeeeeeeeeeeee", '
     '"ffffffffffffffffffff")\n'
@@ -182,13 +187,13 @@ def make_codegraph_db(path, version: str, root):
     node("n6", "import", "json", "json", "fx/core.py", None, 3)
     node("n7", "import", "fx.helper", "fx.helper", "fx/core.py", None, 4)
     # NO __future__ import node: real codegraph never records one.
-    # codegraph pre-truncates long values into unparseable text — omitted.
-    # BAND is stored truncated at 102 chars + ellipsis (the measured 1.6.0
-    # behavior); TRUNC is far over every cap.
+    # codegraph stores RAW source and truncates it at 102 chars + ellipsis
+    # (the measured 1.6.0 behavior) — BAND's stored text is its raw two-line
+    # source cut at 102, unparseable; TRUNC is far over every cap.
     node("n8", "variable", "TRUNC", "TRUNC", "fx/helper.py",
-         '= ("aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", "...', 2)
+         '= ("aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", "...', 3)
     node("n8b", "variable", "BAND", "BAND", "fx/helper.py",
-         '= "' + "b" * 99 + "...", 1)
+         ("= " + BAND_VALUE)[:102] + "...", 1)
     node("n9", "function", "fmt", "fmt", "fx/helper.py", "(x: int) -> str", 5)
     node("n10", "function", "test_a", "test_a", "tests/test_core.py", "()", 1)
     node("n11", "function", "test_b", "test_b", "tests/test_core.py", "()", 5)
@@ -457,6 +462,70 @@ def test_generate_refuses_to_overwrite_foreign_map_json(tmp_path):
     with pytest.raises(codemap.MapError, match="not a devloop shard"):
         codemap.generate(root)
     assert (root / "map.json").read_text() == FOREIGN_MAP
+
+
+def test_json_array_tilemap_is_foreign_too(tmp_path):
+    # valid JSON that isn't an object — still someone else's data, never ours
+    root = make_repo(tmp_path)
+    (root / "map.json").write_text("[[1, 2], [3, 4]]")
+    with pytest.raises(codemap.MapError, match="not a devloop shard"):
+        codemap.generate(root)
+    assert (root / "map.json").read_text() == "[[1, 2], [3, 4]]"
+
+
+# ---------------------------------------------------------------------------
+# A DAMAGED shard of ours (merge conflict, half-write) is healed by generate,
+# never mistaken for a foreign file — the repair command must repair
+
+CONFLICTED = (
+    "<<<<<<< HEAD\n"
+    '{\n "version": 1,\n'
+    "=======\n"
+    '{\n "version": 1, "generator": {"producer": "ast"},\n'
+    ">>>>>>> other\n"
+)
+
+
+def test_conflicted_shard_is_healed_not_refused(tmp_path):
+    root = make_repo(tmp_path)
+    codemap.generate(root)
+    (root / "map.json").write_text(CONFLICTED)
+    report = codemap.check(root)
+    assert report["ok"] is False
+    assert report["damaged"] == ["map.json"]
+    assert (root / "map.json").read_text() == CONFLICTED  # check stays pure
+    heal = codemap.generate(root)
+    assert heal["healed"] == ["map.json"]
+    assert read_map(root)["modules"]["fx/core.py"] == EXPECTED_CORE
+    assert codemap.check(root)["ok"] is True
+
+
+def test_half_written_shard_is_healed(tmp_path):
+    root = make_repo(tmp_path)
+    codemap.generate(root)
+    (root / "map.json").write_text('{"version": 1, "generator": {"produ')
+    report = codemap.generate(root)
+    assert report["healed"] == ["map.json"]
+    assert codemap.check(root)["ok"] is True
+
+
+def test_future_version_shard_is_still_ours(tmp_path):
+    root = make_repo(tmp_path)
+    codemap.generate(root)
+    doc = read_map(root)
+    doc["version"] = 2
+    (root / "map.json").write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
+    report = codemap.generate(root)  # no refusal: a schema bump can heal its past
+    assert report["healed"] == []
+    assert read_map(root)["version"] == 1
+
+
+def test_catalog_names_the_damaged_shard(tmp_path):
+    root = make_repo(tmp_path)
+    codemap.generate(root)
+    (root / "map.json").write_text(CONFLICTED)
+    with pytest.raises(codemap.MapError, match=r"map\.json.*damaged.*devloop map"):
+        codemap.catalog(root, budget_lines=40, focus=[])
 
 
 # ---------------------------------------------------------------------------
