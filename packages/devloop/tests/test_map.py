@@ -332,7 +332,6 @@ def test_check_exit_codes_via_cli(tmp_path, capsys):
 
 def test_check_refuses_read_view_combination(tmp_path, capsys):
     root = make_repo(tmp_path)
-    codemap.generate(root)
     assert main(["map", "--check", "--slice", "fx/", "--root", str(root)]) == 2
     assert main(["map", "--check", "--catalog", "--root", str(root)]) == 2
 
@@ -678,9 +677,7 @@ def test_check_reports_orphan_notes_without_failing(tmp_path):
 
 
 def test_git_root_and_tracked_files_anchor_the_map(tmp_path):
-    root = make_repo(tmp_path)
-    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    root = _git_repo(make_repo(tmp_path))
     (root / "scratch_local.py").write_text("def junk() -> None:\n    pass\n")
     report = codemap.generate(root / "fx")  # subdir invocation
     assert report["shards"] == ["map.json"]
@@ -695,12 +692,8 @@ def test_git_root_and_tracked_files_anchor_the_map(tmp_path):
 
 
 def test_generate_prunes_orphaned_shards_and_reports_orphan_notes(tmp_path):
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "ws"\n')
-    (tmp_path / "rootmod.py").write_text("def top() -> None:\n    pass\n")
+    make_two_shard_repo(tmp_path)
     p1 = tmp_path / "packages" / "p1"
-    p1.mkdir(parents=True)
-    (p1 / "pyproject.toml").write_text('[project]\nname = "p1"\n')
-    (p1 / "src.py").write_text("def inner() -> None:\n    pass\n")
     codemap.generate(tmp_path)
     assert (p1 / "map.json").exists()
     (p1 / "src.py").unlink()
@@ -761,12 +754,8 @@ def test_slice_emits_tier2_for_named_paths_only(tmp_path):
 
 
 def test_monorepo_shards_per_package_dir(tmp_path):
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "ws"\n')
-    (tmp_path / "rootmod.py").write_text("def top() -> None:\n    pass\n")
+    make_two_shard_repo(tmp_path)
     p1 = tmp_path / "packages" / "p1"
-    p1.mkdir(parents=True)
-    (p1 / "pyproject.toml").write_text('[project]\nname = "p1"\n')
-    (p1 / "src.py").write_text("def inner() -> None:\n    pass\n")
     report = codemap.generate(tmp_path)
     assert sorted(report["shards"]) == ["map.json", "packages/p1/map.json"]
     assert "rootmod.py" in read_map(tmp_path)["modules"]

@@ -531,7 +531,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"applied": applied, "failed": failed}, indent=2))
         return 1 if failed else 0
     elif args.cmd == "map":
-        root = Path(args.root).resolve()
+        root = args.root
         if args.check and (args.catalog or args.slice):
             # a gate flag silently ignored is a gate that verifies nothing
             print(json.dumps({"error": "--check cannot be combined with the "

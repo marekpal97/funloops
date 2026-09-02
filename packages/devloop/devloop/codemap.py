@@ -314,8 +314,7 @@ def _project_codegraph(conn, root: Path, disk_files: list[str]) -> dict[str, dic
 # ---------------------------------------------------------------------------
 # Producer: ast (fallback)
 
-_NESTING = (ast.If, ast.Try, ast.With) + (
-    (ast.TryStar,) if hasattr(ast, "TryStar") else ())
+_NESTING = (ast.If, ast.Try, ast.TryStar, ast.With)
 
 
 def _module_stmts(body):
@@ -742,7 +741,7 @@ def _committed_modules(root: Path):
 
 def _focus_dirs(focus: list[str], modules: dict) -> list[str]:
     """A focus naming a module means its directory; anything else is a dir."""
-    return [str(PurePosixPath(f).parent) if f.rstrip("/") in modules else f.rstrip("/")
+    return [str(PurePosixPath(f).parent) if f in modules else f
             for f in (x.rstrip("/") for x in focus)]
 
 
