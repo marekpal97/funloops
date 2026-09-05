@@ -1,6 +1,7 @@
 {
  "generator": {
-  "producer": "ast"
+  "codegraph": "1.6.0",
+  "producer": "codegraph"
  },
  "modules": {
   "packages/devloop/devloop/__init__.py": {
@@ -30,17 +31,17 @@
     {
      "kind": "variable",
      "name": "BOILERPLATE_LABELS",
-     "signature": "= ('good first issue', 'help wanted', 'invalid', 'question', 'duplicate')"
+     "signature": "= (\"good first issue\", \"help wanted\", \"invalid\", \"question\", \"duplicate\")"
     },
     {
      "kind": "variable",
      "name": "EPIC_LABEL",
-     "signature": "= 'epic'"
+     "signature": "= \"epic\""
     },
     {
      "kind": "variable",
      "name": "EPIC_PREFIX_RE",
-     "signature": "= re.compile('^\\\\s*\\\\[?(EPIC|PRD)\\\\]?\\\\s*:\\\\s+', re.IGNORECASE)"
+     "signature": "= re.compile(r\"^\\s*\\[?(EPIC|PRD)\\]?\\s*:\\s+\", re.IGNORECASE)"
     },
     {
      "kind": "variable",
@@ -50,25 +51,27 @@
     {
      "kind": "variable",
      "name": "ORDER_PREFIX_RE",
-     "signature": "= re.compile('^\\\\s*\\\\[?([A-Z]{1,2}\\\\d*[a-z]?(-\\\\w+)?)\\\\]?\\\\s*:\\\\s+')"
+     "signature": "= re.compile(r\"^\\s*\\[?([A-Z]{1,2}\\d*[a-z]?(-\\w+)?)\\]?\\s*:\\s+\")"
     },
     {
      "kind": "variable",
-     "name": "REQUIRED_LABELS"
+     "name": "REQUIRED_LABELS",
+     "signature": "= {\n    EPIC_LABEL: (\"Grouping surface: has sub-issues, closes last, never runnable\", \"5319e7\"),\n    \"..."
     },
     {
      "kind": "variable",
-     "name": "RUNG_ROLES"
+     "name": "RUNG_ROLES",
+     "signature": "= (\"needs-triage\", \"needs-info\", \"ready-for-agent\", \"ready-for-human\",\n              \"wontfix\", \"arch-..."
     },
     {
      "kind": "variable",
      "name": "TEXT_BLOCKER_RE",
-     "signature": "= re.compile('Blocked-by:\\\\s*([^\\\\n|]*)', re.IGNORECASE)"
+     "signature": "= re.compile(r\"Blocked-by:\\s*([^\\n|]*)\", re.IGNORECASE)"
     },
     {
      "kind": "function",
      "name": "doctor",
-     "signature": "(boards: list[dict], cfg: dict, now: datetime | None=None) -> dict"
+     "signature": "(boards: list[dict], cfg: dict, now: datetime | None = None) -> dict"
     },
     {
      "kind": "function",
@@ -100,15 +103,17 @@
     {
      "kind": "variable",
      "name": "CONFIG_REL",
-     "signature": "= Path('docs') / 'agents' / 'loop.toml'"
+     "signature": "= Path(\"docs\") / \"agents\" / \"loop.toml\""
     },
     {
      "kind": "variable",
-     "name": "DEAD_VOCAB_NOTE"
+     "name": "DEAD_VOCAB_NOTE",
+     "signature": "= (\n    \"called with GH labels as concepts and no --query \u2014 prime v3 retrieval is \"\n    \"likely dead b..."
     },
     {
      "kind": "variable",
-     "name": "DEFAULT_CONFIG"
+     "name": "DEFAULT_CONFIG",
+     "signature": "= {\n    \"loop\": {\n        \"max_issues_per_run\": 3,\n        \"max_parallel\": 1,\n        \"max_fix_rounds\"..."
     },
     {
      "kind": "variable",
@@ -133,17 +138,17 @@
     {
      "kind": "function",
      "name": "find_config",
-     "signature": "(start: Path | None=None) -> Path"
+     "signature": "(start: Path | None = None) -> Path"
     },
     {
      "kind": "function",
      "name": "load_config",
-     "signature": "(path: Path | None=None) -> dict"
+     "signature": "(path: Path | None = None) -> dict"
     },
     {
      "kind": "function",
      "name": "main",
-     "signature": "(argv: list[str] | None=None) -> int"
+     "signature": "(argv: list[str] | None = None) -> int"
     },
     {
      "kind": "function",
@@ -154,46 +159,40 @@
   },
   "packages/devloop/devloop/codemap.py": {
    "imports_external": [
-    "ast",
     "hashlib",
     "json",
+    "os",
     "pathlib",
     "subprocess"
    ],
    "imports_internal": [
     "packages/devloop/devloop/index_client.py"
    ],
-   "responsibility": "architecture rail: map.json shards projected from codegraph's SQLite, ast fallback",
+   "responsibility": "architecture rail: map.json shards projected from a self-provisioned codegraph index",
    "symbols": [
     {
      "kind": "variable",
      "name": "CODEGRAPH_VERSION",
-     "signature": "= '1.6.0'"
+     "signature": "= \"1.6.0\""
     },
     {
      "kind": "variable",
      "name": "MAP_NAME",
-     "signature": "= 'map.json'"
+     "signature": "= \"map.json\""
     },
     {
      "kind": "class",
-     "name": "MapError",
-     "signature": "(Exception)"
+     "name": "MapError"
     },
     {
      "kind": "variable",
      "name": "NOTES_NAME",
-     "signature": "= 'map.notes.json'"
+     "signature": "= \"map.notes.json\""
     },
     {
      "kind": "variable",
      "name": "SKIP_DIRS",
-     "signature": "= {'__pycache__', 'node_modules', 'dist', 'build', 'venv'}"
-    },
-    {
-     "kind": "variable",
-     "name": "VAR_SIG_MAX",
-     "signature": "= 102"
+     "signature": "= {\"__pycache__\", \"node_modules\", \"dist\", \"build\", \"venv\"}"
     },
     {
      "kind": "function",
@@ -203,12 +202,12 @@
     {
      "kind": "function",
      "name": "check",
-     "signature": "(root, *, producer: str | None=None, db: str | None=None) -> dict"
+     "signature": "(root, *, db: str | None = None,\n          codegraph_bin: str | None = None) -> dict"
     },
     {
      "kind": "function",
      "name": "generate",
-     "signature": "(root, *, producer: str | None=None, db: str | None=None) -> dict"
+     "signature": "(root, *, db: str | None = None,\n             codegraph_bin: str | None = None) -> dict"
     },
     {
      "kind": "function",
@@ -242,7 +241,7 @@
     {
      "kind": "function",
      "name": "compute_frontier",
-     "signature": "(issues: list[dict], cfg: dict, limit: int | None=None) -> dict"
+     "signature": "(issues: list[dict], cfg: dict, limit: int | None = None) -> dict"
     },
     {
      "kind": "function",
@@ -274,26 +273,27 @@
     {
      "kind": "variable",
      "name": "ACCEPTANCE_VERDICTS",
-     "signature": "= ('met', 'not-met')"
+     "signature": "= (\"met\", \"not-met\")"
     },
     {
      "kind": "variable",
      "name": "DETERMINISTIC",
-     "signature": "= {'command': run_command_gate, 'diff': run_diff_gate}"
+     "signature": "= {\"command\": run_command_gate, \"diff\": run_diff_gate}"
     },
     {
      "kind": "variable",
-     "name": "JUDGMENT"
+     "name": "JUDGMENT",
+     "signature": "= {\"acceptance\": validate_acceptance, \"review\": validate_review,\n            \"simplify\": validate_simp..."
     },
     {
      "kind": "variable",
      "name": "REVIEW_SEVERITIES",
-     "signature": "= ('critical', 'major', 'minor', 'nit')"
+     "signature": "= (\"critical\", \"major\", \"minor\", \"nit\")"
     },
     {
      "kind": "variable",
      "name": "SIMPLIFY_OUTCOMES",
-     "signature": "= ('applied', 'reverted', 'lean')"
+     "signature": "= (\"applied\", \"reverted\", \"lean\")"
     },
     {
      "kind": "function",
@@ -308,7 +308,7 @@
     {
      "kind": "function",
      "name": "run_command_gate",
-     "signature": "(gate: dict, cwd: Path, base_ref: str | None=None) -> dict"
+     "signature": "(gate: dict, cwd: Path, base_ref: str | None = None) -> dict"
     },
     {
      "kind": "function",
@@ -416,7 +416,7 @@
     {
      "kind": "function",
      "name": "trajectory_candidates",
-     "signature": "(conn: sqlite3.Connection, concepts: list[str], query: str='', scan_cap: int=40) -> list[dict]"
+     "signature": "(\n    conn: sqlite3.Connection, concepts: list[str], query: str = \"\",\n    scan_cap: int = 40,\n) -> list[dict]"
     }
    ]
   },
@@ -456,7 +456,7 @@
     {
      "kind": "function",
      "name": "build_trajectory",
-     "signature": "(issue: dict, *, branch: str, commits: list[str], numstat: str, gates: list[dict], fix_rounds: int, outcome: str, pr_url: str='', run_id: str='', skills: list[dict] | None=None, skill_centric: bool=False, primed: bool | None=None, served: list[str] | None=None, trace: dict | None=None) -> dict"
+     "signature": "(issue: dict, *, branch: str, commits: list[str],\n                     numstat: str, gates: list[dict], fix_rounds: int,\n                     outcome: str, pr_url: str = \"\", run_id: str = \"\",\n                     skills: list[dict] | None = None,\n                     skill_centric: bool = False,\n                     primed: bool | None = None,\n                     served: list[str] | None = None,\n                     trace: dict | None = None) -> dict"
     }
    ]
   },
@@ -475,17 +475,17 @@
     {
      "kind": "variable",
      "name": "LOOP_PRIME_TOOL",
-     "signature": "= 'loop_prime'"
+     "signature": "= \"loop_prime\""
     },
     {
      "kind": "function",
      "name": "append_served_event",
-     "signature": "(buffer_path: str, run_id: str, issue_number: int, served: list[str], session_id: str='') -> None"
+     "signature": "(\n    buffer_path: str, run_id: str, issue_number: int,\n    served: list[str], session_id: str = \"\",\n) -> None"
     },
     {
      "kind": "function",
      "name": "build_prime_payload",
-     "signature": "(issue_number: int, run_id: str, concepts: list[str], *, conn: Connection | None=None, holdout: int=5, limit: int=3, budget_chars: int=1200, decisions: list[str] | None=None, query: str='') -> dict"
+     "signature": "(\n    issue_number: int, run_id: str, concepts: list[str], *,\n    conn: Connection | None = None, holdout: int = 5,\n    limit: int = 3, budget_chars: int = 1200, decisions: list[str] | None = None,\n    query: str = \"\",\n) -> dict"
     },
     {
      "kind": "function",
@@ -495,12 +495,12 @@
     {
      "kind": "function",
      "name": "query_trajectories",
-     "signature": "(conn: Connection, concepts: list[str], limit: int, scan_cap: int=40, query: str='') -> list[dict]"
+     "signature": "(\n    conn: Connection, concepts: list[str], limit: int, scan_cap: int = 40,\n    query: str = \"\",\n) -> list[dict]"
     },
     {
      "kind": "function",
      "name": "render_prime_block",
-     "signature": "(trajectories: list[dict], decisions: list[str] | None=None, budget_chars: int=1200) -> tuple[str, list[str]]"
+     "signature": "(\n    trajectories: list[dict], decisions: list[str] | None = None,\n    budget_chars: int = 1200,\n) -> tuple[str, list[str]]"
     },
     {
      "kind": "function",
@@ -519,12 +519,12 @@
     {
      "kind": "variable",
      "name": "TRIAGE_LABELS",
-     "signature": "= {'green': 'auto-merge-ok', 'yellow': 'review-light'}"
+     "signature": "= {\"green\": \"auto-merge-ok\", \"yellow\": \"review-light\"}"
     },
     {
      "kind": "function",
      "name": "classify_pr",
-     "signature": "(signals: dict, cfg: dict, red_label: str | None=None) -> dict"
+     "signature": "(signals: dict, cfg: dict, red_label: str | None = None) -> dict"
     }
    ]
   },
@@ -548,7 +548,7 @@
     "packages/devloop/devloop/__init__.py"
    ],
    "responsibility": null,
-   "tests": 2
+   "tests": 3
   },
   "packages/devloop/tests/test_funloops_packaging.py": {
    "imports_external": [
@@ -572,6 +572,7 @@
     "packages/devloop/devloop/dag.py",
     "packages/devloop/devloop/gates.py",
     "packages/devloop/devloop/index_client.py",
+    "packages/devloop/devloop/trajectory/__init__.py",
     "packages/devloop/devloop/trajectory/mint.py",
     "packages/devloop/devloop/trajectory/prime.py",
     "packages/devloop/devloop/triage.py"
@@ -611,7 +612,7 @@
     "packages/devloop/devloop/codemap.py"
    ],
    "responsibility": null,
-   "tests": 39
+   "tests": 49
   }
  },
  "version": 1
