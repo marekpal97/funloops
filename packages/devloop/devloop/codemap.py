@@ -130,7 +130,7 @@ def _git(root, *args: str) -> str | None:
     try:
         r = subprocess.run(["git", "-C", str(root), *args],
                            capture_output=True, text=True, errors="replace",
-                           timeout=10)
+                           timeout=10, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return r.stdout if r.returncode == 0 else None
@@ -232,7 +232,8 @@ def _run_codegraph(root: Path, cg_bin: str | None, *verb: str) -> None:
     bin_ = _codegraph_bin(cg_bin)
     try:
         r = subprocess.run([bin_, *verb, str(root)], cwd=root,
-                           capture_output=True, text=True, timeout=300)
+                           capture_output=True, text=True, timeout=300,
+                           check=False)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise MapError(
             f"codegraph unavailable (`{bin_}`: {e}) — install it (or point "

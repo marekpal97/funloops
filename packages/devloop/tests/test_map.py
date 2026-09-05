@@ -1007,7 +1007,7 @@ def test_untracked_indexed_scratch_neither_wedges_nor_maps(tmp_path):
     root = _git_repo(make_repo(tmp_path))
     (root / "scratch.py").write_text("def wip() -> None:\n    pass\n")  # untracked
     make_codegraph_db(root, extra_files=("scratch.py",))  # codegraph walks the FS
-    report = codemap.generate(root)  # no 'behind the worktree' wedge
+    codemap.generate(root)  # no 'behind the worktree' wedge
     assert "scratch.py" not in read_map(root)["modules"]
     assert codemap.check(root)["ok"] is True
 
@@ -1038,7 +1038,7 @@ def test_declined_tracked_file_gets_unparsed_marker(tmp_path):
     make_codegraph_db(root)  # index lacks legacy.py
     prebuilt = make_codegraph_db(root, db_path=tmp_path / "prebuilt.db")
     stub, log = make_stub_codegraph(tmp_path, prebuilt)
-    report = codemap.generate(root, codegraph_bin=str(stub))
+    codemap.generate(root, codegraph_bin=str(stub))
     assert log.read_text().split() == ["index"]  # one reindex attempt, then degrade
     doc = read_map(root)
     assert doc["modules"]["legacy.py"]["unparsed"] is True
@@ -1138,6 +1138,6 @@ def test_default_path_open_failure_self_heals(tmp_path):
     prebuilt = make_db(root, files=REPO_FILES, nodes=REPO_NODES,
                        edges=REPO_EDGES, db_path=tmp_path / "prebuilt.db")
     stub, log = make_stub_codegraph(tmp_path, prebuilt)
-    report = codemap.generate(root, codegraph_bin=str(stub))
+    codemap.generate(root, codegraph_bin=str(stub))
     assert log.read_text().split() == ["init"]
     assert read_map(root)["modules"]["fx/core.py"] == EXPECTED_CORE
