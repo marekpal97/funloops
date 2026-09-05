@@ -713,7 +713,9 @@ working codegraph fails loud (`MapError`, exit 2: install codegraph or
 regenerate on a machine that has it) — never a silent skip. A repo with no
 committed map has simply not adopted the rail: `--check` exits 0 noting
 "map rail not adopted", and `--catalog`/`--slice` report the same instead
-of erroring. When `devloop map --catalog` fails codegraph-unavailable at
+of erroring. Adoption is HEAD-aware: deleting or overwriting the committed
+shard reads as drift/damage (`missing_shards`, `damaged`, `squatted`),
+never as un-adoption. When `devloop map --catalog` fails codegraph-unavailable at
 dispatch time, splice a fallback instruction block instead of the catalog —
 the model gathers the package layout, the public surfaces of the touched
 modules, and their import neighbors itself — and the PR body carries

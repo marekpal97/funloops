@@ -163,6 +163,7 @@
     "json",
     "os",
     "pathlib",
+    "shutil",
     "subprocess"
    ],
    "imports_internal": [
@@ -578,7 +579,7 @@
     "packages/devloop/devloop/triage.py"
    ],
    "responsibility": null,
-   "tests": 182
+   "tests": 183
   },
   "packages/devloop/tests/test_judgment_plane.py": {
    "imports_external": [
@@ -612,7 +613,7 @@
     "packages/devloop/devloop/codemap.py"
    ],
    "responsibility": null,
-   "tests": 49
+   "tests": 60
   }
  },
  "version": 1

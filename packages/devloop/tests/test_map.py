@@ -67,19 +67,24 @@ CORE_SRC = textwrap.dedent(
     """
 )
 
-HELPER_SRC = (
-    'TRUNC = ("aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", '
+TRUNC_VALUE = (
+    '("aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", '
     '"cccccccccccccccccccc", "dddddddddddddddddddd", "eeeeeeeeeeeeeeeeeeee", '
-    '"ffffffffffffffffffff")\n'
+    '"ffffffffffffffffffff")'
+)
+HELPER_SRC = (
+    f"TRUNC = {TRUNC_VALUE}\n"
     "\n\n"
     "def fmt(x: int) -> str:\n"
     "    return str(x)\n"
 )
 
-# codegraph 1.6.0 truncates the stored raw text at 102 chars + "..." — the
-# map serves that text verbatim, never re-parsed (re-parsing once fabricated
-# a signature when the cut landed after a binary operator).
-TRUNC_STORED = '= ("aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", "...'
+# codegraph 1.6.0 truncates the stored raw text at exactly 102 chars + "..."
+# (every truncated signature in a real index is 105 chars) — the map serves
+# that text verbatim, never re-parsed (re-parsing once fabricated a signature
+# when the cut landed after a binary operator).
+TRUNC_STORED = ("= " + TRUNC_VALUE)[:102] + "..."
+assert len(TRUNC_STORED) == 105
 
 # Hand-written expected entries (the independent source of truth): raw
 # double quotes survive, __future__ never lands in imports_external.
@@ -959,3 +964,180 @@ def test_monorepo_shards_per_package_dir(tmp_path):
     assert "rootmod.py" in read_map(root)["modules"]
     p1_doc = json.loads((p1 / "map.json").read_text())
     assert "packages/p1/src.py" in p1_doc["modules"]
+
+
+# ---------------------------------------------------------------------------
+# Round-6 F1: adoption consults HEAD — deleting or foreign-overwriting the
+# committed shard must never read as "not adopted" (silently green)
+
+
+def test_git_rm_of_committed_shard_is_red_not_unadopted(tmp_path):
+    root = _git_repo(make_repo(tmp_path))
+    make_codegraph_db(root)
+    codemap.generate(root)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    _commit(root, "adopted")
+    subprocess.run(["git", "rm", "-q", "map.json"], cwd=root, check=True)
+    report = codemap.check(root)
+    assert report["ok"] is False
+    assert report["missing_shards"] == ["map.json"]
+    assert report["drifted"] == []  # no fabricated per-module drift
+    codemap.generate(root)  # the remedy restores the shard
+    assert codemap.check(root)["ok"] is True
+
+
+def test_foreign_overwrite_of_committed_shard_is_red(tmp_path):
+    root = _git_repo(make_repo(tmp_path))
+    make_codegraph_db(root)
+    codemap.generate(root)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    _commit(root, "adopted")
+    (root / "map.json").write_text(FOREIGN_MAP)
+    report = codemap.check(root)
+    assert report["ok"] is False
+    assert "map.json" in report["damaged"]
+
+
+# ---------------------------------------------------------------------------
+# Round-6 F2: freshness is one-directional over TRACKED files — untracked
+# scratch that real codegraph indexed neither wedges the gate nor maps
+
+
+def test_untracked_indexed_scratch_neither_wedges_nor_maps(tmp_path):
+    root = _git_repo(make_repo(tmp_path))
+    (root / "scratch.py").write_text("def wip() -> None:\n    pass\n")  # untracked
+    make_codegraph_db(root, extra_files=("scratch.py",))  # codegraph walks the FS
+    report = codemap.generate(root)  # no 'behind the worktree' wedge
+    assert "scratch.py" not in read_map(root)["modules"]
+    assert codemap.check(root)["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Round-6 F3: a version mismatch fails immediately — no futile reindex tax
+
+
+def test_version_mismatch_fails_without_a_reindex(tmp_path):
+    root = make_repo(tmp_path)
+    make_codegraph_db(root, version="9.9.9")  # default path
+    prebuilt = make_codegraph_db(root, db_path=tmp_path / "prebuilt.db")
+    stub, log = make_stub_codegraph(tmp_path, prebuilt)
+    with pytest.raises(codemap.MapError, match=r"9\.9\.9"):
+        codemap.generate(root, codegraph_bin=str(stub))
+    assert not log.exists()  # the stub was never invoked
+
+
+# ---------------------------------------------------------------------------
+# Round-6 F4: a tracked file codegraph declines (legacy encoding, broken
+# syntax) degrades to an `unparsed: true` marker after one reindex attempt —
+# the map still builds and the gate still runs
+
+
+def test_declined_tracked_file_gets_unparsed_marker(tmp_path):
+    root = make_repo(tmp_path)
+    (root / "legacy.py").write_bytes(b"# caf\xe9\nX = 1\n")  # tracked, undecodable
+    make_codegraph_db(root)  # index lacks legacy.py
+    prebuilt = make_codegraph_db(root, db_path=tmp_path / "prebuilt.db")
+    stub, log = make_stub_codegraph(tmp_path, prebuilt)
+    report = codemap.generate(root, codegraph_bin=str(stub))
+    assert log.read_text().split() == ["index"]  # one reindex attempt, then degrade
+    doc = read_map(root)
+    assert doc["modules"]["legacy.py"]["unparsed"] is True
+    assert doc["modules"]["legacy.py"]["symbols"] == []
+    assert codemap.check(root, codegraph_bin=str(stub))["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Round-6 F5: the three verbs share one adoption/damage semantics.
+# (a) never-adopted + proofless JSONC anywhere: read views warn, never raise;
+# (b) a half-written file AT a would-render path is reportable damage even
+# with zero healthy shards and no HEAD
+
+
+def test_read_views_do_not_raise_on_never_adopted_jsonc(tmp_path):
+    root = make_repo(tmp_path)
+    assets = root / "assets"
+    assets.mkdir()
+    (assets / "map.json").write_text("// tile config\n{\"tiles\": [1]}\n")
+    out = codemap.catalog(root, budget_lines=40, focus=[])  # no raise
+    assert "not adopted" in out
+    sl = codemap.slice_modules(root, ["fx"])
+    assert sl["modules"] == {} and "not adopted" in sl["note"]
+
+
+def test_half_written_file_at_render_path_is_not_green(tmp_path):
+    root = make_repo(tmp_path)  # no git: no HEAD proof possible
+    make_codegraph_db(root)
+    (root / "map.json").write_text('{"version": 1, "generator": {"produ')
+    report = codemap.check(root)
+    assert report["ok"] is False
+    assert report["damaged"] == ["map.json"]
+
+
+# ---------------------------------------------------------------------------
+# Round-6 F6: check names a foreign squat itself — no fabricated drift with
+# a dead-end remedy
+
+
+def test_check_names_a_foreign_squat_instead_of_fabricated_drift(tmp_path):
+    root = make_two_shard_repo(tmp_path)
+    make_two_shard_db(root)
+    codemap.generate(root)
+    (root / "packages" / "p1" / "map.json").unlink()
+    (root / "packages" / "p1" / "map.json").write_text(FOREIGN_MAP)
+    report = codemap.check(root)
+    assert report["ok"] is False
+    assert report["squatted"] == ["packages/p1/map.json"]
+    assert report["drifted"] == []
+
+
+# ---------------------------------------------------------------------------
+# Round-6 F8: the sidecar gets the same provenance heal as shards
+
+
+def test_conflicted_sidecar_heals_from_head(tmp_path):
+    root = _git_repo(make_repo(tmp_path))
+    make_codegraph_db(root)
+    report = codemap.generate(root)
+    current = {h["module"]: h["hash"] for h in report["unannotated"]}
+    good = json.dumps({"fx/helper.py": {"hash": current["fx/helper.py"],
+                                        "note": "formats things"}})
+    (root / "map.notes.json").write_text(good)
+    codemap.generate(root)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    _commit(root, "annotated")
+    (root / "map.notes.json").write_text(CONFLICTED)
+    report = codemap.check(root)
+    assert report["ok"] is False
+    assert report["damaged_notes"] == ["map.notes.json"]
+    heal = codemap.generate(root)
+    assert heal["healed_notes"] == ["map.notes.json"]
+    assert (root / "map.notes.json").read_text() == good  # HEAD's bytes restored
+    assert read_map(root)["modules"]["fx/helper.py"]["responsibility"] == "formats things"
+    assert codemap.check(root)["ok"] is True
+
+
+def test_conflicted_sidecar_without_head_is_a_hand_fix_error(tmp_path):
+    root = make_repo(tmp_path)
+    make_codegraph_db(root)
+    codemap.generate(root)
+    (root / "map.notes.json").write_text(CONFLICTED)
+    with pytest.raises(codemap.MapError, match="by hand"):
+        codemap.check(root)
+    with pytest.raises(codemap.MapError, match="by hand"):
+        codemap.generate(root)
+
+
+# ---------------------------------------------------------------------------
+# Round-6 F10: a default-path db that cannot even be OPENED still self-heals
+# (reset + reinit) instead of raising past the advertised provisioning
+
+
+def test_default_path_open_failure_self_heals(tmp_path):
+    root = make_repo(tmp_path)
+    (root / ".codegraph" / "codegraph.db").mkdir(parents=True)  # unopenable
+    prebuilt = make_db(root, files=REPO_FILES, nodes=REPO_NODES,
+                       edges=REPO_EDGES, db_path=tmp_path / "prebuilt.db")
+    stub, log = make_stub_codegraph(tmp_path, prebuilt)
+    report = codemap.generate(root, codegraph_bin=str(stub))
+    assert log.read_text().split() == ["init"]
+    assert read_map(root)["modules"]["fx/core.py"] == EXPECTED_CORE

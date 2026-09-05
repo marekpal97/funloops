@@ -15,19 +15,32 @@ fallback producer was dec-462f4b28's falsifier branch; it never fired and
 was retired in fix round 5.)
 
 The gate SELF-PROVISIONS the index for generate/check at the default db
-path: a missing index runs ``codegraph init -y <root>``; a stale, corrupt
-or version-mismatched one runs ``codegraph index <root>`` once and
-re-verifies (an index minted from the worktree is fresh by construction —
-every mapped file's sha256 must match ``files.content_hash``). The binary
-resolves ``--codegraph-bin`` → ``$CODEGRAPH_BIN`` → bare ``codegraph`` on
-PATH; ``codegraph init`` writes a ``.codegraph/.gitignore`` that keeps the
-index out of git. An EXPLICIT ``--db`` is never provisioned — its
-problems fail loudly.
+path: a missing index runs ``codegraph init -y <root>``, an unopenable one
+is reset and re-inited, a stale or query-corrupt one runs ``codegraph
+index <root>`` once and re-verifies; the version pin is checked FIRST and
+fails without spending a reindex (a wrong-versioned binary cannot cure
+it). Freshness is ONE-DIRECTIONAL over the TRACKED files: each must be
+present and sha256-matching in ``files.content_hash`` — whatever else
+codegraph indexed (untracked scratch; it walks the filesystem, not git)
+is ignored, and a tracked file the fresh index still lacks was DECLINED
+by codegraph (legacy encoding, broken syntax): its entry carries a
+deterministic ``unparsed: true`` marker instead of wedging the gate. The
+binary resolves ``--codegraph-bin`` → ``$CODEGRAPH_BIN`` → bare
+``codegraph`` on PATH; ``codegraph init`` writes a
+``.codegraph/.gitignore`` that keeps the index out of git. An EXPLICIT
+``--db`` is never provisioned — its problems fail loudly, and a tracked
+file absent from it is stale, not declined (fixture dbs are exact).
 
-Degradation splits on the artifact: a repo with a committed map.json and
-no working codegraph fails LOUD (MapError, exit 2 — never a silent
-producer flip); a repo with NO committed map.json is simply not adopted —
-``check`` no-ops honestly and the read views say so instead of erroring.
+Degradation splits on the artifact, and ADOPTION IS HEAD-AWARE (one
+``_adopted`` oracle for all three verbs): the rail is adopted when any
+healthy shard, HEAD-proven damaged file, or HEAD-committed shard deleted
+from the working tree exists — so a ``git rm`` or foreign overwrite of
+the committed shard is drift/damage, never silent un-adoption — or when,
+absent all proof, a damaged file sits at a path we would render to (a
+half-written first generate). An adopted repo with no working codegraph
+fails LOUD (MapError, exit 2 — never a silent producer flip); a repo
+with no adoption evidence at all no-ops honestly (``check`` exit 0, the
+read views say "not adopted" instead of erroring).
 
 The map is git-anchored: the root resolves to ``git rev-parse
 --show-toplevel`` (so a subdirectory invocation cannot mint a second key
@@ -51,7 +64,12 @@ Current hashes surface in generate/check reports (``unannotated`` /
 ``stale_notes``); the hash covers the module path too, so a note pasted
 onto the wrong module registers as stale. A note whose hash no longer
 matches is stale: ``check`` fails naming the module, and the
-responsibility drops to null rather than serve a lie.
+responsibility drops to null rather than serve a lie. The sidecar gets
+the same provenance heal as shards: an unparseable map.notes.json (merge
+conflict — two PRs each adding a note WILL collide) whose HEAD copy
+parses serves HEAD's notes, ``check`` reports it under ``damaged_notes``
+and ``generate`` restores HEAD's bytes (``healed_notes``); without HEAD
+proof the only honest remedy is a hand-fix, and the error says so.
 
 ``check`` is PURE: it regenerates in memory and compares against the
 bytes on disk, never writing — a red check stays red until ``devloop
@@ -68,11 +86,15 @@ copy parses as a shard) is healed by ``generate`` where a shard renders;
 where none renders, HEAD proof makes it a prunable orphan of ours
 (recoverable from git), and WITHOUT that proof it is treated like
 foreign — never deleted, never failing the gate (a JSONC tile config
-lands here). ``check`` reports the ours-damaged set under ``damaged``;
-the read views skip any damaged file with a warning rather than dying —
-they are how the map reaches a dispatch. A foreign map.json (valid JSON
-without our shape) is left alone, and one squatting a shard path is a
-refusal, never an overwrite.
+lands here). ``check`` reports the ours-damaged set under ``damaged``,
+a committed shard deleted from the working tree under ``missing_shards``
+(one no longer rendered is a pending prune-commit, not a failure), and a
+foreign file squatting a rendered path under ``squatted`` — naming the
+problem instead of fabricating per-module drift; the read views skip any
+damaged file with a warning rather than dying — they are how the map
+reaches a dispatch. A foreign map.json (valid JSON without our shape) is
+left alone, and one squatting a shard path is a refusal, never an
+overwrite.
 
 Test modules (under a ``tests`` dir or named ``test_*.py``) carry a
 ``tests`` count instead of a symbols list: they dominate raw symbol
@@ -84,6 +106,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path, PurePosixPath
 
@@ -220,26 +243,36 @@ def _run_codegraph(root: Path, cg_bin: str | None, *verb: str) -> None:
         raise MapError(f"`{bin_} {verb[0]}` failed in {root}: {' '.join(tail)}")
 
 
-def _index_problem(conn, root: Path, disk_files: list[str]) -> str | None:
-    """Version-pin or freshness violation as a message, else None. Indexed
-    paths outside the pruning rule are ignored — codegraph may index what we
-    never map."""
-    try:
-        row = conn.execute(
-            "SELECT value FROM project_metadata WHERE key='indexed_with_version'"
-        ).fetchone()
-        found = row[0] if row else "absent"
-        if found != CODEGRAPH_VERSION:
-            return (f"codegraph index version {found} != pinned {CODEGRAPH_VERSION} "
-                    "— re-verify the projection contract (test_map.py) before "
-                    "bumping codemap.CODEGRAPH_VERSION")
-        indexed = {p: h for p, h in conn.execute(
-            "SELECT path, content_hash FROM files WHERE language='python'")
-            if _mappable(p)}
-    except index_client.Error as e:
-        return f"codegraph index unreadable ({e})"
-    stale = set(disk_files) ^ set(indexed)
-    for p in set(disk_files) & set(indexed):
+def _check_pin(conn) -> None:
+    """The version pin is FATAL, checked before any reindex is spent —
+    reindexing with a wrong-versioned binary cannot cure it (F3)."""
+    row = conn.execute(
+        "SELECT value FROM project_metadata WHERE key='indexed_with_version'"
+    ).fetchone()
+    found = row[0] if row else "absent"
+    if found != CODEGRAPH_VERSION:
+        raise MapError(
+            f"codegraph index version {found} != pinned {CODEGRAPH_VERSION} "
+            "— re-verify the projection contract (test_map.py) before "
+            "bumping codemap.CODEGRAPH_VERSION")
+
+
+def _stale_problem(conn, root: Path, disk_files: list[str],
+                   *, allow_missing: bool) -> str | None:
+    """Freshness is ONE-DIRECTIONAL over TRACKED files (F2): every tracked
+    .py must be present and hash-matching in the index; extra indexed files
+    (untracked scratch — real codegraph walks the filesystem, not git) are
+    ignored. ``allow_missing`` (after a reindex): a tracked file the fresh
+    index still lacks was DECLINED by codegraph — the projection marks it
+    ``unparsed`` instead of wedging the gate (F4)."""
+    indexed = dict(conn.execute(
+        "SELECT path, content_hash FROM files WHERE language='python'"))
+    stale = set()
+    for p in disk_files:
+        if p not in indexed:
+            if not allow_missing:
+                stale.add(p)
+            continue
         try:
             data = (root / p).read_bytes()
         except OSError:
@@ -263,25 +296,60 @@ def _open_ro(db_path: Path):
 
 def _open_fresh_index(root: Path, db_path: Path, disk_files: list[str],
                       cg_bin: str | None, provision: bool):
-    """An open connection to a version-pinned, worktree-fresh index — running
-    codegraph at most twice (init for a missing default-path index, one full
-    reindex for a stale/corrupt/mispinned one) when ``provision`` is set. An
-    explicit --db is never provisioned: its problems raise as-is."""
+    """An open connection to a version-pinned, worktree-fresh index — when
+    ``provision`` is set (the DEFAULT db path), running codegraph as needed:
+    init for a missing index, a reset + reinit for one that cannot even be
+    opened (F10), one full reindex for a stale or query-corrupt one. The
+    version pin is checked first and fails without a reindex. An explicit
+    --db is never provisioned: its problems raise as-is, and a tracked file
+    absent from it is stale, not declined (fixture dbs are exact)."""
     if not db_path.is_file():
         if not provision:
             raise MapError(
                 f"codegraph index not found at {db_path} — run `codegraph "
                 "init` there or pass --db")
+        if db_path.exists():  # a directory (or other non-file) squats the path
+            try:
+                shutil.rmtree(db_path.parent)
+            except OSError as e:
+                raise MapError(
+                    f"cannot reset broken index dir {db_path.parent}: {e}") from None
         _run_codegraph(root, cg_bin, "init", "-y")
         if not db_path.is_file():
             raise MapError(f"`codegraph init` completed but wrote no index at {db_path}")
-    conn = _open_ro(db_path)
-    problem = _index_problem(conn, root, disk_files)
+    try:
+        conn = _open_ro(db_path)
+    except MapError:
+        if not provision:
+            raise
+        try:
+            shutil.rmtree(db_path.parent)
+        except OSError as e:
+            raise MapError(
+                f"cannot reset broken index dir {db_path.parent}: {e}") from None
+        _run_codegraph(root, cg_bin, "init", "-y")
+        conn = _open_ro(db_path)
+    try:
+        _check_pin(conn)
+        problem = _stale_problem(conn, root, disk_files, allow_missing=False)
+    except index_client.Error as e:  # opens lazily; queries reveal corruption
+        problem = f"codegraph index unreadable ({e})"
+    except MapError:
+        conn.close()
+        raise
     if problem and provision:
         conn.close()
         _run_codegraph(root, cg_bin, "index", "-q")
         conn = _open_ro(db_path)
-        problem = _index_problem(conn, root, disk_files)
+        try:
+            _check_pin(conn)
+            problem = _stale_problem(conn, root, disk_files, allow_missing=True)
+        except index_client.Error as e:
+            conn.close()
+            raise MapError(f"codegraph index unreadable after reindex ({e})") from None
+        except MapError:
+            conn.close()
+            raise
     if problem:
         conn.close()
         raise MapError(f"{problem} — reindex with `codegraph index`")
@@ -293,10 +361,16 @@ def _open_fresh_index(root: Path, db_path: Path, disk_files: list[str],
 
 
 def _project_codegraph(conn, disk_files: list[str]) -> dict[str, dict]:
-    """Index rows → module entries. The caller guarantees version pin and
-    freshness; signatures are the stored raw text, verbatim."""
-    files = sorted(p for (p,) in conn.execute(
-        "SELECT path FROM files WHERE language='python'") if _mappable(p))
+    """Index rows → module entries for the TRACKED files only — whatever
+    else real codegraph indexed (untracked scratch; it walks the filesystem,
+    not git) never maps. The caller guarantees version pin and freshness;
+    signatures are the stored raw text, verbatim. A tracked file the fresh
+    index lacks was declined by codegraph (legacy encoding, broken syntax):
+    it gets a deterministic ``unparsed: true`` marker instead of failing the
+    whole map."""
+    files = list(disk_files)  # already sorted + pruned
+    indexed = {p for (p,) in conn.execute(
+        "SELECT path FROM files WHERE language='python'")}
     raw = {p: _raw() for p in files}
     seen: set[tuple[str, str]] = set()
     for path, kind, name, qual, sig in conn.execute(
@@ -330,7 +404,12 @@ def _project_codegraph(conn, disk_files: list[str]) -> dict[str, dict]:
     ):
         if path in raw and _resolve(name, suffixes) is None:
             raw[path]["external"].add(name.split(".")[0])
-    return {p: _finish(r, p) for p, r in raw.items()}
+    out = {}
+    for p, r in raw.items():
+        out[p] = _finish(r, p)
+        if p not in indexed:
+            out[p]["unparsed"] = True
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -420,20 +499,51 @@ def _classify_map_file(p: Path, root: Path):
 
 
 def _scan_map_files(root: Path):
-    """One pass over every candidate map.json: ({rel: (text, doc)} for our
-    shards, {rel: head_doc | None} for damaged ones). Foreign files are
-    dropped here and never seen again."""
-    shards, damaged = {}, {}
+    """One pass over every candidate map.json — THE adoption/damage oracle
+    every entry point consumes: ({rel: (text, doc)} for our shards,
+    {rel: head_doc | None} for damaged ones, {rel: head_doc} for shards HEAD
+    holds but the working tree lost entirely — a git rm'd or clean-deleted
+    committed shard is drift, never silent un-adoption). Foreign files are
+    dropped here and never seen again. Adoption itself derives from these:
+    a healthy shard, HEAD-proven damage, or a missing HEAD shard each prove
+    the rail is adopted."""
+    shards, damaged, missing = {}, {}, {}
+    on_disk = set()
     for p in sorted(root.rglob(MAP_NAME)):
         rel = str(p.relative_to(root).as_posix())
         if not _mappable(rel):
             continue
+        on_disk.add(rel)
         kind, text, doc, head_doc = _classify_map_file(p, root)
         if kind == "shard":
             shards[rel] = (text, doc)
         elif kind == "damaged":
             damaged[rel] = head_doc
-    return shards, damaged
+    out = _git(root, "ls-tree", "-r", "--name-only", "-z", "HEAD")
+    for rel in (out.split("\0") if out else []):
+        if (rel and PurePosixPath(rel).name == MAP_NAME and _mappable(rel)
+                and rel not in on_disk):
+            hd = _head_shard_doc(root, rel)
+            if hd is not None:
+                missing[rel] = hd
+    return shards, damaged, missing
+
+
+def _adopted(root: Path, shards: dict, damaged: dict, missing: dict,
+             *, required: bool = False) -> bool:
+    """One adoption predicate for all three verbs (F1/F5): evidence is any
+    healthy shard, any HEAD-proven damaged file, any HEAD shard deleted from
+    the working tree — or, failing all proof, a damaged file sitting at a
+    path we would render to (a half-written first generate is at minimum
+    reportable damage; a JSONC tilemap elsewhere is not ours to flag)."""
+    if shards or missing or any(hd is not None for hd in damaged.values()):
+        return True
+    if not damaged:
+        return False
+    files = _py_files(root, required=required)
+    candidates = {MAP_NAME if d == "." else f"{d}/{MAP_NAME}"
+                  for d in {_shard_dir(root, f) for f in files}}
+    return bool(set(damaged) & candidates)
 
 
 def _interface_hash(path: str, entry: dict) -> str:
@@ -443,29 +553,49 @@ def _interface_hash(path: str, entry: dict) -> str:
     ).hexdigest()[:12]
 
 
-def _load_notes(root: Path, shard: str) -> dict:
+def _load_notes(root: Path, shard: str):
+    """(notes dict, damaged sidecar rel | None, HEAD text | None). The
+    sidecar gets the same provenance heal as shards: unparseable (a merge
+    conflict — two PRs each adding a note WILL collide) with a HEAD copy
+    that parses as a dict → serve HEAD's notes and report the file damaged
+    (generate writes the HEAD bytes back; check goes red naming it). No
+    HEAD proof → the only honest remedy is a hand-fix, so say so."""
     p = root / shard / NOTES_NAME
+    rel = NOTES_NAME if shard == "." else f"{shard}/{NOTES_NAME}"
     if not p.is_file():
-        return {}
+        return {}, None, None
     try:
         notes = json.loads(p.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        raise MapError(f"{p}: not valid JSON ({e})") from None
-    return notes if isinstance(notes, dict) else {}
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+        head = _git(root, "show", f"HEAD:{rel}")
+        try:
+            head_notes = json.loads(head) if head is not None else None
+        except json.JSONDecodeError:
+            head_notes = None
+        if isinstance(head_notes, dict):
+            return head_notes, rel, head
+        raise MapError(
+            f"{p}: not valid JSON ({e}) and no committed copy to restore "
+            "from — fix the file by hand") from None
+    return (notes if isinstance(notes, dict) else {}), None, None
 
 
 def _assemble(root: Path, modules: dict[str, dict]):
     """Fold sidecar notes in; render one deterministic doc per shard.
 
-    Returns ({shard relpath: rendered text}, stale, unannotated, orphans).
+    Returns ({shard relpath: rendered text}, stale, unannotated, orphans,
+    {damaged sidecar rel: HEAD text to restore}).
     """
     gen = {"producer": "codegraph", "codegraph": CODEGRAPH_VERSION}
     shards: dict[str, dict] = {}
     for path, entry in modules.items():
         shards.setdefault(_shard_dir(root, path), {})[path] = entry
     rendered, stale, unannotated, orphans = {}, [], [], []
+    damaged_notes: dict[str, str] = {}
     for sdir in sorted(shards):
-        notes = _load_notes(root, sdir)
+        notes, damaged_rel, head_text = _load_notes(root, sdir)
+        if damaged_rel is not None:
+            damaged_notes[damaged_rel] = head_text
         orphans.extend(sorted(set(notes) - set(shards[sdir])))
         folded = {}
         for path in sorted(shards[sdir]):
@@ -482,14 +612,15 @@ def _assemble(root: Path, modules: dict[str, dict]):
         doc = {"version": 1, "generator": gen, "modules": folded}
         rel = MAP_NAME if sdir == "." else f"{sdir}/{MAP_NAME}"
         rendered[rel] = json.dumps(doc, indent=1, sort_keys=True) + "\n"
-    return rendered, stale, unannotated, sorted(orphans)
+    return rendered, stale, unannotated, sorted(orphans), damaged_notes
 
 
 def _build(root: Path, db: str | None, cg_bin: str | None,
            scanned=None) -> dict:
     """Project + assemble, no shard writes (self-provisioning may write the
     index). ``root`` must already be strictly resolved."""
-    disk_shards, damaged = scanned if scanned is not None else _scan_map_files(root)
+    disk_shards, damaged, missing = (scanned if scanned is not None
+                                     else _scan_map_files(root))
     files = _py_files(root, required=True)
     db_path = Path(db) if db else root / ".codegraph" / "codegraph.db"
     conn = _open_fresh_index(root, db_path, files, cg_bin, provision=db is None)
@@ -499,11 +630,11 @@ def _build(root: Path, db: str | None, cg_bin: str | None,
         raise MapError(f"codegraph index unreadable ({db_path}): {e}") from None
     finally:
         conn.close()
-    rendered, stale, unannotated, orphans = _assemble(root, modules)
+    rendered, stale, unannotated, orphans, damaged_notes = _assemble(root, modules)
     return {"rendered": rendered, "stale": stale,
             "unannotated": unannotated, "orphan_notes": orphans,
-            "module_count": len(modules),
-            "disk_shards": disk_shards, "damaged": damaged}
+            "module_count": len(modules), "damaged_notes": damaged_notes,
+            "disk_shards": disk_shards, "damaged": damaged, "missing": missing}
 
 
 # ---------------------------------------------------------------------------
@@ -537,10 +668,15 @@ def generate(root, *, db: str | None = None,
     removed = sorted((existing - set(b["rendered"])) | orphaned_damaged)
     for rel in removed:
         (root / rel).unlink()
+    # a conflicted sidecar heals from provenance too: restore HEAD's bytes
+    # (the notes already folded came from that same HEAD copy)
+    for rel, head_text in b["damaged_notes"].items():
+        (root / rel).write_text(head_text, encoding="utf-8")
     return {"producer": "codegraph", "shards": sorted(b["rendered"]),
             "modules": b["module_count"], "stale_notes": b["stale"],
             "unannotated": b["unannotated"], "removed_shards": removed,
-            "orphan_notes": b["orphan_notes"], "healed": healed}
+            "orphan_notes": b["orphan_notes"], "healed": healed,
+            "healed_notes": sorted(b["damaged_notes"])}
 
 
 def check(root, *, db: str | None = None,
@@ -551,12 +687,13 @@ def check(root, *, db: str | None = None,
     no damaged one of ours) has not adopted the rail: honest no-op, no
     codegraph needed."""
     root = _resolve_root(root, required=True)
-    shards, damaged = _scan_map_files(root)
-    if not shards and not any(hd is not None for hd in damaged.values()):
+    scanned = _scan_map_files(root)
+    shards, damaged, missing = scanned
+    if not _adopted(root, shards, damaged, missing, required=True):
         return {"ok": True, "adopted": False,
                 "note": f"map rail not adopted — no committed {MAP_NAME} "
                         f"under {root}; run `devloop map` to adopt it"}
-    b = _build(root, db, codegraph_bin, scanned=(shards, damaged))
+    b = _build(root, db, codegraph_bin, scanned=scanned)
     old = b["disk_shards"]
     # a damaged shard is reported as such, not as a wall of per-module
     # drift — `devloop map` is the remedy (heal at a rendered path, prune
@@ -564,9 +701,20 @@ def check(root, *, db: str | None = None,
     # path nor HEAD proof is not ours to flag (the JSONC-tilemap ponytail).
     damaged_ours = sorted(rel for rel, hd in b["damaged"].items()
                           if rel in b["rendered"] or hd is not None)
+    # a committed shard deleted from the working tree is drift, named as
+    # such; one still committed but not rendered any more is a pending
+    # prune-commit, not a failure
+    missing_shards = sorted(set(b["missing"]) & set(b["rendered"]))
+    # foreign JSON squatting a rendered path: name the squat itself rather
+    # than fabricate per-module drift with a remedy that dead-ends in
+    # generate's refusal
+    squatted = sorted(rel for rel in b["rendered"]
+                      if rel not in old and rel not in b["damaged"]
+                      and rel not in b["missing"] and (root / rel).exists())
     drifted, generator_changed = [], []
     for rel, text in b["rendered"].items():
-        if rel in damaged_ours or old.get(rel, (None,))[0] == text:
+        if (rel in damaged_ours or rel in missing_shards or rel in squatted
+                or old.get(rel, (None,))[0] == text):
             continue
         before = old[rel][1]["modules"] if rel in old else {}
         after = json.loads(text)["modules"]
@@ -577,16 +725,19 @@ def check(root, *, db: str | None = None,
         else:
             generator_changed.append(rel)
     removed_shards = sorted(set(old) - set(b["rendered"]))
+    damaged_notes = sorted(b["damaged_notes"])
     # orphan_notes is advisory, not part of ok: an orphaned sidecar entry is
     # inert (nothing folds it into map.json), unlike a stale note which
     # would describe a live module wrongly — surfacing without gating spares
     # a sidecar-edit commit for every file deletion.
     ok = not (drifted or generator_changed or removed_shards or damaged_ours
-              or b["stale"])
+              or missing_shards or squatted or damaged_notes or b["stale"])
     return {"ok": ok, "adopted": True, "producer": "codegraph",
             "shards": sorted(b["rendered"]),
             "drifted": drifted, "generator_changed": generator_changed,
             "removed_shards": removed_shards, "damaged": damaged_ours,
+            "missing_shards": missing_shards, "squatted": squatted,
+            "damaged_notes": damaged_notes,
             "stale_notes": b["stale"], "orphan_notes": b["orphan_notes"]}
 
 
@@ -599,19 +750,22 @@ _NOT_ADOPTED = ("map rail not adopted — no committed " + MAP_NAME +
 
 
 def _committed_modules(root: Path):
-    """(modules, damaged rels) — or (None, None) where the rail is simply
-    not adopted. A damaged file degrades the read views to a warning — they
-    are how the map reaches a dispatch and must not die on a state `devloop
-    map` (or nothing, for a JSONC tilemap) can clear — except when damage is
-    all that remains, where an error is the only honest output."""
-    shards, damaged = _scan_map_files(root)
+    """(modules, damaged rels) — or (None, skipped) where the rail is not
+    adopted (same `_adopted` oracle as the gate: a never-adopted repo's
+    proofless JSONC map.json warns, never raises). A damaged file degrades
+    the read views to a warning — they are how the map reaches a dispatch
+    and must not die on a state `devloop map` (or nothing, for a JSONC
+    tilemap) can clear — except when the rail IS adopted and nothing
+    healthy remains, where an error is the only honest output."""
+    shards, damaged, missing = _scan_map_files(root)
     skipped = sorted(damaged)
     if not shards:
-        if skipped:
+        if _adopted(root, shards, damaged, missing):
+            gone = sorted(set(skipped) | set(missing))
             raise MapError(
-                f"{', '.join(skipped)}: damaged (unparseable or conflicted) "
-                f"and no healthy {MAP_NAME} remains — run `devloop map`")
-        return None, None
+                f"{', '.join(gone)}: damaged or deleted and no healthy "
+                f"{MAP_NAME} remains — run `devloop map`")
+        return None, skipped
     modules: dict[str, dict] = {}
     for _, doc in shards.values():
         modules.update(doc["modules"])
@@ -656,7 +810,9 @@ def catalog(root, *, budget_lines: int, focus: list[str]) -> str:
     """
     modules, skipped = _committed_modules(_resolve_root(root))
     if modules is None:
-        return _NOT_ADOPTED
+        return "\n".join([_NOT_ADOPTED] + [
+            f"! {rel}: unparseable map.json skipped (no committed shard "
+            "proves it ours)" for rel in skipped])
     warn = [f"! {rel}: damaged map.json skipped — run `devloop map`"
             for rel in skipped]
     full = [_module_line(p, modules[p]) for p in sorted(modules)]
@@ -688,7 +844,10 @@ def slice_modules(root, paths: list[str]) -> dict:
     """Tier-2 detail: full entries for modules under the given paths."""
     modules, skipped = _committed_modules(_resolve_root(root))
     if modules is None:
-        return {"modules": {}, "note": _NOT_ADOPTED}
+        out = {"modules": {}, "note": _NOT_ADOPTED}
+        if skipped:
+            out["skipped_damaged"] = skipped
+        return out
     prefixes = [_norm_path(p) for p in paths]
     keep = {m: e for m, e in modules.items()
             if any(_under(m, p) for p in prefixes)}
