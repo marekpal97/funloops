@@ -354,11 +354,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_map.add_argument("--root", default=".",
                        help="any path inside the repo to map — resolved to "
                             "its git toplevel (the cwd by default)")
-    p_map.add_argument("--producer", default=None, choices=["codegraph", "ast"],
-                       help="override the committed generator (default: reuse "
-                            "it; else codegraph if an index exists, else ast)")
     p_map.add_argument("--db", default=None,
-                       help="codegraph sqlite path (default <root>/.codegraph/codegraph.db)")
+                       help="codegraph sqlite path (default <root>/.codegraph/"
+                            "codegraph.db, self-provisioned when absent/stale; "
+                            "an explicit --db is never provisioned)")
+    p_map.add_argument("--codegraph-bin", default=None,
+                       help="codegraph executable for self-provisioning "
+                            "(default: $CODEGRAPH_BIN, else `codegraph` on PATH)")
 
     return parser
 
@@ -544,11 +546,13 @@ def main(argv: list[str] | None = None) -> int:
             elif args.slice:
                 print(json.dumps(codemap.slice_modules(root, _split_csv(args.slice)), indent=2))
             elif args.check:
-                report = codemap.check(root, producer=args.producer, db=args.db)
+                report = codemap.check(root, db=args.db,
+                                       codegraph_bin=args.codegraph_bin)
                 print(json.dumps(report, indent=2))
                 return 0 if report["ok"] else 1
             else:
-                report = codemap.generate(root, producer=args.producer, db=args.db)
+                report = codemap.generate(root, db=args.db,
+                                          codegraph_bin=args.codegraph_bin)
                 print(json.dumps(report, indent=2))
         except codemap.MapError as e:
             print(json.dumps({"error": str(e)}))
