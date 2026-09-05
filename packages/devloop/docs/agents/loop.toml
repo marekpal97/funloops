@@ -123,7 +123,7 @@ id = "map"
 kind = "command"
 required = true
 cmd = "uv run devloop map --check"
-timeout_sec = 120
+timeout_sec = 360  # covers codemap's self-provisioning budget (codegraph subprocess 300s + hashing)
 
 [[gates]]
 id = "tests"

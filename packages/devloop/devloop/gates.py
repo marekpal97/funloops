@@ -23,15 +23,27 @@ from devloop import paths
 def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict:
     """``base_ref`` is unused — it is in the signature so both deterministic
     executors share the registry's one calling convention."""
-    proc = subprocess.run(
-        gate["cmd"],
-        shell=True,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=gate.get("timeout_sec", 900),
-        check=False,  # a failing command IS the gate result, not an exception
-    )
+    timeout_sec = gate.get("timeout_sec", 900)
+    try:
+        proc = subprocess.run(
+            gate["cmd"],
+            shell=True,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            check=False,  # a failing command IS the gate result, not an exception
+        )
+    except subprocess.TimeoutExpired:
+        # a timeout is a gate RESULT too — the orchestrator consumes JSON,
+        # never tracebacks
+        return {
+            "id": gate["id"],
+            "kind": "command",
+            "passed": False,
+            "summary": f"`{gate['cmd']}` timed out after {timeout_sec}s",
+            "detail": "",
+        }
     tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[-30:])
     return {
         "id": gate["id"],

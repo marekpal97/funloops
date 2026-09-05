@@ -173,6 +173,18 @@ def test_closed_issues_never_in_frontier():
 
 
 # ---------------------------------------------------------------------------
+# command gate — a timeout is a gate RESULT, not a traceback (the orchestrator
+# consumes JSON; a raw TimeoutExpired breaks the gate-result contract)
+
+
+def test_command_gate_timeout_is_a_result_not_a_traceback(tmp_path):
+    gate = {"id": "slow", "kind": "command", "cmd": "sleep 5", "timeout_sec": 0.2}
+    result = gates.run_command_gate(gate, tmp_path)
+    assert result["passed"] is False
+    assert "timed out" in result["summary"]
+
+
+# ---------------------------------------------------------------------------
 # diff gate — pure evaluation over numstat text
 
 
