@@ -698,12 +698,26 @@ boards and `sweep --apply` for the op kinds listed in its cron line.
 The committed `map.json` shard(s) (one per pyproject-owning dir) are the
 architecture rail: module → responsibility → public symbols + signatures →
 imports, sorted and byte-deterministic, projected from a pinned codegraph
-index when one exists (`.codegraph/codegraph.db`) and from stdlib ast
-otherwise — same shape either way, and the committed `generator` field pins
-which producer the repo uses. The gate is one `[[gates]]` **command** entry
-(kind: command, no new gate kind): a PR that changes a module's public
-surface must carry the regenerated map, so the map delta is reviewable in
-every diff.
+index (`.codegraph/codegraph.db`) — the one producer; signatures are
+codegraph's raw text verbatim, so the bytes never depend on the running
+interpreter. `devloop map` and `map --check` self-provision that index:
+absent runs `codegraph init -y`, stale runs a reindex — the binary resolves
+`--codegraph-bin` → `$CODEGRAPH_BIN` → `codegraph` on PATH, and
+`.codegraph/` keeps itself out of git. The gate is one `[[gates]]`
+**command** entry (kind: command, no new gate kind): a PR that changes a
+module's public surface must carry the regenerated map, so the map delta is
+reviewable in every diff.
+
+Degradation follows the artifact. A repo with a committed map and no
+working codegraph fails loud (`MapError`, exit 2: install codegraph or
+regenerate on a machine that has it) — never a silent skip. A repo with no
+committed map has simply not adopted the rail: `--check` exits 0 noting
+"map rail not adopted", and `--catalog`/`--slice` report the same instead
+of erroring. When `devloop map --catalog` fails codegraph-unavailable at
+dispatch time, splice a fallback instruction block instead of the catalog —
+the model gathers the package layout, the public surfaces of the touched
+modules, and their import neighbors itself — and the PR body carries
+`⚠ map-degraded` so the reviewer knows the delta was hand-gathered.
 
 ```bash
 uv run devloop map                       # regenerate + write the shards

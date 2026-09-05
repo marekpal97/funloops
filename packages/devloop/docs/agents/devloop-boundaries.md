@@ -47,7 +47,7 @@ packages/devloop/
     cli.py             entry point: argparse, config resolution, dispatch
     dag.py             tracker-as-DAG math + the body-grammar it parses
     board.py           board hygiene: the grammar dag.py reads, as checks + sweep ops
-    codemap.py         architecture rail: map.json projected from codegraph's SQLite (ast fallback)
+    codemap.py         architecture rail: map.json projected from codegraph's SQLite (self-provisioning)
     gates.py           Gate protocol + deterministic executors
     triage.py          risk-lane classification of shipped PRs
     paths.py           leaf util: the three-form path matcher
@@ -132,13 +132,19 @@ Conventions text: `issue-loop.command.md` §Board hygiene.
 `CODEGRAPH_VERSION`, `MapError`, `generate`, `check`, `catalog`,
 `slice_modules`. Projects the committed, byte-deterministic map.json shards
 (module → responsibility → public symbols + signatures → imports; one shard
-per pyproject-owning dir) from a pinned codegraph index, with a stdlib-ast
-fallback of identical shape for repos without Node or an index. The committed
-`generator` field pins the producer; responsibility one-liners live in a
-hash-keyed map.notes.json sidecar so staleness is mechanical. The gate is one
-`[[gates]]` **command** entry (`devloop map --check`) — no new gate kind. The
-codegraph db is opened through `index_client.open_ro`/`Error`, keeping
-index_client the package's only sqlite3 importer (§5's allowlist seam).
+per pyproject-owning dir) from a pinned codegraph index — the ONE producer
+(the stdlib-ast fallback was the falsifier branch; it never fired and was
+retired in #27's fix round 5). Signatures are codegraph's stored raw text
+verbatim, so the bytes are interpreter-independent. generate/check
+self-provision the default-path index (`codegraph init`/`index` via
+`--codegraph-bin` → `$CODEGRAPH_BIN` → PATH); a committed map with no
+working codegraph fails loud, a repo with no committed map is simply not
+adopted (check no-ops, read views say so). Responsibility one-liners live in
+a hash-keyed map.notes.json sidecar so staleness is mechanical. The gate is
+one `[[gates]]` **command** entry (`devloop map --check`) — no new gate
+kind. The codegraph db is opened through `index_client.open_ro`/`Error`,
+keeping index_client the package's only sqlite3 importer, and codemap speaks
+codegraph's schema itself — the per-database SQL-home carve-out §5 names.
 
 **`index_client.py`** — §5.
 
@@ -297,8 +303,9 @@ Interface (#94, completed by #100):
   `THINKWEAVE_INDEX_DB`; `None` when nothing resolves (never guess a path).
 - `open_ro(db_path) -> sqlite3.Connection` — URI `mode=ro`, `Row` factory.
 - `Error = sqlite3.Error`, `Connection = sqlite3.Connection` — aliases so no
-  other module ever imports `sqlite3` (cli's degrade guard now, prime's
-  annotations post-#100), keeping the importer-allowlist seam tight.
+  other module ever imports `sqlite3` (cli's degrade guard, prime's
+  annotations post-#100, codemap's open/except paths post-#27), keeping the
+  importer-allowlist seam tight.
 - `trajectory_candidates(conn, concepts, query, scan_cap) -> list[dict]` — the
   retrieval surface. Two legs (concept match; fts5 match over `notes_fts`)
   fused by RRF at `RRF_K = 60`, the retrieval doctrine's constant (the main
@@ -311,20 +318,30 @@ Interface (#94, completed by #100):
 - `note_bodies(conn, ids) -> dict[str, str]` — ids → body text, `type='note'`
   only (a `builds_on` id may name a decision or session; those never serve).
 
-End state reached (#100): every SQL string in `devloop` lives here, and the
-query surface is *index-vocabulary-shaped* (tags, concepts, FTS match, ids →
-bodies), returning plain dicts — schema knowledge inside, domain knowledge
-outside. Trajectory-domain judgment (which tag is `loop-run`, outcome ranking,
-color filtering, budgeting) stays in `trajectory/prime.py`, composing over the
-seam. The fusion sits *inside* the seam because both legs are retrievers over
-the index; prime never sees a rank list, only fused candidates.
+The SQL-home invariant is **per-database**, not package-wide (#27): every SQL
+string devloop issues against the THINKWEAVE index lives here, and every SQL
+string against CODEGRAPH's index lives in `codemap` — each database has
+exactly one speaker, and codemap reaches its database only through this
+module's `open_ro`/`Error` aliases so the sqlite3-importer seam stays a
+singleton. `test_devloop_boundaries.py` pins the speaker set (a SELECT
+appearing in any other module is a new database seam nobody designed). For
+the thinkweave index the query surface is *index-vocabulary-shaped* (tags,
+concepts, FTS match, ids → bodies), returning plain dicts — schema knowledge
+inside, domain knowledge outside. Trajectory-domain judgment (which tag is
+`loop-run`, outcome ranking, color filtering, budgeting) stays in
+`trajectory/prime.py`, composing over the seam. The fusion sits *inside* the
+seam because both legs are retrievers over the index; prime never sees a
+rank list, only fused candidates.
 
-Three enforcing seams — prose alone is banned by the epic. Two live here; the
-third can only live where a real index does:
+Four enforcing seams — prose alone is banned by the epic. Three live here;
+the schema pin can only live where a real index does:
 
 1. **Importer-allowlist test** — asserts which devloop modules import
    `sqlite3`: the `{index_client}` singleton. Five lines, and the seam is
    enforced rather than remembered (`test_devloop_boundaries.py`).
+1b. **Per-database SQL-speaker test** — asserts which modules contain SQL at
+   all: `{index_client, codemap}`, one speaker per database
+   (`test_devloop_boundaries.py`).
 2. **No-host test** — asserts no module imports the host it was carved out of.
    This workspace's CI has no host installed, so without the seam the coupling
    would surface as a confusing ImportError in some later slice rather than as

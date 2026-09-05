@@ -89,8 +89,9 @@ max_changed_lines = 2000
 
 # Regenerate-and-diff of the committed architecture map — drift in a
 # module's public surface fails naming the module (funloops#27). ← EDIT:
-# seed the map once (`devloop map`, then commit map.json) or the first
-# check fails reporting every module as drifted.
+# seed the map once (`devloop map` on a machine with codegraph — it
+# self-provisions the index — then commit map.json); until then the
+# check no-ops as "map rail not adopted".
 [[gates]]
 id = "map"
 kind = "command"
