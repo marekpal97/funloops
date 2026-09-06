@@ -1,0 +1,54 @@
+{
+ "packages/devloop/devloop/__main__.py": {
+  "hash": "a6c5e05a2954",
+  "note": "python -m devloop -> cli.main"
+ },
+ "packages/devloop/devloop/board.py": {
+  "hash": "0ef77539eb0c",
+  "note": "board hygiene: the grammar dag.py reads, as checks + sweep ops"
+ },
+ "packages/devloop/devloop/cli.py": {
+  "hash": "8fd69e9908bb",
+  "note": "entry point: argparse, config resolution, dispatch \u2014 the package's one external interface"
+ },
+ "packages/devloop/devloop/codemap.py": {
+  "hash": "75dd6078cb07",
+  "note": "architecture rail: map.json shards projected from a self-provisioned codegraph index"
+ },
+ "packages/devloop/devloop/dag.py": {
+  "hash": "8c5bf47687b0",
+  "note": "tracker-as-DAG math + the body-grammar it parses"
+ },
+ "packages/devloop/devloop/gates.py": {
+  "hash": "8ce2cfd6c8bc",
+  "note": "Gate protocol + deterministic executors"
+ },
+ "packages/devloop/devloop/github.py": {
+  "hash": "aa0d891a51ab",
+  "note": "gh plumbing: issue snapshot + tracker mutations"
+ },
+ "packages/devloop/devloop/index_client.py": {
+  "hash": "a8ce3cc4d598",
+  "note": "the sqlite-RO seam into the derived index"
+ },
+ "packages/devloop/devloop/paths.py": {
+  "hash": "1662e6f67c3c",
+  "note": "leaf util: the three-form path matcher"
+ },
+ "packages/devloop/devloop/trajectory/__init__.py": {
+  "hash": "b7a7af4fbb2d",
+  "note": "re-exports the trajectory module's public interface"
+ },
+ "packages/devloop/devloop/trajectory/mint.py": {
+  "hash": "7ddda212de58",
+  "note": "write face: trajectory-note payload assembly"
+ },
+ "packages/devloop/devloop/trajectory/prime.py": {
+  "hash": "4891ef79ec7a",
+  "note": "read face: claim-time prior-trajectory context"
+ },
+ "packages/devloop/devloop/triage.py": {
+  "hash": "839c9b93003a",
+  "note": "risk-lane classification of shipped PRs"
+ }
+}

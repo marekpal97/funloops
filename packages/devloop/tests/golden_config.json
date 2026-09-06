@@ -50,6 +50,13 @@
       "max_changed_lines": 2000
     },
     {
+      "id": "map",
+      "kind": "command",
+      "required": true,
+      "cmd": "uv run devloop map --check",
+      "timeout_sec": 120
+    },
+    {
       "id": "tests",
       "kind": "command",
       "required": true,

@@ -9,3 +9,6 @@ build/
 
 # Machine-local agent wiring (command symlinks, settings.local.json) — never committed.
 .claude/
+
+# codegraph index — machine-local, self-provisioned by `devloop map` (funloops#27).
+.codegraph/

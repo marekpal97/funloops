@@ -1,6 +1,6 @@
 """Enforcing seams for the devloop/ boundary spec (docs/agents/devloop-boundaries.md).
 
-Two import-blast-radius contracts the spec states in prose and this file makes
+Three blast-radius contracts the spec states in prose and this file makes
 falsifiable:
 
 1. **Importer allowlist** — which devloop modules may import ``sqlite3``:
@@ -10,6 +10,9 @@ falsifiable:
    carved out of (boundary spec §1). Enforced here because funloops CI has no
    thinkweave installed; without this seam the coupling would only surface as a
    confusing ImportError in some later slice.
+3. **Per-database SQL home** — which modules contain SQL at all: one speaker
+   per database (index_client for the thinkweave index, codemap for
+   codegraph's — boundary spec §5, narrowed per-database by #27).
 
 The spec's third seam, the schema pin, stayed behind in thinkweave: it builds
 its fixture index by importing the *real thinkweave indexer*, so it can only run
@@ -53,3 +56,18 @@ def test_index_client_is_the_only_sqlite3_importer():
 
 def test_no_module_imports_thinkweave():
     assert {name for name, tree in _modules() if _imports_root(tree, "thinkweave")} == set()
+
+
+def test_sql_home_invariant_is_per_database():
+    """§5: every SQL string lives with its database's one speaker —
+    index_client for the thinkweave index, codemap for codegraph's index
+    (opened through index_client's open_ro/Error aliases, so the sqlite3
+    importer stays a singleton). A SELECT appearing anywhere else is a new
+    database seam nobody designed."""
+    speakers = {
+        name for name, tree in _modules()
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and "SELECT " in node.value and " FROM " in node.value
+    }
+    assert speakers == {"devloop.index_client", "devloop.codemap"}

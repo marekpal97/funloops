@@ -173,6 +173,18 @@ def test_closed_issues_never_in_frontier():
 
 
 # ---------------------------------------------------------------------------
+# command gate — a timeout is a gate RESULT, not a traceback (the orchestrator
+# consumes JSON; a raw TimeoutExpired breaks the gate-result contract)
+
+
+def test_command_gate_timeout_is_a_result_not_a_traceback(tmp_path):
+    gate = {"id": "slow", "kind": "command", "cmd": "sleep 5", "timeout_sec": 0.2}
+    result = gates.run_command_gate(gate, tmp_path)
+    assert result["passed"] is False
+    assert "timed out" in result["summary"]
+
+
+# ---------------------------------------------------------------------------
 # diff gate — pure evaluation over numstat text
 
 
@@ -257,12 +269,14 @@ def test_repo_loop_toml_parses_and_gate_ids_unique():
 
 
 def test_gate_pipeline_order_is_pinned():
-    """The full pipeline order is a contract: diff-guard → tests → acceptance
-    → review → simplify. simplify runs LAST, after review, so it only ever
-    shrinks an already-verified diff."""
+    """The full pipeline order is a contract: diff-guard → map → tests →
+    acceptance → review → simplify. The cheap deterministic gates run first
+    (map before tests: a stale map fails in ms, not after the suite); simplify
+    runs LAST, after review, so it only ever shrinks an already-verified
+    diff."""
     cfg = cli.load_config()
     ids = [g["id"] for g in cfg["gates"]]
-    assert ids == ["diff-guard", "tests", "acceptance", "review", "simplify"]
+    assert ids == ["diff-guard", "map", "tests", "acceptance", "review", "simplify"]
 
 
 def test_simplify_gate_shape():

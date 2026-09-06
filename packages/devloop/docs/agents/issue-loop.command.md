@@ -710,3 +710,57 @@ executes ops the pure layer emitted; it cannot close an issue, pick a rung, or
 choose a track — those stay findings for a human (or a `/triage` session) to
 resolve. Safe to run unattended: the weekly slow loop runs `doctor` across all
 boards and `sweep --apply` for the op kinds listed in its cron line.
+
+## 6. Architecture map — `devloop map` (funloops#27, dec-462f4b28)
+
+The committed `map.json` shard(s) (one per pyproject-owning dir) are the
+architecture rail: module → responsibility → public symbols + signatures →
+imports, sorted and byte-deterministic, projected from a pinned codegraph
+index (`.codegraph/codegraph.db`) — the one producer; signatures are
+codegraph's raw text verbatim, so the bytes never depend on the running
+interpreter. `devloop map` and `map --check` self-provision that index:
+absent runs `codegraph init -y`, stale runs a reindex — the binary resolves
+`--codegraph-bin` → `$CODEGRAPH_BIN` → `codegraph` on PATH, and
+`.codegraph/` keeps itself out of git. The gate is one `[[gates]]`
+**command** entry (kind: command, no new gate kind): a PR that changes a
+module's public surface must carry the regenerated map, so the map delta is
+reviewable in every diff.
+
+Degradation follows the artifact. A repo with a committed map and no
+working codegraph fails loud (`MapError`, exit 2: install codegraph or
+regenerate on a machine that has it) — never a silent skip. A repo with no
+committed map has simply not adopted the rail: `--check` exits 0 noting
+"map rail not adopted", and `--catalog`/`--slice` report the same instead
+of erroring. Adoption is HEAD-aware: deleting or overwriting the committed
+shard reads as drift/damage (`missing_shards`, `damaged`, `squatted`),
+never as un-adoption. When `devloop map --catalog` fails codegraph-unavailable at
+dispatch time, splice a fallback instruction block instead of the catalog —
+the model gathers the package layout, the public surfaces of the touched
+modules, and their import neighbors itself — and the PR body carries
+`⚠ map-degraded` so the reviewer knows the delta was hand-gathered.
+
+```bash
+uv run devloop map                       # regenerate + write the shards
+uv run devloop map --check               # regenerate + diff; exit 1 naming each drifted module
+uv run devloop map --catalog --budget-lines 40 --slice packages/devloop/devloop
+uv run devloop map --slice packages/devloop/devloop      # tier-2 JSON detail
+```
+
+The map is git-anchored: any invocation directory resolves to the repo
+toplevel, and only **tracked** files map — untracked scratch never enters the
+artifact, and a new module appears once `git add`ed (exactly when it enters
+the PR). `devloop map` prunes only shards it authored; a foreign `map.json`
+(a tilemap, a style file) is never touched.
+
+Dispatch context: splice `--catalog` (tier-1, budget-capped; the `--slice`
+paths keep the issue's subtree expanded while the rest rolls up) and
+`--slice` (tier-2) for the files the issue touches. Test modules appear as
+`N tests` lines and stay out of tier-2 unless the issue's paths name them.
+
+Responsibility one-liners live in `map.notes.json` beside each shard, keyed
+by module with the interface hash the note described; `map`/`map --check`
+report `unannotated` and `stale_notes` with current hashes. A stale note
+fails the check naming its module — re-read the module, rewrite the
+one-liner, paste the reported hash. When the implementer's diff drifts the
+map, the fix is mechanical: `uv run devloop map` in the worktree, commit the
+regenerated shard (and any note refresh) with the slice.

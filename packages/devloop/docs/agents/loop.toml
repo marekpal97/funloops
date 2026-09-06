@@ -114,6 +114,17 @@ required = true
 forbidden_paths = [".github/workflows/", "dist/"]
 max_changed_lines = 2000
 
+# The architecture rail (funloops#27, dec-462f4b28): map.json is committed and
+# byte-deterministic, so a PR that changes a module's public surface must carry
+# the regenerated map — the map delta IS the reviewer's instrument. kind:
+# command on purpose; the map gate is config-only, no new gate kind.
+[[gates]]
+id = "map"
+kind = "command"
+required = true
+cmd = "uv run devloop map --check"
+timeout_sec = 360  # covers codemap's self-provisioning budget (codegraph subprocess 300s + hashing)
+
 [[gates]]
 id = "tests"
 kind = "command"
