@@ -6,6 +6,7 @@ and strings — no gh, no git, no network.
 
 import json
 import sqlite3
+import subprocess
 
 import pytest
 
@@ -1242,6 +1243,336 @@ def test_prime_serves_file_anchored_decisions_without_any_trajectory(tmp_path, c
     assert payload["primed"] is True
     assert payload["served"] == ["dec-1", "dec-2"]
     assert "Prior decisions for touched files: dec-1, dec-2" in payload["block"]
+
+
+# ---------------------------------------------------------------------------
+# Prime v4 (funloops #2) — the semantic third leg, via the composition seam.
+# devloop is stdlib-only and cannot embed a query itself, so the leg shells to
+# the host's `weave search --mode similar` (subprocess, like the gh and git
+# seams) and fuses the ranked ids it returns into the same RRF at the same k.
+# Host absent / embeddings unbuilt / keyless → the leg is skipped, not silent.
+
+
+# Captured verbatim from the live host on 2026-08-11:
+#   THINKWEAVE_VAULT=… weave search "<q>" --mode similar --type note --limit 3
+# plus two `--type`-less lines whose TITLES carry their own parentheses — the
+# evidence that the id has to be anchored rather than taken as the title's
+# last token (the anchor itself is pinned by the tag-bracket test below).
+LIVE_SEARCH_STDOUT = (
+    "  [note] loop trajectory #113: newsletter: run the email intake rail on "
+    "cron — headless Gmail MCP now verified (n-8a03c20c) [loop-run]\n"
+    "    project: thinkweave\n"
+    "\n"
+    "  [note] TODO: Subscribe / get Orbis access to SemiAnalysis Pro + Yole "
+    "Développement + Visible Alpha (n-643928bb) [todo, subscriptions]\n"
+    "\n"
+    "  [note] Retrieval-Augmented Generation with Graphs (GraphRAG) "
+    "(n-ea77088c) [research, done]\n"
+    "\n"
+    "  [source] Balancing the Blend: An Experimental Analysis of Trade-offs in "
+    "Hybrid Search (Wang et al. 2025) (src-6159869a) [research]\n"
+    "\n"
+)
+
+
+def _fake_run(stdout="", returncode=0, exc=None, seen=None):
+    """A subprocess.run stand-in for the `weave search` shell-out."""
+    def run(argv, **kw):
+        if seen is not None:
+            seen.append((argv, kw))
+        if exc is not None:
+            raise exc
+        return subprocess.CompletedProcess(argv, returncode, stdout, "")
+    return run
+
+
+def test_semantic_ranking_parses_the_live_search_line_shape(monkeypatch):
+    """`weave search` has no JSON mode, so the seam parses its one stable line
+    shape: two spaces, `[type]`, title, `(id)`, optional ` [tags]`. The expected
+    ids are read off the captured live output above, not recomputed — and
+    anchoring the id to the end of the line is what keeps a title's own
+    parentheses (`… (GraphRAG) (n-ea77088c)`) from being mistaken for it.
+    Continuation lines (`    project: …`) are indented four and never parse."""
+    seen = []
+    monkeypatch.setattr(index_client.subprocess, "run",
+                        _fake_run(LIVE_SEARCH_STDOUT, seen=seen))
+    assert index_client.semantic_ranking("/vault", "some issue text") == [
+        "n-8a03c20c", "n-643928bb", "n-ea77088c", "src-6159869a",
+    ]
+    argv, kw = seen[0]
+    assert argv[:2] == ["weave", "search"] and "some issue text" in argv
+    assert "--mode" in argv and argv[argv.index("--mode") + 1] == "similar"
+    # The vault is pinned per-call: the leg must read the same vault the index
+    # came from, never whatever THINKWEAVE_VAULT the ambient shell happens to
+    # carry, and never hang the claim step.
+    assert kw["env"]["THINKWEAVE_VAULT"] == "/vault"
+    assert kw["timeout"] > 0
+
+
+def test_semantic_ranking_is_none_when_the_host_cannot_serve(monkeypatch):
+    """Never-crash, and never a silent empty leg. `weave` absent (OSError),
+    embeddings unbuilt / keyless (SemanticSearchUnavailable → exit 1), and a
+    hung host (timeout) all return None — "the leg did not run" — which is a
+    different fact from `[]`, "the leg ran and matched nothing"."""
+    for exc, rc in ((FileNotFoundError("weave"), 0),
+                    (subprocess.TimeoutExpired("weave", 60), 0),
+                    (None, 1)):
+        monkeypatch.setattr(index_client.subprocess, "run",
+                            _fake_run("Semantic retrieval unavailable: the "
+                                      "embeddings database is missing.",
+                                      returncode=rc, exc=exc))
+        assert index_client.semantic_ranking("/vault", "text") is None
+    monkeypatch.setattr(index_client.subprocess, "run",
+                        _fake_run("No results found.\n"))
+    assert index_client.semantic_ranking("/vault", "text") == []
+
+
+def test_semantic_ranking_passes_the_query_behind_a_sentinel(monkeypatch):
+    """The query is user-shaped, so a query of exactly ``-h`` would print the
+    host's help and exit 0 — parsing to nothing, which reads as ran-and-matched-
+    nothing. That is precisely the silent empty leg this design forbids, so
+    ``--`` makes every query a positional."""
+    seen = []
+    monkeypatch.setattr(index_client.subprocess, "run", _fake_run(seen=seen))
+    assert index_client.semantic_ranking("/vault", "-h") == []
+    assert seen[0][0][-2:] == ["--", "-h"]
+
+
+def test_semantic_ranking_honors_a_weave_binary_override(monkeypatch):
+    """`weave` is off PATH on the plugin install route, where a bare name would
+    make every run report a skipped leg and point at the wrong fix."""
+    seen = []
+    monkeypatch.setenv("DEVLOOP_WEAVE_BIN", "/opt/plugin/bin/weave")
+    monkeypatch.setattr(index_client.subprocess, "run", _fake_run(seen=seen))
+    index_client.semantic_ranking("/vault", "text")
+    assert seen[0][0][0] == "/opt/plugin/bin/weave"
+
+
+def test_semantic_ranking_id_is_anchored_past_the_tag_bracket(monkeypatch):
+    """The id is the last paren group *before* the optional tag bracket, not
+    the last on the line — otherwise a tag carrying parentheses parses as the
+    note id. Synthetic input: the shipped tag vocabulary is kebab-case, so this
+    is a class removed rather than a bug observed."""
+    monkeypatch.setattr(
+        index_client.subprocess, "run",
+        _fake_run("  [note] Graph RAG (GraphRAG) (n-123) [research (wip), done]\n"))
+    assert index_client.semantic_ranking("/vault", "text") == ["n-123"]
+
+
+def test_semantic_ranking_pins_the_child_to_this_vaults_weave_dir(tmp_path, monkeypatch):
+    """Derived state can live off the vault path (PR #10), and an ambient
+    ``THINKWEAVE_WEAVE_DIR`` would rank another vault's embeddings while the ids
+    hydrate against this index — a mismatch with no symptom but an empty leg.
+    Pin it from the same config.toml ``resolve_db_path`` reads, and scrub it
+    when this vault declares none."""
+    monkeypatch.setenv("THINKWEAVE_WEAVE_DIR", "/some/other/vault/.weave")
+    seen = []
+    monkeypatch.setattr(index_client.subprocess, "run", _fake_run(seen=seen))
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "config.toml").write_text('weave_dir = "derived"\n',
+                                                     encoding="utf-8")
+    index_client.semantic_ranking(str(tmp_path), "text")
+    assert seen[0][1]["env"]["THINKWEAVE_WEAVE_DIR"] == str(tmp_path / "derived")
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    index_client.semantic_ranking(str(bare), "text")
+    assert "THINKWEAVE_WEAVE_DIR" not in seen[1][1]["env"]
+
+
+def test_semantic_ranking_needs_both_a_vault_and_a_query(monkeypatch):
+    """Without a vault the leg would query some ambient vault that is not the
+    index prime is reading (id hydration would silently match nothing); without
+    query text there is nothing to embed. Neither shells out at all."""
+    monkeypatch.setattr(index_client.subprocess, "run",
+                        _fake_run(exc=AssertionError("must not shell out")))
+    assert index_client.semantic_ranking("", "text") is None
+    assert index_client.semantic_ranking("/vault", "   ") is None
+
+
+def test_trajectory_candidates_fuses_the_semantic_leg_at_the_same_k(tmp_path):
+    """The third leg enters the same RRF at the same k, and can reorder the
+    two-leg result.
+
+    Hand-computed (k=60, 1-indexed): two-leg order is [n-b, n-a, n-c] (pinned
+    by the #100 test above) because n-b is on both legs. Adding n-a to the
+    semantic leg at rank 1 gives n-a 1/61 + 1/61 = 0.032787, while n-b can
+    reach at most 1/62 + 1/61 = 0.032523 whatever its FTS rank — so n-a
+    overtakes n-b, and n-c (one leg only, ≤ 1/61) stays last."""
+    db = _fusion_db(tmp_path)
+    conn = index_client.open_ro(str(db))
+    try:
+        two_leg = index_client.trajectory_candidates(
+            conn, ["retrieval"], "fuse the retrieval legs")
+        three_leg = index_client.trajectory_candidates(
+            conn, ["retrieval"], "fuse the retrieval legs", semantic=["n-a"])
+    finally:
+        conn.close()
+    assert [r["id"] for r in two_leg] == ["n-b", "n-a", "n-c"]
+    assert [r["id"] for r in three_leg] == ["n-a", "n-b", "n-c"]
+
+
+def test_trajectory_candidates_semantic_leg_keeps_the_hosts_own_rank(tmp_path):
+    """A deep semantic hit must not enter the fusion as if it were the host's
+    best. The leg discards the ~99.5% of a whole-vault ranking that is not a
+    trajectory, so re-basing the survivors to 1..N would hand a 180th-place
+    cosine match 1/61 — the largest score any leg can contribute, tying the
+    best FTS hit. The host's own position is what carries.
+
+    Hand-computed (k=60): n-a at host position 180 adds 1/240 = 0.004167 to its
+    concept rank 1 (1/61 = 0.016393) → 0.020560; n-b holds concept rank 2
+    (1/62 = 0.016129) plus an FTS rank of 1 or 2 (≥ 1/62) → ≥ 0.032258. The
+    genuine FTS hit stays ahead, so the order is the two-leg [n-b, n-a, n-c] —
+    whereas at host position 1 (the test above) n-a legitimately overtakes."""
+    db = _fusion_db(tmp_path)
+    deep = [f"n-pad{i}" for i in range(179)] + ["n-a"]   # n-a is the 180th
+    conn = index_client.open_ro(str(db))
+    try:
+        rows = index_client.trajectory_candidates(
+            conn, ["retrieval"], "fuse the retrieval legs", semantic=deep)
+    finally:
+        conn.close()
+    assert [r["id"] for r in rows] == ["n-b", "n-a", "n-c"]
+
+
+def test_trajectory_candidates_semantic_leg_can_carry_retrieval_alone(tmp_path):
+    """The live acceptance in miniature: no concepts and no FTS terms, yet the
+    semantic leg alone produces a candidate — the case the two-leg rail served
+    nothing for."""
+    db = _fusion_db(tmp_path)
+    conn = index_client.open_ro(str(db))
+    try:
+        assert index_client.trajectory_candidates(conn, [], "") == []
+        alone = index_client.trajectory_candidates(conn, [], "", semantic=["n-c"])
+    finally:
+        conn.close()
+    assert [r["id"] for r in alone] == ["n-c"]
+
+
+def test_trajectory_candidates_semantic_leg_ordering_dedup_and_cap(tmp_path):
+    """The three remaining claims `_by_semantic`'s docstring makes, each read
+    off the fused order (k=60, 1-indexed, one leg only, so score is monotone in
+    the host's position): host order is preserved across survivors; a repeated
+    id is not counted twice (undeduped, n-c at positions 2 and 3 would score
+    1/62 + 1/63 and overtake n-a's 1/61); and `scan_cap` truncates."""
+    db = _fusion_db(tmp_path)
+    conn = index_client.open_ro(str(db))
+    try:
+        order = index_client.trajectory_candidates(conn, [], "",
+                                                   semantic=["n-c", "n-a"])
+        deduped = index_client.trajectory_candidates(conn, [], "",
+                                                     semantic=["n-a", "n-c", "n-c"])
+        capped = index_client.trajectory_candidates(conn, [], "", 1,
+                                                    semantic=["n-c", "n-a"])
+    finally:
+        conn.close()
+    assert [r["id"] for r in order] == ["n-c", "n-a"]      # host order, not db order
+    assert [r["id"] for r in deduped] == ["n-a", "n-c"]
+    assert [r["id"] for r in capped] == ["n-c"]
+
+
+def test_trajectory_candidates_semantic_leg_is_scoped_to_loop_run(tmp_path):
+    """The host CLI has no tag filter, so similar-mode ranks the whole vault;
+    scoping happens on hydration. An insight note (no loop-run tag) and an id
+    the index does not hold both drop out — only trajectories become
+    candidates."""
+    db = _fusion_db(tmp_path)
+    conn = index_client.open_ro(str(db))
+    try:
+        rows = index_client.trajectory_candidates(
+            conn, [], "", semantic=["n-ins-a", "n-nonexistent", "n-c"])
+    finally:
+        conn.close()
+    assert [r["id"] for r in rows] == ["n-c"]
+
+
+def test_prime_degrades_byte_identically_when_the_semantic_leg_is_skipped(tmp_path):
+    """A skipped semantic leg leaves the #100 two-leg payload untouched — the
+    note is the ONLY difference, because a leg that quietly contributes nothing
+    is indistinguishable from a dead one (the failure #100 was filed to fix).
+
+    The served ids are the fused two-leg order [n-b, n-a, n-c] pinned
+    independently by the RRF test above, resolved through builds_on."""
+    db = _fusion_db(tmp_path)
+    conn = index_client.open_ro(str(db))
+    try:
+        skipped = prime.build_prime_payload(
+            1, "loop-run-0", ["retrieval"], conn=conn, holdout=0,
+            query="fuse the retrieval legs", semantic=None)
+        ran_empty = prime.build_prime_payload(
+            1, "loop-run-0", ["retrieval"], conn=conn, holdout=0,
+            query="fuse the retrieval legs", semantic=[])
+    finally:
+        conn.close()
+    assert skipped["served"] == ["n-ins-b", "n-ins-a", "n-ins-c"]
+    assert {k: v for k, v in skipped.items() if k != "note"} \
+        == {k: v for k, v in ran_empty.items() if k != "note"}
+    assert "semantic leg skipped" in skipped["note"]
+    # The leg ran and matched nothing — that is not a skip, so no note.
+    assert ran_empty["note"] == ""
+
+
+def test_prime_notes_the_skipped_semantic_leg_even_when_primed(tmp_path, capsys):
+    """The visibility must survive a *successful* prime: a primed run whose
+    semantic leg never ran still says so, because that is exactly the state a
+    dead leg hides in. End-to-end through the CLI, which owns the shell-out."""
+    db = _fusion_db(tmp_path)
+    rc = cli.main(["prime", "1", "--run-id", "loop-run-0", "--concepts",
+                   "retrieval", "--query", "fuse the retrieval legs",
+                   "--db", str(db), "--dry-run"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["primed"] is True          # the two-leg rail still primes
+    assert "semantic leg skipped" in payload["note"]
+
+
+def test_prime_cli_skips_the_host_call_on_a_run_that_would_discard_it(
+        tmp_path, monkeypatch, capsys):
+    """A holdout returns before retrieval and a run with no readable index has
+    nothing to hydrate ids against — both would pay an embedding call, and up
+    to the full timeout on a wedged host, for a result thrown away. The rail
+    must not shell out at all.
+
+    Each also has to say the right thing. A holdout's note is the holdout,
+    full stop — the leg is beside the point on a run that is deliberately
+    unprimed. The no-index run reports the missing index, NOT the generic
+    "host served no ranking": every clause of that one (vault, query text,
+    embeddings, PATH) names something that was fine here, and it would send
+    the reader after embeddings when the index is what is absent."""
+    monkeypatch.setattr(index_client.subprocess, "run",
+                        _fake_run(exc=AssertionError("must not shell out")))
+    db = _fusion_db(tmp_path)
+    # --concepts is passed throughout: the fake stands in for the whole
+    # subprocess module, so a fallthrough to `gh` for labels would trip it too.
+    # sha1("loop-run-10") % 5 == 0 → held out at the default prime_holdout of 5.
+    assert cli.main(["prime", "1", "--run-id", "loop-run-10", "--query", "text",
+                     "--concepts", "retrieval", "--db", str(db),
+                     "--vault", str(tmp_path), "--dry-run"]) == 0
+    held_out = json.loads(capsys.readouterr().out)
+    assert held_out["holdout"] is True
+    assert "semantic" not in held_out["note"]
+    assert cli.main(["prime", "1", "--run-id", "loop-run-0", "--query", "text",
+                     "--concepts", "retrieval", "--db", str(tmp_path / "absent.db"),
+                     "--vault", str(tmp_path), "--dry-run"]) == 0
+    no_index = json.loads(capsys.readouterr().out)["note"]
+    assert "no readable index" in no_index
+    assert "the host served no ranking" not in no_index
+
+
+def test_prime_cli_fuses_the_semantic_leg_when_the_host_serves(tmp_path, monkeypatch, capsys):
+    """The CLI is the imperative shell (boundary spec §2): it gathers the host
+    ranking by subprocess and feeds the pure payload builder. With the host
+    serving, the note carries no skip marker and the semantic hit is fused."""
+    db = _fusion_db(tmp_path)
+    monkeypatch.setattr(
+        index_client.subprocess, "run",
+        _fake_run("  [note] gamma rail (n-c) [loop-run]\n"))
+    rc = cli.main(["prime", "3", "--run-id", "loop-run-0", "--query",
+                   "postgres replication lag", "--db", str(db),
+                   "--vault", str(tmp_path), "--dry-run"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["served"] == ["n-ins-c"]   # reached by the semantic leg only
+    assert "semantic leg skipped" not in payload["note"]
 
 
 # --- Review round 1 (issue #85) — hardening the prime v2 seams --------------

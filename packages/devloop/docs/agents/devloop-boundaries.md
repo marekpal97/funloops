@@ -210,10 +210,12 @@ internal):
   outcome, ...) -> dict` — pure; emits the weave_create-shaped payload.
   (mint face)
 - `build_prime_payload(issue_number, run_id, concepts, *, conn, holdout,
-  limit, budget_chars, decisions, query) -> dict` — the claim-time payload.
-  `concepts` (ontology terms) and `query` (the issue's text) are the two
+  limit, budget_chars, decisions, query, semantic) -> dict` — the claim-time
+  payload. `concepts` (ontology terms), `query` (the issue's text) and
+  `semantic` (the host's similarity ranking, gathered by `cli`) are the three
   retrieval legs; `decisions` are the file-anchored ids the orchestrator
-  resolved. (prime face)
+  resolved. Prime passes `semantic` through opaquely — it never ranks or
+  fuses; the seam does (§5). (prime face)
 - `append_served_event(buffer_path, run_id, issue_number, served, session_id)`
   + `LOOP_PRIME_TOOL` — the served-context write-through to the session
   buffer JSONL.
@@ -240,11 +242,12 @@ dispatch — concretely, asking which invocations correlate with rework. Until
 then nothing implies capture-all exists.
 
 **Invocation-trajectory extension — the parking note above is the contract.**
-Internal to `prime.py`:
-`is_holdout` (the sha1 holdout — `build_prime_payload` computes it; moved
-off the public list 2026-08-01, it had no external consumer),
-`_coerce_builds_on`, the outcome-rank table, `render_prime_block`, and the two
-composition helpers over the seam (`query_trajectories`, `resolve_insights`).
+- `is_holdout(run_id, holdout)` — the sha1 holdout. Back on the public list at
+  funloops#2: `cli` must know a run is held out before paying for the host call.
+
+Internal to `prime.py`: `_coerce_builds_on`, the outcome-rank table,
+`render_prime_block`, and the two composition helpers over the seam
+(`query_trajectories`, `resolve_insights`).
 
 Two interface-level invariants, stated on the module:
 
@@ -255,14 +258,15 @@ Two interface-level invariants, stated on the module:
 - **Prime writes nothing to the index.** Its only side effect is the
   served-event append to the *session buffer* (markdown-adjacent log); the
   index stays strictly read-only (§5).
-- **Prime retrieves on two legs, and the concept leg alone is not enough.**
+- **Prime retrieves on three legs, and no leg alone is enough.**
   Concept-only retrieval was dead by construction: the write side tags
   trajectories with ontology concepts while the rail was being handed GitHub
   labels, so the join matched nothing and every run was effectively unprimed.
-  Hence the full-text leg over the issue's own words, RRF-fused in
-  `index_client` (§5), and hence the warning the payload's `note` carries when
-  called with labels and no `--query`. The orchestrator's half of this contract
-  is the command doc §1b.
+  Hence the full-text leg over the issue's own words, then the semantic leg for
+  the issue whose words miss but whose meaning lands — all three RRF-fused in
+  `index_client` (§5, §5.1), and hence the two warnings the payload's `note`
+  carries: called with labels and no `--query`, and the semantic leg not having
+  run. The orchestrator's half of this contract is the command doc §1b.
 
 **The host overlay.** How these notes reach a *particular* memory host — the
 vault write-back, its four-surface ownership partition, the wrap-coverage rail —
@@ -286,15 +290,18 @@ Interface (#94, completed by #100):
 - `Error = sqlite3.Error`, `Connection = sqlite3.Connection` — aliases so no
   other module ever imports `sqlite3` (cli's degrade guard now, prime's
   annotations post-#100), keeping the importer-allowlist seam tight.
-- `trajectory_candidates(conn, concepts, query, scan_cap) -> list[dict]` — the
-  retrieval surface. Two legs (concept match; fts5 match over `notes_fts`)
-  fused by RRF at `RRF_K = 60`, the retrieval doctrine's constant (the main
-  package's knob is `retrieval.rrf_k`; the rail reads no vault config, so it is
-  a constant here rather than a parameter nobody passes). Either leg's input
-  may be empty. The FTS leg is best-effort *only while the other leg is
-  carrying*: a vault with no `notes_fts` still primes on concepts, but a broken
-  FTS with nothing else retrieved raises into the degrade guard — FTS is
+- `trajectory_candidates(conn, concepts, query, scan_cap, semantic) -> list[dict]`
+  — the retrieval surface. Three legs (concept match; fts5 match over
+  `notes_fts`; the semantic ranking of §5.1) fused by RRF at `RRF_K = 60`, the
+  retrieval doctrine's constant (the main package's knob is `retrieval.rrf_k`;
+  the rail reads no vault config, so it is a constant here rather than a
+  parameter nobody passes). Any leg's input may be empty, and the semantic leg
+  is appended last so a run without it fuses byte-identically to the two-leg
+  (#100) rail, ties included. The FTS leg is best-effort *only while another
+  leg is carrying*: a vault with no `notes_fts` still primes on concepts, but a
+  broken FTS with nothing else retrieved raises into the degrade guard — FTS is
   load-bearing, so its failure must not read as a clean empty match.
+- `semantic_ranking(vault, query) -> list[str] | None` — §5.1.
 - `note_bodies(conn, ids) -> dict[str, str]` — ids → body text, `type='note'`
   only (a `builds_on` id may name a decision or session; those never serve).
 
@@ -303,8 +310,40 @@ query surface is *index-vocabulary-shaped* (tags, concepts, FTS match, ids →
 bodies), returning plain dicts — schema knowledge inside, domain knowledge
 outside. Trajectory-domain judgment (which tag is `loop-run`, outcome ranking,
 color filtering, budgeting) stays in `trajectory/prime.py`, composing over the
-seam. The fusion sits *inside* the seam because both legs are retrievers over
+seam. The fusion sits *inside* the seam because every leg is a retriever over
 the index; prime never sees a rank list, only fused candidates.
+
+### 5.1 The semantic leg — a composition seam, not a query of our own
+
+The third retrieval leg (funloops#2) is the one thing this package cannot
+compute: the vectors live in the host's `embeddings.db`, and embedding the
+*query* needs the host's provider stack. Both candidate shapes were on the
+table; the settled one is **composition, not reimplementation**:
+`semantic_ranking` shells out to `weave search --mode similar` — a subprocess,
+which is stdlib and the same posture as the `gh` (§2) and `git` seams — and
+fuses the ranked ids it parses back. The stdlib-only, never-import-the-host
+invariant is untouched; the rail simply asks the host a question when the host
+is there to answer.
+
+**Ordering, not membership.** Rank fidelity (`_rrf` takes explicit
+`(rank, row)` pairs; `_by_semantic` carries its parsed positions rather than
+renumbering the survivors of its `[loop-run]` filter) keeps a deep cosine match
+from scoring like the host's best. It does not keep it out: there is no
+similarity floor anywhere in the design, so when the other legs are thin a deep
+hit is still the best candidate there is and prime will serve it. That is
+inherent to threshold-free RRF — fusion ranks what it is given, it does not
+decide what deserves to be there — and the FTS leg has always behaved the same
+way. A floor would be the change that fixes membership; nothing here is one.
+Any future leg that filters after ranking inherits the same obligation.
+
+**No FTS double-count.** The host's similar mode does not fall back to full
+text: `Search.similar` raises `SemanticSearchUnavailable` and the CLI exits 1
+(the soft-fail-to-FTS posture is the MCP tool's, and it too returns a message
+rather than FTS rows). So a zero exit means a semantic ranking, and the exit
+code is the whole detection mechanism. If a future host ever made similar-mode
+fall back silently, this seam would fuse FTS rows twice and there is no
+structural guard against that — the pin is the host's exit code, stated here so
+a host-side change knows what it breaks.
 
 Three enforcing seams — prose alone is banned by the epic. Two live here; the
 third can only live where a real index does:
@@ -354,6 +393,7 @@ not as open work:
 | #99 | judgment-gate validators + normalize-to-backstop | `gates.py` (introduces the `JUDGMENT` validator registry + its tests), `trajectory/mint.py` |
 | #100 | prime v3 retrieval (FTS+concept via the seam) | `index_client.py`, `trajectory/prime.py` |
 | #102 | rework-evidence stamps | `trajectory/mint.py` (+ orchestrator) |
+| funloops#2 | prime v4 semantic third leg (composition seam, §5.1) | `index_client.py`, `trajectory/prime.py`, `cli.py` (the shell-out) |
 
 Any of these needing a third module is a boundary bug — file it against this
 spec.

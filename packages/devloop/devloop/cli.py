@@ -263,12 +263,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
                               "from --labels")
     p_prime.add_argument("--query", default="",
                          help="the issue's own text (title, or title + body) — the "
-                              "full-text retrieval leg, fused with --concepts")
+                              "full-text and (with --vault) semantic retrieval "
+                              "legs, fused with --concepts")
     p_prime.add_argument("--db", default=None, help="index db path (opened read-only)")
     p_prime.add_argument("--vault", default=None,
                          help="vault root; resolves the index under the vault's "
                               "weave_dir override (config.toml) when --db is absent, "
-                              "else <vault>/.weave/index.db")
+                              "else <vault>/.weave/index.db. Also scopes the "
+                              "semantic leg's `weave search --mode similar` call — "
+                              "without it that leg is skipped (said so in `note`)")
     p_prime.add_argument("--limit", type=int, default=3,
                          help="max prior trajectories (and decisions) to splice — top-N per kind")
     p_prime.add_argument("--budget-chars", type=int, default=1200,
@@ -426,12 +429,21 @@ def main(argv: list[str] | None = None) -> int:
                 conn = index_client.open_ro(db_path)
             except index_client.Error:
                 conn = None
+        # A host call, so the imperative shell gathers it — same posture as the
+        # trajectory subcommand's git reads. Skipped on the runs that discard
+        # the result: a holdout returns before retrieval, and with no index
+        # there is nothing to hydrate a ranking against.
+        semantic = (
+            index_client.semantic_ranking(args.vault, args.query)
+            if conn is not None and not trajectory.is_holdout(args.run_id, holdout)
+            else None
+        )
         try:
             payload = trajectory.build_prime_payload(
                 args.number, args.run_id, concepts, conn=conn, holdout=holdout,
                 limit=args.limit, budget_chars=args.budget_chars,
                 decisions=_split_csv(args.decisions) if args.decisions else None,
-                query=args.query,
+                query=args.query, semantic=semantic,
             )
         finally:
             if conn is not None:

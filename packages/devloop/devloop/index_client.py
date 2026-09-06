@@ -11,6 +11,9 @@ retrievers — concept match and full-text match over the issue's own words —
 fused by reciprocal rank fusion. One leg alone was dead by construction: the
 write side tags notes with ontology concepts while the read side was handed
 GitHub labels, so the concept join matched nothing on the live index.
+
+Third leg (funloops#2): semantic similarity, shelled out to the host — see
+``semantic_ranking``.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -64,7 +68,7 @@ def _read_weave_dir_override(vault_root: Path) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
-# Trajectory retrieval — two legs, fused
+# Trajectory retrieval — three legs, fused
 
 # The retrieval doctrine's fusion constant (the main package's config knob is
 # `retrieval.rrf_k`, same default). The rail reads no vault config, so it is a
@@ -100,10 +104,16 @@ def _fts_match_expr(text: str) -> str:
     return " OR ".join(f'"{t}"' for t in terms)
 
 
-def _by_concepts(conn: sqlite3.Connection, concepts: list[str], scan_cap: int) -> list[dict]:
+def _ranked(rows) -> list[tuple[int, dict]]:
+    """A leg's rows as the 1-indexed ranking :func:`_rrf` consumes."""
+    return list(enumerate((dict(r) for r in rows), start=1))
+
+
+def _by_concepts(conn: sqlite3.Connection, concepts: list[str],
+                 scan_cap: int) -> list[tuple[int, dict]]:
     """Leg 1: ``[loop-run]`` notes carrying ANY of the concepts, recency first."""
     placeholders = ",".join("?" * len(concepts))
-    return [dict(r) for r in conn.execute(
+    return _ranked(conn.execute(
         f"""SELECT DISTINCT {_CANDIDATE_COLS}
             FROM notes n
             JOIN note_tags t ON t.note_id = n.id AND t.tag = 'loop-run'
@@ -112,12 +122,13 @@ def _by_concepts(conn: sqlite3.Connection, concepts: list[str], scan_cap: int) -
             ORDER BY n.date DESC, n.id DESC
             LIMIT ?""",
         [*concepts, scan_cap],
-    )]
+    ))
 
 
-def _by_fts(conn: sqlite3.Connection, match: str, scan_cap: int) -> list[dict]:
+def _by_fts(conn: sqlite3.Connection, match: str,
+            scan_cap: int) -> list[tuple[int, dict]]:
     """Leg 2: ``[loop-run]`` notes matching the text, fts5 relevance order."""
-    return [dict(r) for r in conn.execute(
+    return _ranked(conn.execute(
         f"""SELECT {_CANDIDATE_COLS}
             FROM notes_fts f
             JOIN notes n ON n.rowid = f.rowid
@@ -127,11 +138,128 @@ def _by_fts(conn: sqlite3.Connection, match: str, scan_cap: int) -> list[dict]:
             ORDER BY f.rank
             LIMIT ?""",
         [match, scan_cap],
-    )]
+    ))
 
 
-def _rrf(rankings: list[list[dict]]) -> list[dict]:
+# Leg 3 lives outside sqlite: the vectors are the host's and embedding a query
+# needs the host's provider, so the ranking is asked for over a subprocess.
+
+# How deep to ask the host to rank. Similar mode ranks the WHOLE vault — its
+# `--tags` filter is wired to fts mode only — so the leg over-fetches and scopes
+# to [loop-run] on hydration (`_by_semantic`).
+#
+# ponytail: 200 is a depth, not a tuned constant. Trajectories are a fraction of
+# a percent of a live vault; on the host index two synonym-only queries put the
+# intended trajectory at ranks 1 and 30. Cosine is computed over every vector
+# whatever the limit, so extra depth costs only parsing. Upgrade path when a
+# vault outgrows it: a tag filter on the host's similar mode, then ask for
+# exactly `scan_cap`.
+SEMANTIC_FETCH = 200
+
+# A claim-time step must not hang on a host that wedged.
+SEMANTIC_TIMEOUT = 60
+
+# `weave search` has no JSON mode; its one stable line shape is
+# ``  [<type>] <title> (<id>)`` optionally followed by `` [tag, tag]``, with
+# continuation lines (snippet, project) indented four. Anchored at both ends:
+# titles carry parentheses of their own, and a parenthesized tag would be read
+# as the id if the pattern just took the line's last group.
+_SEARCH_ID = re.compile(r"^ {2}\[[^\]]*\] .*\(([^()]+)\)(?: \[[^\]]*\])?\s*$")
+
+# The `weave` console script is off PATH on the plugin install route (its venv
+# is the plugin's), where a bare name would make every run report a skipped leg
+# and point the reader at the wrong fix. An env var, not a loop.toml knob: no
+# module below `cli` reads config (boundary spec §2). Prefixed, because the
+# rail shares an environment with whatever the host already exports.
+_WEAVE_BIN_ENV = "DEVLOOP_WEAVE_BIN"
+
+
+def semantic_ranking(vault: str | None, query: str) -> list[str] | None:
+    """Note ids ranked by embedding similarity to ``query``, via the host CLI.
+
+    The composition seam: ``weave search --mode similar`` scoped to ``vault``,
+    parsed off its stable line shape. Returns ids in the host's rank order.
+
+    ``None`` means **the leg did not run** — no vault to scope to, no query text
+    to embed, no ``weave`` on PATH, or the host refusing (embeddings unbuilt or
+    keyless exits 1). That is a different fact from ``[]``, "ran and matched
+    nothing", and callers surface it: a silently dead leg is the failure #100
+    was filed to fix. Never raises.
+
+    The vault is pinned per call rather than inherited: the leg must rank the
+    same vault the index came from, not whatever ``THINKWEAVE_VAULT`` an ambient
+    shell carries (ids from another vault would hydrate to nothing).
+    """
+    if not vault or not query.strip():
+        return None
+    env = {**os.environ, "THINKWEAVE_VAULT": vault}
+    # Derived state can live off the vault path (PR #10). Pin the child to the
+    # weave_dir *this* vault declares — the same value resolve_db_path reads —
+    # and drop an ambient one when it declares none, or the host ranks some
+    # other vault's embeddings and the ids come back to hydrate against this
+    # index: a cross-vault mismatch whose only symptom is an empty leg.
+    weave_dir = _read_weave_dir_override(Path(vault))
+    if weave_dir:
+        env["THINKWEAVE_WEAVE_DIR"] = str(weave_dir)
+    else:
+        env.pop("THINKWEAVE_WEAVE_DIR", None)
+    try:
+        proc = subprocess.run(
+            # `--` last: a query of exactly `-h` must be searched for, not
+            # print the host's help and exit 0 (which parses to nothing and
+            # reads as ran-and-matched-nothing — the silent leg this forbids).
+            [os.environ.get(_WEAVE_BIN_ENV) or "weave", "search",
+             "--mode", "similar", "--type", "note",
+             "--limit", str(SEMANTIC_FETCH), "--", query],
+            capture_output=True, text=True, timeout=SEMANTIC_TIMEOUT, check=False,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return [m.group(1) for m in map(_SEARCH_ID.match, proc.stdout.splitlines()) if m]
+
+
+def _by_semantic(conn: sqlite3.Connection, ids: list[str],
+                 scan_cap: int) -> list[tuple[int, dict]]:
+    """Leg 3: the host's ranked ids hydrated to ``[loop-run]`` candidate rows.
+
+    Scoping is this join, not the host call: similar mode ranks the whole vault,
+    so an insight note, a source, or an id this index does not hold simply fails
+    to hydrate.
+
+    **Each survivor keeps its position in the parsed ranking.** Trajectories
+    are a fraction of a percent of a vault, so nearly the whole ranking drops
+    out here; re-basing the handful that survive to 1..N would enter a
+    180th-place cosine match at 1/61 — the largest score any leg can
+    contribute — and the leg would promote something on every single query.
+    Carrying the original position is what makes a weak semantic match score
+    like a weak match. Parse position, not the host's: an unparseable output
+    line shifts everything after it one place nearer the front, which moves a
+    rank by a hair and never re-bases it.
+    """
+    ids = list(dict.fromkeys(ids))  # a repeat would count its rank twice
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    rows = {r["id"]: dict(r) for r in conn.execute(
+        f"""SELECT {_CANDIDATE_COLS}
+            FROM notes n
+            JOIN note_tags t ON t.note_id = n.id AND t.tag = 'loop-run'
+            WHERE n.id IN ({placeholders})""",
+        ids,
+    )}
+    return [(pos, rows[i]) for pos, i in enumerate(ids, start=1)
+            if i in rows][:scan_cap]
+
+
+def _rrf(rankings: list[list[tuple[int, dict]]]) -> list[dict]:
     """Reciprocal rank fusion: ``score[id] = Σ 1/(RRF_K + rank_i)``, 1-indexed.
+
+    Each leg contributes ``(rank, row)`` pairs — explicit, and not necessarily
+    contiguous, so that filtering a ranking cannot silently promote what is
+    left (:func:`_by_semantic`).
 
     Ties keep first-seen order (dict insertion + a stable sort), so a single
     ranking fuses to itself byte-for-byte — concept-only retrieval is unchanged
@@ -140,7 +268,7 @@ def _rrf(rankings: list[list[dict]]) -> list[dict]:
     scores: dict[str, float] = {}
     rows: dict[str, dict] = {}
     for ranking in rankings:
-        for rank, row in enumerate(ranking, start=1):
+        for rank, row in ranking:
             scores[row["id"]] = scores.get(row["id"], 0.0) + 1.0 / (RRF_K + rank)
             rows.setdefault(row["id"], row)
     return sorted(rows.values(), key=lambda r: -scores[r["id"]])
@@ -148,15 +276,20 @@ def _rrf(rankings: list[list[dict]]) -> list[dict]:
 
 def trajectory_candidates(
     conn: sqlite3.Connection, concepts: list[str], query: str = "",
-    scan_cap: int = 40,
+    scan_cap: int = 40, semantic: list[str] | None = None,
 ) -> list[dict]:
-    """Read-only: ``[loop-run]`` note rows for the concept and text legs, fused.
+    """Read-only: ``[loop-run]`` note rows for every available leg, fused.
 
     Returns ``[{id, title, date, frontmatter}]`` in fused rank order, at most
-    ``scan_cap`` per leg. Empty ``concepts`` degrades to FTS-only, empty
-    ``query`` to concept-only, both empty to ``[]``. The FTS leg is best-effort
-    only while the other leg is carrying: a broken ``notes_fts`` with nothing
-    else retrieved raises to the caller's degrade-to-unprimed guard.
+    ``scan_cap`` per leg. Each leg degrades independently: empty ``concepts``,
+    an empty ``query``, and a ``semantic`` ranking of ``None`` (the leg did not
+    run — :func:`semantic_ranking`) each just drop out of the fusion; all
+    absent gives ``[]``. ``semantic`` is appended last so a run without it
+    fuses byte-identically to the two-leg (#100) rail, ties included.
+
+    The FTS leg is best-effort only while another leg is carrying: a broken
+    ``notes_fts`` with nothing else *retrieved* raises to the caller's
+    degrade-to-unprimed guard.
     """
     rankings = []
     if concepts:
@@ -168,6 +301,8 @@ def trajectory_candidates(
         except sqlite3.Error:
             if not any(rankings):
                 raise
+    if semantic:
+        rankings.append(_by_semantic(conn, semantic, scan_cap))
     return _rrf(rankings)
 
 

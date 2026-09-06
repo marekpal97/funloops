@@ -91,15 +91,17 @@ def _outcome_rank(label: object) -> int:
 
 def query_trajectories(
     conn: Connection, concepts: list[str], limit: int, scan_cap: int = 40,
-    query: str = "",
+    query: str = "", semantic: list[str] | None = None,
 ) -> list[dict]:
     """``[loop-run]`` notes matching this issue that carry reusable color — a
     linked insight note (``builds_on``).
 
-    Retrieval is the seam's fused concept+FTS candidate list
+    Retrieval is the seam's fused candidate list
     (:func:`devloop.index_client.trajectory_candidates`): ``concepts`` are
-    ontology terms, ``query`` is the issue's own text. Either may be empty (one
-    leg then carries the retrieval); both empty matches nothing.
+    ontology terms, ``query`` is the issue's own text, and ``semantic`` is the
+    host's similarity ranking, passed through opaquely — prime never ranks or
+    fuses, the seam does. Any leg may be empty (the others then carry the
+    retrieval); all empty matches nothing.
 
     Returns ``{id, title, issue, outcome, outcome_label, insights}`` dicts, at
     most ``limit``. ``insights`` is the resolved list of linked insight-note
@@ -110,7 +112,7 @@ def query_trajectories(
     set keeps the fused order untouched — before truncating to ``limit``.
     """
     out: list[dict] = []
-    for r in trajectory_candidates(conn, concepts, query, scan_cap):
+    for r in trajectory_candidates(conn, concepts, query, scan_cap, semantic):
         try:
             fm = json.loads(r["frontmatter"] or "{}")
         except json.JSONDecodeError:
@@ -164,17 +166,37 @@ def render_prime_block(
     return "\n".join(pieces).strip() + "\n", served
 
 
+# A leg that quietly contributes nothing is indistinguishable from a dead one
+# (#100), so its absence is stamped even on a run that primed fine.
+SEMANTIC_SKIPPED_NOTE = (
+    "semantic leg skipped — the host served no ranking (needs --vault, query "
+    "text, and a `weave search --mode similar` with built embeddings; set "
+    "DEVLOOP_WEAVE_BIN if `weave` is off PATH); fused on concepts + FTS only"
+)
+
+# The other cause, and a different fix — "host served no ranking" would send
+# the reader after embeddings when the index is what is missing.
+SEMANTIC_UNUSED_NOTE = (
+    "semantic leg not attempted — no readable index to resolve a ranking "
+    "against"
+)
+
+
 def build_prime_payload(
     issue_number: int, run_id: str, concepts: list[str], *,
     conn: Connection | None = None, holdout: int = 5,
     limit: int = 3, budget_chars: int = 1200, decisions: list[str] | None = None,
-    query: str = "",
+    query: str = "", semantic: list[str] | None = None,
 ) -> dict:
     """Assemble the claim-time prime payload the orchestrator splices verbatim.
 
-    ``concepts`` (ontology terms) and ``query`` (the issue's text) are the two
-    retrieval legs; ``decisions`` are the file-anchored note ids the
-    orchestrator resolved at claim time.
+    ``concepts`` (ontology terms), ``query`` (the issue's text) and ``semantic``
+    (the host's similarity ranking — :func:`index_client.semantic_ranking`, the
+    caller's subprocess) are the three retrieval legs; ``decisions`` are the
+    file-anchored note ids the orchestrator resolved at claim time.
+    ``semantic=None`` (the leg did not run) reproduces the two-leg payload
+    exactly and says so in ``note`` — naming which of the two causes it was,
+    since they have different fixes.
 
     Output keys: ``primed`` (received prime context this run), ``holdout``
     (deliberately withheld), ``served`` (note ids served — trajectory + decisions,
@@ -202,7 +224,8 @@ def build_prime_payload(
     trajectories: list[dict] = []
     if conn is not None:
         try:
-            trajectories = query_trajectories(conn, concepts, limit, query=query)
+            trajectories = query_trajectories(conn, concepts, limit, query=query,
+                                              semantic=semantic)
         except Error:
             index_error = True
     decisions = (decisions or [])[:limit]
@@ -215,6 +238,9 @@ def build_prime_payload(
             "index unreadable (corrupt or schema-drift) — ran unprimed"
             if index_error else "no matching prior trajectories"
         )
+    if semantic is None:
+        why = SEMANTIC_UNUSED_NOTE if conn is None else SEMANTIC_SKIPPED_NOTE
+        payload["note"] = "; ".join(filter(None, [payload["note"], why]))
     return payload
 
 
