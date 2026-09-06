@@ -48,16 +48,29 @@ from devloop.gates import DETERMINISTIC, JUDGMENT, reject, validate
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_REL = Path("docs") / "agents" / "loop.toml"
 PACKAGE_CONFIG = REPO_ROOT / CONFIG_REL
+CONSTITUTION_REL = Path("docs") / "agents" / "constitution.md"
+PACKAGE_CONSTITUTION = REPO_ROOT / CONSTITUTION_REL
+
+
+def _find_upward(rel: Path, start: Path | None = None) -> Path | None:
+    """The host repo's copy of ``rel``, walking up from the working directory —
+    the same convention every repo-scoped tool uses. Stops at the first
+    ``.git``: never silently inherit an ancestor directory's file."""
+    here = (start or Path.cwd()).resolve()
+    for directory in (here, *here.parents):
+        found = directory / rel
+        if found.is_file():
+            return found
+        if (directory / ".git").exists():   # repo root: stop, don't escape it
+            break
+    return None
 
 
 def find_config(start: Path | None = None) -> Path:
     """The host repo's ``docs/agents/loop.toml``, else the package's own copy.
 
     The gate pipeline belongs to the repo being worked on, not to the installed
-    rail, so the search walks upward from the working directory — the same
-    convention every repo-scoped tool uses. It stops at the first ``.git``: a
-    repo without its own loop.toml falls back to the package's copy rather than
-    silently inheriting an ancestor directory's gate pipeline.
+    rail, so the host's file *replaces* the packaged one when found.
 
     The fallback is what the funloops workspace itself resolves (it keeps its
     loop.toml with the package, not at the workspace root), and it may not
@@ -65,14 +78,38 @@ def find_config(start: Path | None = None) -> Path:
     treats a missing file as "defaults only", which is honest: no gates
     configured, and every ``check`` says so by name.
     """
-    here = (start or Path.cwd()).resolve()
-    for directory in (here, *here.parents):
-        found = directory / CONFIG_REL
-        if found.is_file():
-            return found
-        if (directory / ".git").exists():   # repo root: stop, don't escape it
-            break
-    return PACKAGE_CONFIG
+    return _find_upward(CONFIG_REL, start) or PACKAGE_CONFIG
+
+
+def find_constitution(start: Path | None = None) -> list[Path]:
+    """The packaged constitution, plus the host repo's overlay when it has one.
+
+    Same upward walk as ``find_config``, opposite merge posture: loop.toml is
+    replace-on-find (the gate pipeline is the repo's), the constitution is
+    extend-on-find — the packaged default always applies and a repo's
+    ``docs/agents/constitution.md`` is appended after it, never substituted
+    (dec-1746aec3). The walk finding the packaged file itself — by path (this
+    checkout) or by identical bytes (another checkout/worktree of it) —
+    serves it once, keeping the splice single.
+
+    A missing packaged default raises rather than resolving: an install that
+    shipped no ``docs/`` (the wheel packages only ``devloop/``) must not hand
+    the orchestrator a path that splices as silence — a dispatch that loses
+    all twelve rules unannounced is the fail-open the constitution's own
+    rule 7 names. loop.toml's missing-file degrade is honest because defaults
+    exist in code; the constitution has no in-code fallback.
+    """
+    if not PACKAGE_CONSTITUTION.is_file():
+        raise FileNotFoundError(
+            f"packaged constitution missing: {PACKAGE_CONSTITUTION} — this "
+            "install shipped no docs/; do not dispatch without the rules")
+    overlay = _find_upward(CONSTITUTION_REL, start)
+    # ponytail: byte-equality dedupes the reachable case (worktrees of the
+    # same commit); a DIVERGED copy of the packaged file in another checkout
+    # still serves twice. Upgrade path: anchor on repo-relative position.
+    if overlay is None or overlay.read_bytes() == PACKAGE_CONSTITUTION.read_bytes():
+        return [PACKAGE_CONSTITUTION]
+    return [PACKAGE_CONSTITUTION, overlay]
 
 # Stamped on a prime payload built the pre-#100 way (labels as concepts, no
 # text leg) — the dead-by-vocabulary join; see issue-loop.command.md §1b.
@@ -348,6 +385,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.cmd == "config":
+        # The orchestrator's half of the constitution contract: splice the
+        # listed files in order; an "error" entry means STOP and surface it.
+        try:
+            cfg["constitution"] = [str(p) for p in find_constitution()]
+        except FileNotFoundError as exc:
+            cfg["constitution"] = {"error": str(exc)}
         print(json.dumps(cfg, indent=2))
     elif args.cmd == "plan":
         limit = args.limit if args.limit is not None else cfg["loop"]["max_issues_per_run"]

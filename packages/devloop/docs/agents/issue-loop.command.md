@@ -201,11 +201,29 @@ When `dispatch.persona` is off (`--set dispatch.persona=false`), splice
 neither block anywhere — every dispatch prompt (implementer, fix round,
 reviewer, acceptance judge) is byte-identical to a run with the feature absent.
 
+**The constitution — every implementer dispatch, no toggle.** The
+`constitution` array in `devloop config` output is the resolved reading
+order: the packaged `constitution.md` first, then the host repo's own
+`docs/agents/constitution.md` when it carries one — a repo overlay
+**extends** the default, **never replaces** it (dec-1746aec3;
+`cli.find_constitution` behind the verb). Splice each listed file's body
+(everything below its provenance header) after the dispatch blocks above —
+or alone when `dispatch.persona` is off: the constitution is universal
+incident-backed rules, not part of the persona feature. If `constitution`
+carries an `error` instead of paths, STOP and surface it — dispatching
+without the rules is the fail-open its own rule 7 names, not an acceptable
+degradation. This is the constitution's only splice point until `devloop
+pack` lands and absorbs it; its closing reading-the-ladder clause travels
+inside it, never as a separate block after the persona. Amendments to either
+layer are run past a human — a PR a person reviews; the shipped
+`watched_paths` defaults land any `docs/agents/` diff in the skim lane.
+
 Read the issue: `gh issue view <N> --comments`. Then dispatch an
 **implementer subagent** with worktree isolation (Agent tool,
 `isolation: "worktree"`). Its prompt must contain, verbatim: the issue body,
 the acceptance criteria, the branch name (`<branch_prefix><N>`), the dispatch
-blocks above (when `dispatch.persona` is on), and these standing orders:
+blocks above (when `dispatch.persona` is on), the constitution splice
+(always), and these standing orders:
 
 - Read the repo's architecture and design docs for the areas you touch before
   editing them; a documented standard overrides your instinct.
@@ -332,8 +350,8 @@ post-review diff. That is the whole point of running it last and non-required.
 **On a required-gate failure:** feed the evidence (gate id, summary, detail,
 per-criterion verdicts, review findings) back to the implementer subagent
 (SendMessage to the same agent — it keeps its context) for a fix round.
-When `dispatch.persona` is on, re-splice **both dispatch blocks** (§1b) into
-the fix-round message.
+Re-splice the constitution and — when `dispatch.persona` is on —
+**both dispatch blocks** (§1b) into the fix-round message.
 Re-run the pipeline **from the first failed gate**. After `max_fix_rounds`
 exhausted:
 
