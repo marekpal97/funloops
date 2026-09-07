@@ -157,7 +157,7 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
     time by the LLM in the loop, never backfilled.
 
     ``skills`` is the loop's stage-dispatch log — each dispatched stage skill
-    (implementer / acceptance judge / reviewer / ponytail / tdd) as
+    (implementer / judge / ponytail / tdd) as
     ``{id, role, outcome, fix_rounds_attributed}``. Existing callers pass
     nothing and get an empty ``skills: []`` (backward compatible). Set
     ``skill_centric`` when the record is primarily about a skill invocation
@@ -166,8 +166,8 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
 
     ``primed``/``served`` mirror the claim-time prime verdict (``prime <N>``):
     ``primed=True`` with the served note ids when the run received prior-
-    trajectory context, ``primed=False`` with an empty list when it was a
-    deliberate holdout. Together with #60's ``outcome`` this frontmatter is the
+    trajectory context, ``primed=False`` with an empty list when it was
+    unprimed (nothing served). Together with #60's ``outcome`` this frontmatter is the
     served-context regression's raw material. ``primed=None`` (the default —
     pre-#57 callers) omits both keys, leaving the note shape unchanged.
 

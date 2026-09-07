@@ -26,7 +26,7 @@ The loop is two planes with one seam between them:
 
 The seam between the planes is the **CLI subcommand surface** (JSON on stdout,
 exit codes): `config · plan · claim · release · check · validate · prime ·
-triage · trajectory · board · map`. That surface is the package's one external interface — the
+triage · trajectory · board · pack`. That surface is the package's one external interface — the
 orchestrator knows nothing else. It is reached through the `devloop` console
 script or `python -m devloop`; the two are one entry point, pinned byte-equal
 by `test_funloops_packaging.py`.
@@ -47,7 +47,7 @@ packages/devloop/
     cli.py             entry point: argparse, config resolution, dispatch
     dag.py             tracker-as-DAG math + the body-grammar it parses
     board.py           board hygiene: the grammar dag.py reads, as checks + sweep ops
-    codemap.py         architecture rail: map.json projected from codegraph's SQLite (self-provisioning)
+    pack.py            the dispatch pack: issue + persona/constitution + codegraph's CLI text
     gates.py           Gate protocol + deterministic executors
     triage.py          risk-lane classification of shipped PRs
     paths.py           leaf util: the three-form path matcher
@@ -61,7 +61,7 @@ packages/devloop/
   tests/
 ```
 
-Nine public names. `trajectory/` is **one module** with two implementation
+Ten public names. `trajectory/` is **one module** with two implementation
 files — its interface is what `trajectory/__init__.py` re-exports; `mint.py`
 and `prime.py` are internal seams, not siblings (§4). There is no `config.py`,
 no `utils.py`, no `git.py` (§2.1, §6). `docs/agents/` is the other plane's home
@@ -76,7 +76,9 @@ Per-module interfaces:
 **`cli.py`** — owns `DEFAULT_CONFIG`, `load_config`, `parse_override`,
 `apply_overrides`, `build_arg_parser`, `main`. Config lives here deliberately:
 resolution-and-override is run-posture, exercised only at the entry point;
-`--set` typo-rejection and "gates are file-only" are CLI contract lines.
+unknown-key rejection (one check for `--set` and the file, so a deleted knob
+is refused by name rather than silently ignored) and "gates are file-only"
+are CLI contract lines.
 `cli.py` is also the imperative shell: the `trajectory` subcommand's git reads
 (branch, log, numstat) and file-argument loading happen here, feeding the pure
 `build_trajectory` — subprocess git is argument-gathering, not a module.
@@ -131,23 +133,13 @@ retitle · add_blocker`). `doctor()` runs them all; `plan_sweep()` turns a
 report into the deduped, ordered op list `board sweep --apply` replays.
 Conventions text: `issue-loop.command.md` §Board hygiene.
 
-**`codemap.py`** — the architecture rail (funloops#27, dec-462f4b28):
-`CODEGRAPH_VERSION`, `MapError`, `generate`, `check`, `catalog`,
-`slice_modules`. Projects the committed, byte-deterministic map.json shards
-(module → responsibility → public symbols + signatures → imports; one shard
-per pyproject-owning dir) from a pinned codegraph index — the ONE producer
-(the stdlib-ast fallback was the falsifier branch; it never fired and was
-retired in #27's fix round 5). Signatures are codegraph's stored raw text
-verbatim, so the bytes are interpreter-independent. generate/check
-self-provision the default-path index (`codegraph init`/`index` via
-`--codegraph-bin` → `$CODEGRAPH_BIN` → PATH); a committed map with no
-working codegraph fails loud, a repo with no committed map is simply not
-adopted (check no-ops, read views say so). Responsibility one-liners live in
-a hash-keyed map.notes.json sidecar so staleness is mechanical. The gate is
-one `[[gates]]` **command** entry (`devloop map --check`) — no new gate
-kind. The codegraph db is opened through `index_client.open_ro`/`Error`,
-keeping index_client the package's only sqlite3 importer, and codemap speaks
-codegraph's schema itself — the per-database SQL-home carve-out §5 names.
+**`pack.py`** — the dispatch pack (funloops#28; dec-f12457eb, dec-fd12489d,
+dec-d2de831e): `Issue`, `Role`, `compose`, `FileRecord`, `Codegraph` (the
+tool object: `repo_map` · `sync` · `files` · `context` · `node`), and below them `responsibility`,
+`render_tree`, `named_files`, `body`, `splice`. Composes one dispatch in fixed
+order; codegraph is a CLI whose output is spliced (the catalog drawn from
+`files -j`), any failure degrades to a marked block, only the constitution
+fails closed. The order and the map's two tiers are the module docstring's.
 
 **`index_client.py`** — §5.
 
@@ -173,10 +165,14 @@ states which plane runs it.**
 - **Deterministic kinds** (`command`, `diff`) — the rail *executes*:
   `execute(gate_cfg, ctx) -> GateResult`, where ctx is the worktree cwd (+
   base ref for diff).
-- **Judgment kinds** (`acceptance`, `review`, `simplify`) — the rail never
-  executes; the orchestrator dispatches a subagent and the rail *validates*
-  the subagent's return: `validate(gate_cfg, raw) -> GateResult`, rejecting
-  schema-violating returns (#99's re-ask loop keys off the rejection).
+- **Judgment kinds** (`judge`, `simplify`) — the rail never executes; the
+  orchestrator dispatches a subagent and the rail *validates* the subagent's
+  return: `validate(gate_cfg, raw) -> GateResult`, rejecting schema-violating
+  returns (#99's re-ask loop keys off the rejection). `judge` is the fused
+  acceptance+review stage (funloops#39, dec-611cbd8a): its envelope carries
+  `criteria[]` verdicts and `findings[]`, and only a criterion `not-met`
+  fails it. A gate entry may carry only the keys its kind reads
+  (`GATE_KEYS`); the config loader refuses any other key by name.
 
 `GateResult` is a plain dict shape, not a class: `{id, kind, passed, summary,
 detail}` — already what both executors emit and what the trajectory
@@ -187,8 +183,7 @@ Structurally, `gates.py` carries one registry per verb:
 
 ```python
 DETERMINISTIC = {"command": run_command_gate, "diff": run_diff_gate}
-JUDGMENT = {"acceptance": validate_acceptance, "review": validate_review,
-            "simplify": validate_simplify}
+JUDGMENT = {"judge": validate_judge, "simplify": validate_simplify}
 ```
 
 The `check` subcommand dispatches **only** through `DETERMINISTIC`; any other
@@ -197,6 +192,10 @@ the /issue-loop command" error (previously an `else` branch; the registry
 promotes it from error-message prose to structure, byte-identical output).
 The `validate` subcommand (#99) dispatches **only** through `JUDGMENT`, and
 the two registries are pinned disjoint + covering the shipped pipeline.
+`check --issue N` (#40, dec-2f5bf66a) is the same verb's second form: the
+issue body's `verify:` lines run through `run_command_gate` as ad-hoc command
+gates, printed as `{issue, results: [GateResult…], summary}` — no new kind, no
+loop.toml key.
 
 A judgment result is `GateResult` plus `reasons`, and that key carries the
 whole execute-vs-validate difference: **empty `reasons` = a verdict**
@@ -231,11 +230,12 @@ internal):
 - `build_trajectory(issue, *, branch, commits, numstat, gates, fix_rounds,
   outcome, ...) -> dict` — pure; emits the weave_create-shaped payload.
   (mint face)
-- `build_prime_payload(issue_number, run_id, concepts, *, conn, holdout,
-  limit, budget_chars, decisions, query) -> dict` — the claim-time payload.
+- `build_prime_payload(issue_number, run_id, concepts, *, conn, limit,
+  budget_chars, decisions, query) -> dict` — the claim-time payload.
   `concepts` (ontology terms) and `query` (the issue's text) are the two
   retrieval legs; `decisions` are the file-anchored ids the orchestrator
-  resolved. (prime face)
+  resolved. It always serves what it finds — the sampled holdout was retired
+  by dec-cf8f0d33. (prime face)
 - `append_served_event(buffer_path, run_id, issue_number, served, session_id)`
   + `LOOP_PRIME_TOOL` — the served-context write-through to the session
   buffer JSONL.
@@ -253,7 +253,7 @@ seam, never here.
 
 **`skills[]` is the stage-dispatch log, not a capture of every Skill
 invocation.** It records the stages *this loop dispatched* — implementer,
-acceptance judge, reviewer, and future stages — as
+the judge, and future stages — as
 `{id, role, outcome, fix_rounds_attributed}`. The generic capture-all is
 **parked**: it needs a new mechanism (a Skill-tool hook or transcript scraping)
 and has no live reader, and a capability ships with its consumer or not at all.
@@ -263,8 +263,6 @@ then nothing implies capture-all exists.
 
 **Invocation-trajectory extension — the parking note above is the contract.**
 Internal to `prime.py`:
-`is_holdout` (the sha1 holdout — `build_prime_payload` computes it; moved
-off the public list 2026-08-01, it had no external consumer),
 `_coerce_builds_on`, the outcome-rank table, `render_prime_block`, and the two
 composition helpers over the seam (`query_trajectories`, `resolve_insights`).
 
@@ -307,8 +305,7 @@ Interface (#94, completed by #100):
 - `open_ro(db_path) -> sqlite3.Connection` — URI `mode=ro`, `Row` factory.
 - `Error = sqlite3.Error`, `Connection = sqlite3.Connection` — aliases so no
   other module ever imports `sqlite3` (cli's degrade guard, prime's
-  annotations post-#100, codemap's open/except paths post-#27), keeping the
-  importer-allowlist seam tight.
+  annotations post-#100), keeping the importer-allowlist seam tight.
 - `trajectory_candidates(conn, concepts, query, scan_cap) -> list[dict]` — the
   retrieval surface. Two legs (concept match; fts5 match over `notes_fts`)
   fused by RRF at `RRF_K = 60`, the retrieval doctrine's constant (the main
@@ -321,14 +318,12 @@ Interface (#94, completed by #100):
 - `note_bodies(conn, ids) -> dict[str, str]` — ids → body text, `type='note'`
   only (a `builds_on` id may name a decision or session; those never serve).
 
-The SQL-home invariant is **per-database**, not package-wide (#27): every SQL
-string devloop issues against the THINKWEAVE index lives here, and every SQL
-string against CODEGRAPH's index lives in `codemap` — each database has
-exactly one speaker, and codemap reaches its database only through this
-module's `open_ro`/`Error` aliases so the sqlite3-importer seam stays a
-singleton. `test_devloop_boundaries.py` pins the speaker set (a SELECT
-appearing in any other module is a new database seam nobody designed). For
-the thinkweave index the query surface is *index-vocabulary-shaped* (tags,
+The SQL-home invariant: every SQL string devloop issues lives here — the
+thinkweave index is the package's only database (codegraph is a CLI the pack
+invokes, never an index devloop reads: #28, dec-d2de831e).
+`test_devloop_boundaries.py` pins the speaker set (a SELECT appearing in any
+other module is a new database seam nobody designed). The query surface is
+*index-vocabulary-shaped* (tags,
 concepts, FTS match, ids → bodies), returning plain dicts — schema knowledge
 inside, domain knowledge outside. Trajectory-domain judgment (which tag is
 `loop-run`, outcome ranking, color filtering, budgeting) stays in
@@ -342,9 +337,8 @@ the schema pin can only live where a real index does:
 1. **Importer-allowlist test** — asserts which devloop modules import
    `sqlite3`: the `{index_client}` singleton. Five lines, and the seam is
    enforced rather than remembered (`test_devloop_boundaries.py`).
-1b. **Per-database SQL-speaker test** — asserts which modules contain SQL at
-   all: `{index_client, codemap}`, one speaker per database
-   (`test_devloop_boundaries.py`).
+1b. **SQL-speaker test** — asserts which modules contain SQL at all: the
+   same `{index_client}` singleton (`test_devloop_boundaries.py`).
 2. **No-host test** — asserts no module imports the host it was carved out of.
    This workspace's CI has no host installed, so without the seam the coupling
    would surface as a confusing ImportError in some later slice rather than as

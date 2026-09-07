@@ -4,11 +4,9 @@ Stdlib only, strictly read-only, never imports ``thinkweave`` (the rail may
 run where the package is not installed). Every SQL statement devloop issues
 against the THINKWEAVE index lives here — ``trajectory.prime`` composes over
 the rows this module returns and never speaks sqlite (the importer-allowlist
-test in tests/test_devloop_boundaries.py enforces the singleton). The one
-deliberate carve-out: ``codemap`` owns a DIFFERENT database (codegraph's
-index, funloops#27) and speaks its own SQL to it, but only through this
-module's ``open_ro``/``Error`` aliases — the sqlite3-importer seam stays a
-singleton; the SQL-home invariant is per-database, not package-wide.
+test in tests/test_devloop_boundaries.py enforces the singleton). This is
+the package's only database: codegraph is a CLI the pack invokes, never an
+index devloop reads (funloops#28, dec-d2de831e).
 
 Retrieval shape (#100): trajectory candidates come from two independent
 retrievers — concept match and full-text match over the issue's own words —

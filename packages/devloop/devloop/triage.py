@@ -9,26 +9,27 @@ from __future__ import annotations
 
 from devloop import paths
 
-# The rail already computes every triage signal (gate results incl. review
-# severity, diff size, files touched, fix_rounds, degraded baseline). This
-# classifies each shipped PR into green/yellow/red so a human reviews only what
+# The rail already computes every triage signal (gate results incl. the worst
+# judge finding, diff size, files touched, fix_rounds, degraded baseline). This
+# classifies each shipped PR into yellow/red so a human reviews only what
 # matters — escalation-not-gates, matching the loop's existing ready-for-human
 # rung. Labels are APPLIED by the orchestrator (via gh); the rail only decides.
+# There is no green (auto-merge) lane: dec-cf8f0d33 deleted it unused.
 
-# Recognized enum values. "none"/"minor" review stay green-eligible (the
-# issue's "review <= minor"); "met" acceptance is the only clean pass. A value
-# OUTSIDE these sets is not benign — LLM-assembled signals make enum drift
-# ("high", "partial", "blocker") realistic, so an unrecognized value fails
-# closed to red rather than slipping through green-eligible.
+# Recognized enum values. "none"/"minor" findings stay yellow; "met" is the
+# only clean judge verdict. A value OUTSIDE these sets is not benign —
+# LLM-assembled signals make enum drift ("high", "partial", "blocker")
+# realistic, so an unrecognized value fails closed to red rather than
+# slipping through as a skim.
 _VALID_REVIEW = {"none", "minor", "major", "critical"}
 _RED_REVIEW = {"major", "critical"}
 _VALID_ACCEPTANCE = {"met", "uncertain", "not-met"}
 _RED_ACCEPTANCE = {"uncertain", "not-met"}
 
-# Green/yellow labels are loop-internal vocabulary. The red label is NOT here —
-# it is sourced from labels.on_gate_failure (classify_pr's red_label arg) so
+# The yellow label is loop-internal vocabulary. The red label is NOT here — it
+# is sourced from labels.on_gate_failure (classify_pr's red_label arg) so
 # triage-red and gate-failure share one label with no duplicate literal.
-TRIAGE_LABELS = {"green": "auto-merge-ok", "yellow": "review-light"}
+TRIAGE_LABELS = {"yellow": "review-light"}
 
 
 def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
@@ -37,24 +38,25 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
     ``cfg`` is the resolved ``[triage]`` config section. ``red_label`` is the
     tracker label for the red lane — sourced from ``labels.on_gate_failure`` by
     the caller (default keeps the canonical ``ready-for-human``) so triage-red
-    and gate-failure stay one label. Precedence is red > yellow > green, and
-    every triggered rule is listed in ``reasons`` (short-circuit reasons: report
-    all of them, not just the first). Returns ``{lane, label, reasons}``.
+    and gate-failure stay one label. Red wins over yellow, and every triggered
+    rule is listed in ``reasons`` (short-circuit reasons: report all of them,
+    not just the first); a yellow with no reasons is the cleanest PR the loop
+    ships. Returns ``{lane, label, reasons}``.
 
     **Fail-closed.** The three safety-critical signals — ``baseline_green``,
     ``acceptance``, ``review_severity`` — are REQUIRED: an absent key or an
-    unrecognized enum value goes RED (naming the key/value), never
-    green-eligible, because LLM-assembled signals make that drift realistic.
-    The rest default benignly (absence is not a safety hole).
+    unrecognized enum value goes RED (naming the key/value), never a skim,
+    because LLM-assembled signals make that drift realistic. The rest default
+    benignly (absence is not a safety hole).
 
     Signals schema:
       - ``fix_rounds`` int — implement→gate→fix iterations (0 = first try) [opt, →0]
       - ``diff_lines`` int — total changed lines in the PR's diff [opt, →0]
       - ``files_touched`` list[str] — repo-relative paths changed [opt, →[]]
       - ``tests_touched`` bool — the change carries test coverage [opt, →False]
-      - ``review_severity`` str — worst review finding: none|minor|major|critical [REQUIRED]
+      - ``review_severity`` str — worst judge finding: none|minor|major|critical [REQUIRED]
       - ``baseline_green`` bool — tests gate green on the pristine worktree [REQUIRED]
-      - ``acceptance`` str — acceptance verdict: met|uncertain|not-met [REQUIRED]
+      - ``acceptance`` str — judge criteria verdict: met|uncertain|not-met [REQUIRED]
     """
     if red_label is None:
         # Imported lazily: cli owns DEFAULT_CONFIG and imports this module,
@@ -108,22 +110,13 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
     if red:
         return {"lane": "red", "label": red_label, "reasons": red}
 
-    # --- yellow: passed, but warrants a human skim. List them all. -----------
+    # --- yellow: a human skims. List what should draw the eye. ---------------
     yellow: list[str] = []
-    if cfg.get("green_requires_first_try", True) and fix_rounds > 0:
+    if fix_rounds > 0:
         yellow.append(f"{fix_rounds} fix round(s)")
-    if diff_lines >= cfg["green_max_diff_lines"]:
-        yellow.append(f"medium diff: {diff_lines} lines >= {cfg['green_max_diff_lines']}")
     watched = paths.hits(files, cfg.get("watched_paths", []))
     if watched:
         yellow.append("watched path(s): " + ", ".join(watched))
     if not tests_touched:
         yellow.append("no test coverage signal (tests_touched=false)")
-    if yellow:
-        return {"lane": "yellow", "label": TRIAGE_LABELS["yellow"], "reasons": yellow}
-
-    # --- green criteria all met. Only auto-merge-ok where green is enabled. ---
-    if cfg.get("green_enabled", False):
-        return {"lane": "green", "label": TRIAGE_LABELS["green"], "reasons": []}
-    return {"lane": "yellow", "label": TRIAGE_LABELS["yellow"],
-            "reasons": ["green lane disabled (training-mode graduation pending)"]}
+    return {"lane": "yellow", "label": TRIAGE_LABELS["yellow"], "reasons": yellow}

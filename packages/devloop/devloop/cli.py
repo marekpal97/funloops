@@ -9,27 +9,28 @@ computes the current frontier, plus the weakly-connected components that
 tell the orchestrator which open issues belong to one DAG (chase
 sequentially, ``run_mode=exhaust``) vs unrelated work (parallel-safe across
 components). LLM judgment stays in the /issue-loop command (implementer,
-acceptance judge, reviewer); everything schedulable is plain graph math here.
+judge); everything schedulable is plain graph math here.
 
 Subcommands:
   plan     — snapshot issues via `gh`, compute frontier + components (JSON)
-  claim    — claim an issue for a run (assignee by default, label mode kept)
+  claim    — claim an issue for a run (the assignee IS the claim)
   release  — drop the claim
-  config     — print resolved loop config (defaults merged with loop.toml)
-  check      — run one deterministic gate (kind: command | diff) and emit JSON
-  validate   — validate a judgment gate's subagent return (kind: acceptance |
-               review | simplify) against its schema; rejects for a re-ask
+  config     — print resolved loop config (defaults merged with loop.toml;
+               an unknown or deleted key is refused by name)
+  check      — run one deterministic gate (kind: command | diff) and emit JSON;
+               --issue N runs the issue's `verify:` lines as command gates
+  validate   — validate a judgment gate's subagent return (kind: judge |
+               simplify) against its schema; rejects for a re-ask
   prime      — assemble prior-trajectory prime context for an issue at claim
-               time (reads the derived index read-only; holdout-aware)
+               time (reads the derived index read-only; always serves what
+               it finds)
   trajectory — assemble a per-issue trajectory payload for the memory feed
                (the optional host extension; shape: devloop-boundaries.md §4)
   board      — doctor: lint one or more repos' boards against the grammar
                dag.py reads (JSON report, exit 1 on errors); sweep: replay
                the mechanical fixes (--plan by default, --apply runs them)
-  map        — regenerate the committed map.json shard(s) (architecture rail,
-               dec-462f4b28); --check regenerates + diffs, exit 1 naming the
-               drifted module; --catalog/--slice are read views of the
-               committed shards
+  pack       — compose one dispatch's context (issue, persona + constitution,
+               the repo map spliced from codegraph's CLI) and print it
 
 Stdlib only. Config: the host repo's docs/agents/loop.toml, found by walking up
 from the cwd, else the copy shipped with the package (see find_config).
@@ -39,21 +40,32 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import tomllib
 from pathlib import Path
+from typing import get_args
 
-from devloop import board, codemap, dag, github, index_client, trajectory, triage
+from devloop import board, dag, github, index_client, pack, trajectory, triage
 
 # Imported by name: `main` binds a local `gates` in the trajectory branch,
 # which would shadow a module of that name for the whole function.
-from devloop.gates import DETERMINISTIC, JUDGMENT, reject, validate
+from devloop.gates import (
+    COMMON_GATE_KEYS,
+    DETERMINISTIC,
+    GATE_KEYS,
+    JUDGMENT,
+    reject,
+    run_verify_lines,
+    validate,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_REL = Path("docs") / "agents" / "loop.toml"
 PACKAGE_CONFIG = REPO_ROOT / CONFIG_REL
 CONSTITUTION_REL = Path("docs") / "agents" / "constitution.md"
 PACKAGE_CONSTITUTION = REPO_ROOT / CONSTITUTION_REL
+PACKAGE_PERSONA = REPO_ROOT / "docs" / "agents" / "ponytail-persona.md"
 
 
 def _find_upward(rel: Path, start: Path | None = None) -> Path | None:
@@ -99,8 +111,8 @@ def find_constitution(start: Path | None = None) -> list[Path]:
     A missing packaged default raises rather than resolving: an install that
     shipped no ``docs/`` (the wheel packages only ``devloop/``) must not hand
     the orchestrator a path that splices as silence — a dispatch that loses
-    all twelve rules unannounced is the fail-open the constitution's own
-    rule 7 names. loop.toml's missing-file degrade is honest because defaults
+    every rule unannounced is the fail-open the constitution's own
+    rule 6 names. loop.toml's missing-file degrade is honest because defaults
     exist in code; the constitution has no in-code fallback.
     """
     if not PACKAGE_CONSTITUTION.is_file():
@@ -129,22 +141,13 @@ DEFAULT_CONFIG: dict = {
         "max_parallel": 1,
         "max_fix_rounds": 2,
         "training_mode": True,
-        "draft_pr": True,
         "branch_prefix": "loop/issue-",
         "require_green_baseline": True,
-        "claim_mode": "assign",  # assign: assignee IS the claim (wayfinder) | label
         "run_mode": "pass",      # pass: one frontier pass | exhaust: re-plan until dry
         "delivery": "pr-per-issue",  # pr-per-issue | stacked (one branch, one final PR)
-        # stateless 1-in-N-in-expectation sampling (sha1(run_id) % N == 0), not
-        # a counter over runs; 0 = never hold out
-        "prime_holdout": 5,
     },
     "tdd": {
         "mode": "auto",  # auto: enforced iff the baseline probe is green
-    },
-    "dispatch": {
-        # Splice persona + north-star into dispatch prompts (issue #89); semantics: issue-loop.command.md §1b.
-        "persona": True,
     },
     "labels": {
         "runnable": "ready-for-agent",
@@ -152,9 +155,6 @@ DEFAULT_CONFIG: dict = {
         "on_gate_failure": "ready-for-human",
     },
     "triage": {
-        # Ship conservative: green (auto-merge-ok) is OFF until a repo has
-        # branch protection + required CI and graduates out of training mode.
-        "green_enabled": False,
         # Sensitive paths → always red. Three pattern forms (see classify_pr):
         # dir prefix (trailing '/'), bare basename, glob. Empty by default:
         # a packaged rail cannot know a host repo's layout, and a guess
@@ -163,41 +163,66 @@ DEFAULT_CONFIG: dict = {
         "sensitive_paths": [],
         # Watched paths → at most yellow (skim, don't gate). Empty by default.
         "watched_paths": [],
-        "green_max_diff_lines": 150,   # green requires diff below this
-        "green_requires_first_try": True,  # green requires fix_rounds == 0
         "red_min_diff_lines": 800,     # "big diff" → red
     },
     "gates": [],
 }
+
+# The scalar sections a file or --set may carry. Gates are file-only and
+# checked per kind (gates.GATE_KEYS); anything else is unknown by name.
+SECTIONS = ("loop", "labels", "tdd", "triage")
 
 
 # ---------------------------------------------------------------------------
 # Config
 
 
+def _known_key(section: str, key: str) -> None:
+    """One check for both config paths: a key DEFAULT_CONFIG does not carry is
+    unknown — a typo and a knob the subtractive pass deleted (dec-cf8f0d33)
+    are refused the same way, naming the key, never silently dropped."""
+    if key not in DEFAULT_CONFIG[section]:
+        known = ", ".join(sorted(DEFAULT_CONFIG[section]))
+        raise ValueError(f"unknown key '{section}.{key}' (known: {known})")
+
+
+def _checked_gates(gates: list[dict]) -> list[dict]:
+    """A gate entry names a known kind and carries only the keys that kind's
+    verb reads; a stale kind (`review`) or a missing one is refused by name."""
+    for i, gate in enumerate(gates):
+        kind = gate.get("kind")
+        if kind not in GATE_KEYS:
+            raise ValueError(f"unknown kind {kind!r} at gates[{i}] "
+                             f"(known: {', '.join(sorted(GATE_KEYS))})")
+        allowed = COMMON_GATE_KEYS | GATE_KEYS[kind]
+        for key in sorted(set(gate) - allowed):
+            raise ValueError(f"unknown key 'gates[{i}].{key}' for kind '{kind}' "
+                             f"(known: {', '.join(sorted(allowed))})")
+    return gates
+
+
 def load_config(path: Path | None = None) -> dict:
     """Defaults merged with loop.toml. Gates come only from the file.
 
     ``path`` defaults to whatever ``find_config`` resolves for the working
-    directory, so the host repo's file wins over the packaged one.
+    directory, so the host repo's file wins over the packaged one. A section
+    or key the defaults do not carry raises ``ValueError`` naming it.
     """
     path = path if path is not None else find_config()
-    cfg = {
-        "loop": dict(DEFAULT_CONFIG["loop"]),
-        "labels": dict(DEFAULT_CONFIG["labels"]),
-        "tdd": dict(DEFAULT_CONFIG["tdd"]),
-        "dispatch": dict(DEFAULT_CONFIG["dispatch"]),
-        "triage": dict(DEFAULT_CONFIG["triage"]),
-        "gates": [],
-    }
+    cfg: dict = {section: dict(DEFAULT_CONFIG[section]) for section in SECTIONS}
+    cfg["gates"] = []
     if path.exists():
         data = tomllib.loads(path.read_text(encoding="utf-8"))
-        cfg["loop"].update(data.get("loop", {}))
-        cfg["labels"].update(data.get("labels", {}))
-        cfg["tdd"].update(data.get("tdd", {}))
-        cfg["dispatch"].update(data.get("dispatch", {}))
-        cfg["triage"].update(data.get("triage", {}))
-        cfg["gates"] = data.get("gates", [])
+        for section, values in data.items():
+            if section == "gates":
+                cfg["gates"] = _checked_gates(values)
+                continue
+            if section not in SECTIONS:
+                raise ValueError(
+                    f"unknown section '{section}' in {path.name} (known: {' | '.join(SECTIONS)})")
+            for key in values:
+                _known_key(section, key)
+            cfg[section].update(values)
     return cfg
 
 
@@ -231,13 +256,10 @@ def apply_overrides(cfg: dict, specs: list[str]) -> dict:
     """
     for spec in specs:
         section, key, value = parse_override(spec)
-        if section not in ("loop", "labels", "tdd", "dispatch", "triage"):
+        if section not in SECTIONS:
             raise ValueError(
-                f"--set section '{section}' not overridable (loop | labels | tdd | dispatch | triage)"
-            )
-        if key not in DEFAULT_CONFIG[section]:
-            known = ", ".join(sorted(DEFAULT_CONFIG[section]))
-            raise ValueError(f"--set unknown key '{section}.{key}' (known: {known})")
+                f"--set section '{section}' not overridable ({' | '.join(SECTIONS)})")
+        _known_key(section, key)
         cfg[section][key] = value
     return cfg
 
@@ -280,8 +302,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("config", help="print resolved config as JSON", parents=[common])
 
-    p_check = sub.add_parser("check", help="run one deterministic gate", parents=[common])
-    p_check.add_argument("--gate", required=True)
+    p_check = sub.add_parser(
+        "check", help="run one deterministic gate, or an issue's verify: lines", parents=[common])
+    what = p_check.add_mutually_exclusive_group(required=True)
+    what.add_argument("--gate", help="a command | diff gate id from loop.toml")
+    what.add_argument("--issue", type=int, metavar="N",
+                      help="run issue N's verify: lines as command gates")
     p_check.add_argument("--cwd", default=".")
     p_check.add_argument("--base-ref", default="origin/main")
 
@@ -290,7 +316,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_validate.add_argument("--gate", required=True)
     p_validate.add_argument("--return-json", required=True,
                             help="file with the subagent's JSON return (schema per "
-                                 "kind: acceptance {criteria[]}, review {findings[]}, "
+                                 "kind: judge {criteria[], findings[]}, "
                                  "simplify {outcome, lines_delta, cuts[], kept[]})")
 
     p_prime = sub.add_parser("prime", help="assemble prior-trajectory prime context for an issue", parents=[common])
@@ -349,7 +375,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              "skill-invocation tag alongside loop-run)")
     p_traj.add_argument("--primed", action=argparse.BooleanOptionalAction, default=None,
                         help="mirror the claim-time prime verdict: --primed (received "
-                             "prior-trajectory context) / --no-primed (deliberate holdout). "
+                             "prior-trajectory context) / --no-primed (nothing served). "
                              "Omit to leave both prime keys out (pre-#57 shape).")
     p_traj.add_argument("--served-json", default=None,
                         help="file with the served note ids (prime output's `served`) to "
@@ -376,28 +402,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          help="sweep: restrict to these op kinds (create_label, add_label, "
                               "remove_label, add_blocker, retitle, delete_label)")
 
-    p_map = sub.add_parser("map", help="committed architecture map (map.json shards)", parents=[common])
-    p_map.add_argument("--check", action="store_true",
-                       help="regenerate + diff against the committed shards; "
-                            "exit 1 naming each drifted module / stale note")
-    p_map.add_argument("--catalog", action="store_true",
-                       help="print the tier-1 rollup of the committed shards")
-    p_map.add_argument("--budget-lines", type=int, default=40,
-                       help="catalog line budget: over it, only the subtree "
-                            "containing --slice paths stays expanded")
-    p_map.add_argument("--slice", default="", metavar="PATH,PATH",
-                       help="tier-2 detail for these subtrees (with --catalog: "
-                            "the subtrees kept expanded)")
-    p_map.add_argument("--root", default=".",
-                       help="any path inside the repo to map — resolved to "
-                            "its git toplevel (the cwd by default)")
-    p_map.add_argument("--db", default=None,
-                       help="codegraph sqlite path (default <root>/.codegraph/"
-                            "codegraph.db, self-provisioned when absent/stale; "
-                            "an explicit --db is never provisioned)")
-    p_map.add_argument("--codegraph-bin", default=None,
-                       help="codegraph executable for self-provisioning "
-                            "(default: $CODEGRAPH_BIN, else `codegraph` on PATH)")
+    p_pack = sub.add_parser("pack", help="compose one dispatch's context and print it", parents=[common])
+    p_pack.add_argument("number", type=int)
+    p_pack.add_argument("--role", choices=get_args(pack.Role), default="implementer",
+                        help="implementer: issue + persona/constitution + repo map + "
+                             "standing orders; judge: issue + repo map")
+    p_pack.add_argument("--cwd", default=".",
+                        help="the worktree to map (its .codegraph index is self-provisioned)")
+    p_pack.add_argument("--codegraph-bin",
+                        default=os.environ.get("CODEGRAPH_BIN") or "codegraph",
+                        help="codegraph executable (default: $CODEGRAPH_BIN, else "
+                             "`codegraph` on PATH); absent or failing → a degraded block")
+    p_pack.add_argument("--prime", default=None, metavar="FILE",
+                        help="host extension: file with the prime block to splice")
+    p_pack.add_argument("--trace", default=None, metavar="FILE",
+                        help="host extension: file with the run's threaded trace to splice")
 
     return parser
 
@@ -434,28 +453,30 @@ def main(argv: list[str] | None = None) -> int:
         result = dag.compute_frontier(issues, cfg, limit=limit)
         print(json.dumps(result, indent=2))
     elif args.cmd == "claim":
-        if cfg["loop"]["claim_mode"] == "assign":
-            # wayfinder convention: the assignee IS the claim — renders
-            # natively in the tracker UI, no label vocabulary consumed.
-            github.run(["issue", "edit", str(args.number), "--add-assignee", "@me"])
-        else:
-            label = cfg["labels"]["claimed"]
-            subprocess.run(
-                ["gh", "label", "create", label, "--description",
-                 "Claimed by an /issue-loop run", "--color", "1d76db"],
-                capture_output=True,
-                check=False,
-            )  # idempotent: fails silently if it exists
-            github.run(["issue", "edit", str(args.number), "--add-label", label])
+        # wayfinder convention: the assignee IS the claim — renders natively
+        # in the tracker UI, no label vocabulary consumed (dec-cf8f0d33
+        # retired the label mode; labels.claimed stays readable for `plan`).
+        github.run(["issue", "edit", str(args.number), "--add-assignee", "@me"])
         github.run(["issue", "comment", str(args.number), "--body",
                     f"🤖 issue-loop: claimed by run `{args.run_id}`."])
         print(f"claimed #{args.number}")
     elif args.cmd == "release":
-        if cfg["loop"]["claim_mode"] == "assign":
-            github.run(["issue", "edit", str(args.number), "--remove-assignee", "@me"])
-        else:
-            github.run(["issue", "edit", str(args.number), "--remove-label", cfg["labels"]["claimed"]])
+        github.run(["issue", "edit", str(args.number), "--remove-assignee", "@me"])
         print(f"released #{args.number}")
+    elif args.cmd == "check" and args.issue is not None:
+        cwd = Path(args.cwd).resolve()
+        try:
+            body = json.loads(github.run(["issue", "view", str(args.issue),
+                                          "--json", "body"], cwd=cwd))["body"]
+        except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError) as e:
+            # the error rung, like every other `check` failure to even start:
+            # exit 1 would read as "a verify line is red"
+            detail = (e.stderr or "").strip() if hasattr(e, "stderr") else str(e)
+            print(json.dumps({"error": f"cannot read issue #{args.issue}: {detail}"}))
+            return 2
+        result = run_verify_lines(args.issue, body, cwd)
+        print(json.dumps(result, indent=2))
+        return 0 if all(r["passed"] for r in result["results"]) else 1
     elif args.cmd in ("check", "validate"):
         gate = next((g for g in cfg["gates"] if g["id"] == args.gate), None)
         if gate is None:
@@ -488,7 +509,6 @@ def main(argv: list[str] | None = None) -> int:
         concepts = (_split_csv(args.concepts) if args.concepts is not None
                     else _split_csv(args.labels) if args.labels is not None
                     else github.fetch_labels(args.number))
-        holdout = cfg["loop"].get("prime_holdout", 5)
         conn = None
         db_path = index_client.resolve_db_path(args.db, args.vault)
         if db_path and Path(db_path).exists():
@@ -498,7 +518,7 @@ def main(argv: list[str] | None = None) -> int:
                 conn = None
         try:
             payload = trajectory.build_prime_payload(
-                args.number, args.run_id, concepts, conn=conn, holdout=holdout,
+                args.number, args.run_id, concepts, conn=conn,
                 limit=args.limit, budget_chars=args.budget_chars,
                 decisions=_split_csv(args.decisions) if args.decisions else None,
                 query=args.query,
@@ -575,29 +595,26 @@ def main(argv: list[str] | None = None) -> int:
                 failed.append({**op, "error": (e.stderr or "").strip()})
         print(json.dumps({"applied": applied, "failed": failed}, indent=2))
         return 1 if failed else 0
-    elif args.cmd == "map":
-        root = args.root
-        if args.check and (args.catalog or args.slice):
-            # a gate flag silently ignored is a gate that verifies nothing
-            print(json.dumps({"error": "--check cannot be combined with the "
-                                       "read views --catalog/--slice"}))
-            return 2
-        try:
-            if args.catalog:
-                print(codemap.catalog(root, budget_lines=args.budget_lines,
-                                      focus=_split_csv(args.slice)))
-            elif args.slice:
-                print(json.dumps(codemap.slice_modules(root, _split_csv(args.slice)), indent=2))
-            elif args.check:
-                report = codemap.check(root, db=args.db,
-                                       codegraph_bin=args.codegraph_bin)
-                print(json.dumps(report, indent=2))
-                return 0 if report["ok"] else 1
-            else:
-                report = codemap.generate(root, db=args.db,
-                                          codegraph_bin=args.codegraph_bin)
-                print(json.dumps(report, indent=2))
-        except codemap.MapError as e:
-            print(json.dumps({"error": str(e)}))
-            return 2
+    elif args.cmd == "pack":
+        root = Path(args.cwd).resolve()
+        issue = pack.Issue(**json.loads(github.run(
+            ["issue", "view", str(args.number), "--json", "title,body"], cwd=root)))
+        persona = ""
+        if args.role == "implementer":  # resolution is the CLI's; composition is pack's
+            try:
+                # The rules fail closed (find_constitution raises; so does a
+                # persona missing from a docs-less wheel, or one without the
+                # marker): an error marker, never a pack that dispatches
+                # without them.
+                persona = pack.splice(pack.body(PACKAGE_PERSONA),
+                                      [pack.body(p) for p in find_constitution(root)])
+            except (FileNotFoundError, ValueError) as exc:
+                print(json.dumps({"error": str(exc)}))
+                return 2
+        print(pack.compose(
+            args.number, issue, args.role, persona,
+            pack.Codegraph(args.codegraph_bin, root),
+            prime=Path(args.prime).read_text(encoding="utf-8") if args.prime else "",
+            trace=Path(args.trace).read_text(encoding="utf-8") if args.trace else "",
+        ), end="")
     return 0
