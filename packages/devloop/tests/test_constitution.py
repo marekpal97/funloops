@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from devloop import cli, paths
+from devloop import cli, pack, paths
 
 DOCS = cli.REPO_ROOT / "docs" / "agents"
 COMMAND_DOC = DOCS / "issue-loop.command.md"
@@ -40,10 +40,8 @@ LADDER_CLAUSE_PHRASE = "consolidate, not scatter"
 
 
 def _body(path: Path) -> str:
-    """Everything below the provenance header — what the orchestrator splices."""
-    text = path.read_text(encoding="utf-8")
-    _, close, rest = text.partition("-->")
-    return rest if close else text
+    """What the pack splices: the rail's own header strip, so the two agree."""
+    return pack.body(path.read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------

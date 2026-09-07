@@ -138,7 +138,7 @@ to `context_served(source='loop-prime')`; `--dry-run` suppresses that write.
 two blocks into the implementer prompt:
 
 1. **The pack.** `uv run devloop pack <N> --role implementer --cwd <worktree>
-   <set-flags>` composes the dispatch context; splice its stdout **verbatim**
+   [--trace FILE]` composes the dispatch context; splice its stdout **verbatim**
    (the judge's copy is `--role judge`: issue and repo map, no persona). In
    order: the issue body; the body of the **vendored** `ponytail-persona.md`
    beside this file with the constitution injected (the marker lands with the

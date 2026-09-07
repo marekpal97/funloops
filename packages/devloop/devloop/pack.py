@@ -49,6 +49,11 @@ def _codegraph(binary: str, root: Path, *args: str) -> str:
     if proc.returncode != 0:
         raise CodegraphUnavailable(
             f"{args[0]} exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()}")
+    # A read verb that prints nothing is not a map — it is a wrapper, a wrong
+    # binary, or a version writing elsewhere; spliced, it would read as a
+    # clean empty catalog (rule 7). init/sync legitimately say nothing.
+    if args[0] not in ("init", "sync") and not proc.stdout.strip():
+        raise CodegraphUnavailable(f"{args[0]}: empty output")
     return proc.stdout
 
 
@@ -82,11 +87,12 @@ def annotate_catalog(tree: str, root: Path) -> str:
 
 
 def named_files(body: str, root: Path) -> list[str]:
-    """The files an issue names: every backticked token that is an existing
-    file under ``root`` (relative, no ``..``), first mention first, deduped."""
+    """The files an issue names: every backticked token that resolves to an
+    existing file inside ``root`` (symlinks followed, so a link out of the
+    repo does not count), first mention first, deduped."""
+    root = root.resolve()
     found = [tok for tok in re.findall(r"`([^`\n]+)`", body)
-             if not tok.startswith("/") and ".." not in tok.split("/")
-             and (root / tok).is_file()]
+             if (root / tok).resolve().is_relative_to(root) and (root / tok).is_file()]
     return list(dict.fromkeys(found))
 
 
@@ -129,9 +135,11 @@ change)."""
 
 
 def body(text: str) -> str:
-    """Everything below a doc's provenance header (``<!-- … -->``)."""
-    _, close, rest = text.partition("-->")
-    return (rest if close else text).strip("\n")
+    """Everything below a doc's LEADING provenance header (``<!-- … -->``);
+    a doc that opens with prose is served whole, whatever it contains."""
+    if text.lstrip().startswith("<!--"):
+        text = text.partition("-->")[2]
+    return text.strip("\n")
 
 
 def compose(*, role: str, number: int, issue: dict, persona: str,

@@ -575,17 +575,19 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "pack":
         root = Path(args.cwd).resolve()
         issue = json.loads(github.run(["issue", "view", str(args.number),
-                                       "--json", "title,body"]))
-        try:
-            # The rules fail closed (find_constitution raises; so does a
-            # persona missing from a docs-less wheel): an error marker, never
-            # a pack that dispatches without them.
-            persona = pack.body(PACKAGE_PERSONA.read_text(encoding="utf-8"))
-            constitution = [pack.body(p.read_text(encoding="utf-8"))
-                            for p in find_constitution(root)]
-        except FileNotFoundError as exc:
-            print(json.dumps({"error": str(exc)}))
-            return 2
+                                       "--json", "title,body"], cwd=root))
+        persona, constitution = "", []
+        if args.role == "implementer":
+            try:
+                # The rules fail closed (find_constitution raises; so does a
+                # persona missing from a docs-less wheel): an error marker,
+                # never a pack that dispatches without them.
+                persona = pack.body(PACKAGE_PERSONA.read_text(encoding="utf-8"))
+                constitution = [pack.body(p.read_text(encoding="utf-8"))
+                                for p in find_constitution(root)]
+            except FileNotFoundError as exc:
+                print(json.dumps({"error": str(exc)}))
+                return 2
         repo_map = pack.render_map(pack.codegraph_bin(args.codegraph_bin), root,
                                    issue["title"], pack.named_files(issue["body"], root))
         print(pack.compose(

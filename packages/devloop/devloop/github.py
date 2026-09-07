@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
 
-def run(args: list[str]) -> str:
-    return subprocess.run(["gh", *args], capture_output=True, text=True, check=True).stdout
+def run(args: list[str], cwd: Path | None = None) -> str:
+    """``gh`` resolves the repo from its cwd; pass one to anchor on a worktree."""
+    return subprocess.run(["gh", *args], cwd=cwd, capture_output=True, text=True,
+                          check=True).stdout
 
 
 def fetch_issues() -> list[dict]:
