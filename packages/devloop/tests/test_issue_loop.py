@@ -304,9 +304,7 @@ def test_check_rejects_simplify_as_orchestrator_kind(tmp_path, capsys):
     """`check` only executes deterministic kinds (command/diff). An unknown /
     LLM-judged kind like simplify must be PASSED THROUGH — surfaced with the
     same 'run it from the command' error as acceptance/review, not rejected by
-    the loader. Regression guard: the config loader does not hard-validate
-    kinds, so a new orchestrator gate parses and surfaces without a code change
-    to the rail."""
+    the loader (which refuses only kinds outside the registries, by name)."""
     rc = cli.main(["check", "--gate", "simplify", "--cwd", str(tmp_path)])
     assert rc == 2
     err = json.loads(capsys.readouterr().out)
@@ -786,6 +784,17 @@ def test_load_config_rejects_deleted_gate_keys_naming_them(tmp_path, kind, key, 
     p = tmp_path / "loop.toml"
     p.write_text(f'[[gates]]\nid = "g"\nkind = "{kind}"\n{key} = {value}\n', encoding="utf-8")
     with pytest.raises(ValueError, match=rf"gates\[0\]\.{key}"):
+        cli.load_config(p)
+
+
+@pytest.mark.parametrize("entry,kind", [
+    ('kind = "review"\nblock_on = ["major"]', "'review'"),  # pre-#39 gate, stale keys
+    ('cmd = "true"', "None"),                               # no kind: config error, not KeyError
+])
+def test_load_config_rejects_stale_or_missing_gate_kind(tmp_path, entry, kind):
+    p = tmp_path / "loop.toml"
+    p.write_text(f'[[gates]]\nid = "g"\n{entry}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=rf"unknown kind {kind} at gates\[0\]"):
         cli.load_config(p)
 
 

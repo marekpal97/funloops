@@ -15,7 +15,7 @@ Surfaces:
   from `loop.toml.template`, which carries the same knobs with nothing
   host-specific filled in.
 - **`/issue-loop`** (`issue-loop.command.md`) — the orchestrator: dispatches
-  implementer/judge/reviewer subagents, owns all control-plane writes. Dev
+  implementer/judge subagents, owns all control-plane writes. Dev
   tooling, not a shipped skill: installed by an untracked symlink; see the
   command doc's **Install** block.
 

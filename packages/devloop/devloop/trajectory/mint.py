@@ -166,7 +166,7 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
 
     ``primed``/``served`` mirror the claim-time prime verdict (``prime <N>``):
     ``primed=True`` with the served note ids when the run received prior-
-    trajectory context, ``primed=False`` with an empty list when it was a
+    trajectory context, ``primed=False`` with an empty list when it was
     unprimed (nothing served). Together with #60's ``outcome`` this frontmatter is the
     served-context regression's raw material. ``primed=None`` (the default —
     pre-#57 callers) omits both keys, leaving the note shape unchanged.

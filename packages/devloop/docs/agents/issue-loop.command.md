@@ -207,10 +207,10 @@ uv run devloop check --gate <id> --cwd <worktree> --base-ref origin/main   # com
 other, never an overage to approve.
 
 **The verify rail — the issue's own runnable criteria.** After the tests gate,
-run every `verify:` line the issue body carries through the rail: `uv run
-devloop check --issue <N> --cwd <worktree>` (the `--issue` form lands with the
-verify-rail ticket, dec-2f5bf66a). Each line is one command `GateResult`, same
-shape and timeout as the tests gate. Red is a **deterministic not-met**: a fix
+run every `verify:` line the issue body carries, each from the worktree root
+via the shell; exit 0 = pass. (The rail form `devloop check --issue <N>` does
+not exist yet — #40 delivers it, dec-2f5bf66a; until then the shell run IS the
+step.) A non-zero exit is a **deterministic not-met** on that criterion: a fix
 round exactly like a judge `not-met`, rerun until green or `max_fix_rounds` is
 spent. A missing prerequisite is a loud not-met naming what is absent, never a
 skip.
