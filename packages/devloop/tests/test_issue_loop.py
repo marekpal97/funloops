@@ -7,6 +7,7 @@ and strings — no gh, no git, no network.
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 
 import pytest
@@ -200,6 +201,11 @@ VERIFY_BODY = """\
 A criterion written as `verify: <command>` is executed by the rail.
 - New rail verb reads the `verify:` lines from its acceptance criteria.
 
+A documented example is not a criterion:
+```markdown
+- [ ] verify: `rm -rf /`
+```
+
 ## Acceptance criteria
 - [ ] AC1: prose only — stays with the judge
 - [x] verify: `! test -f packages/devloop/devloop/codemap.py`
@@ -291,15 +297,22 @@ def test_verify_rail_nested_self_call_excludes_only_itself(tmp_path, monkeypatch
                               "excluded (fixed point)")
 
 
+def _fake_gh(tmp_path, monkeypatch, bodies: dict[int, str]) -> None:
+    """A `gh` on PATH for child processes: `issue view N --json body` replays
+    the fixture body for N (a sh launcher — see the skipif on its users)."""
+    cases = "".join(f"  {n}) cat <<'GH'\n{json.dumps({'body': b})}\nGH\n;;\n"
+                    for n, b in bodies.items())
+    fake = tmp_path / "gh"
+    fake.write_text(f"#!/bin/sh\ncase \"$3\" in\n{cases}esac\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+
+
 @pytest.mark.skipif(os.name == "nt", reason="sh launcher for the fake gh; >/dev/null")
 def test_verify_rail_self_referential_line_is_a_fixed_point(tmp_path, monkeypatch, capsys):
     """Outer run: the self-referential line really re-enters the verb in a
     child process (gh faked on PATH) and passes iff the other line passes."""
-    fake = tmp_path / "gh"
-    fake.write_text(f"#!/bin/sh\ncat <<'GH'\n{json.dumps({'body': SELF_REF_BODY})}\nGH\n",
-                    encoding="utf-8")
-    fake.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    _fake_gh(tmp_path, monkeypatch, {7: SELF_REF_BODY})
     _issue_body(monkeypatch, SELF_REF_BODY)
     rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
     out = json.loads(capsys.readouterr().out)
@@ -307,6 +320,57 @@ def test_verify_rail_self_referential_line_is_a_fixed_point(tmp_path, monkeypatc
     assert [(r["id"], r["passed"]) for r in out["results"]] == [
         ("verify:1", True), ("verify:2", True)]
     assert out["summary"] == "2/2 verify lines passed"
+
+
+def test_verify_rail_nested_run_excludes_every_spelling_of_the_chain(tmp_path, monkeypatch):
+    """Gates seam: with issues 7 and 8 already running, lines naming either —
+    however the token is spelled — are excluded; `--issue 70` is not 7."""
+    body = (f"- verify: `x check --issue \"7\" --cwd .`\n"
+            f"- verify: `x check --issue=8`\n"
+            f"- verify: `x check --issue  7`\n"
+            f"- verify: `{PY} \"print(1)\" --issue 70`\n")
+    monkeypatch.setenv(gates.VERIFY_ENV, "7,8")
+    out = gates.run_verify_lines(8, body, tmp_path)
+    assert [(r["id"], r["passed"]) for r in out["results"]] == [("verify:4", True)]
+    assert out["summary"] == ("1/1 verify lines passed; 3 self-referential line(s) "
+                              "excluded (fixed point)")
+    assert os.environ[gates.VERIFY_ENV] == "7,8"   # restored, not overwritten
+
+
+@pytest.mark.skipif(os.name == "nt", reason="sh launcher for the fake gh")
+def test_verify_rail_cycle_the_token_match_cannot_see_ends_red(tmp_path, monkeypatch, capsys):
+    """Backstop: 7 → 8 → 7 spelled through a shell variable slips the token
+    match, so the chain itself stops it — one red result naming the cycle,
+    never another process."""
+    line = f"- verify: `N={{n}}; \"{sys.executable}\" -m devloop check --issue $N --cwd .`\n"
+    bodies = {7: line.format(n=8), 8: line.format(n=7)}
+    _fake_gh(tmp_path, monkeypatch, bodies)
+    _issue_body(monkeypatch, bodies[7])
+    rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert out["results"][0]["passed"] is False
+    # the innermost result names the chain; every level re-escapes its
+    # child's JSON, so only the arrow-free prefix is stable to assert on
+    assert "recursive verify: 7" in out["results"][0]["detail"]
+
+
+def test_verify_rail_over_deep_chain_is_one_red_result(tmp_path, monkeypatch):
+    monkeypatch.setenv(gates.VERIFY_ENV, "1,2,3,4,5")
+    out = gates.run_verify_lines(6, "- verify: `true`\n", tmp_path)
+    assert [r["passed"] for r in out["results"]] == [False]
+    assert out["summary"] == "recursive verify: 1 → 2 → 3 → 4 → 5 → 6"
+
+
+def test_verify_rail_gh_failure_is_the_error_rung(tmp_path, monkeypatch, capsys):
+    """A body that cannot be read is exit 2 with {"error"}, like every other
+    `check` that never starts — exit 1 would read as 'a verify line is red'."""
+    def boom(args, cwd=None):
+        raise subprocess.CalledProcessError(1, ["gh"], stderr="no issue 999999")
+    monkeypatch.setattr(github, "run", boom)
+    rc = cli.main(["check", "--issue", "999999", "--cwd", str(tmp_path)])
+    assert rc == 2
+    assert "no issue 999999" in json.loads(capsys.readouterr().out)["error"]
 
 
 # ---------------------------------------------------------------------------

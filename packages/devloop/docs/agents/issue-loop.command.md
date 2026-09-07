@@ -210,11 +210,11 @@ uv run devloop check --issue <N> --cwd <worktree>                          # the
 **The verify rail — the issue's own runnable criteria** (dec-2f5bf66a). After the
 tests gate, `check --issue <N>` runs every `verify:` line the body carries via the
 shell from the worktree root, one command `GateResult` per line (`id: verify:<k>`;
-pass = exit 0 plus, with ` => <text>`, that text in stdout), as `{issue, results,
-summary}`; no lines = `no verify lines`, exit 0; a line re-running `check --issue
-<N>` itself is a fixed point (the nested run runs the other lines, naming the
-exclusion). Red = **deterministic not-met**: a fix round, rerun until green or
-`max_fix_rounds` is spent; a missing binary is red, named, never skipped.
+pass = exit 0 plus, after the line's LAST ` => `, that text in stdout), as `{issue,
+results, summary}`; no lines = `no verify lines`, exit 0. Re-running `check --issue`
+on an issue already being verified is a fixed point (excluded, counted); a runaway
+cycle is one red result naming it. Red = **deterministic not-met**: a fix round,
+rerun until green or `max_fix_rounds` is spent; a missing binary is red, named, never skipped.
 
 **The judge — the one LLM judgment stage.** `kind: judge` — dispatch a **fresh
 judge subagent** (no implementation context) with the issue's acceptance

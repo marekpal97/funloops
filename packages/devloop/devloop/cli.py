@@ -465,8 +465,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"released #{args.number}")
     elif args.cmd == "check" and args.issue is not None:
         cwd = Path(args.cwd).resolve()
-        body = json.loads(github.run(["issue", "view", str(args.issue),
-                                      "--json", "body"], cwd=cwd))["body"]
+        try:
+            body = json.loads(github.run(["issue", "view", str(args.issue),
+                                          "--json", "body"], cwd=cwd))["body"]
+        except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError) as e:
+            # the error rung, like every other `check` failure to even start:
+            # exit 1 would read as "a verify line is red"
+            detail = (e.stderr or "").strip() if hasattr(e, "stderr") else str(e)
+            print(json.dumps({"error": f"cannot read issue #{args.issue}: {detail}"}))
+            return 2
         result = run_verify_lines(args.issue, body, cwd)
         print(json.dumps(result, indent=2))
         return 0 if all(r["passed"] for r in result["results"]) else 1

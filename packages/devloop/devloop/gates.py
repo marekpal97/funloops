@@ -61,8 +61,8 @@ def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict
     summary = f"`{gate['cmd']}` exited {proc.returncode}"
     if expect:
         summary += f"; stdout {'contains' if found else 'lacks'} {expect!r}"
-    if proc.returncode in _NOT_FOUND:
-        summary += f" — {(proc.stderr.strip().splitlines() or ['not found'])[-1]}"
+    if proc.returncode in _NOT_FOUND and proc.stderr.strip():
+        summary += f" — {proc.stderr.strip().splitlines()[-1]}"
     return {
         "id": gate["id"],
         "kind": "command",
@@ -79,21 +79,40 @@ def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict
 
 # `- [ ] verify: `<cmd> [=> <text>]`` — the checklist prefix is optional, the
 # backticks are stripped, and the LAST ` => ` splits off the expected stdout.
-_VERIFY_LINE = re.compile(r"^\s*(?:[-*]\s+(?:\[[ xX]\]\s+)?)?verify:\s*(.+?)\s*$", re.MULTILINE)
-VERIFY_ENV = "DEVLOOP_VERIFY_ISSUE"   # set while an issue's lines run: the fixed-point guard
+_VERIFY_LINE = re.compile(r"^\s*(?:[-*]\s+(?:\[[ xX]\]\s+)?)?verify:\s*(.+?)\s*$")
+# The `--issue N` token a verify line may carry, however spelled (`=`, quotes,
+# extra spaces); the number is anchored so `--issue 400` never reads as 40.
+_ISSUE_TOKEN = re.compile(r"""--issue\s*=?\s*["']?(\d+)\b""")
+# The chain of issues whose lines are running, outermost first (comma-joined
+# in the environment so child processes see it): the fixed-point guard.
+VERIFY_ENV = "DEVLOOP_VERIFY_ISSUE"
+VERIFY_MAX_DEPTH = 4
 
 
 def parse_verify_lines(body: str) -> list[tuple[str, str]]:
     """``[(command, expected_stdout_substring)]`` in body order; ``""`` when
     the line carries no ``=>``. Prose that merely mentions ``verify:`` does
-    not start a line with it, so it never parses."""
-    lines = []
-    for text in _VERIFY_LINE.findall(body):
+    not start a line with it, and a line inside a ``` fence is an example,
+    so neither parses. The LAST `` => `` always splits: a command that needs
+    a literal `` => `` must end with an expected-text clause of its own."""
+    lines, fenced = [], False
+    for line in body.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        m = None if fenced else _VERIFY_LINE.match(line)
+        if m is None:
+            continue
+        text = m.group(1)
         if len(text) > 1 and text[0] == text[-1] == "`":
             text = text[1:-1]
         cmd, sep, expect = text.rpartition(" => ")
         lines.append((cmd.strip(), expect.strip()) if sep else (text.strip(), ""))
     return lines
+
+
+def _chain() -> list[int]:
+    return [int(n) for n in os.environ.get(VERIFY_ENV, "").split(",") if n.strip()]
 
 
 def run_verify_lines(number: int, body: str, cwd: Path) -> dict:
@@ -102,23 +121,31 @@ def run_verify_lines(number: int, body: str, cwd: Path) -> dict:
     position in the body; the tests gate's runner and default timeout);
     ``summary`` reads ``no verify lines`` for a body without any (a pass).
 
-    A line that itself runs ``check --issue <N>`` on its own issue is a fixed
-    point, not an error: the nested run (``VERIFY_ENV`` already names N)
-    executes every OTHER line and says in its summary which it excluded, so
-    the outer line passes iff the issue's other lines pass. Nothing fails
-    open — each real line runs (twice), only the computation in progress is
-    not re-entered. A nested call for a different issue runs normally.
+    A line that itself runs ``check --issue`` on an issue whose lines are
+    already running (``VERIFY_ENV`` carries that chain) is a fixed point, not
+    an error: the nested run executes every OTHER line and says in its
+    summary how many it excluded, so the outer line passes iff the issue's
+    other lines pass. Nothing fails open — each real line runs, only the
+    computation in progress is not re-entered. A spelling the token match
+    cannot see (``--issue $N``) still recurses; the backstop is the chain
+    itself: an issue entered a second time over, or a chain past
+    ``VERIFY_MAX_DEPTH``, is ONE red result naming the cycle, never another
+    process.
     """
-    nested = os.environ.get(VERIFY_ENV) == str(number)
-    self_ref = re.compile(rf"--issue[ =]{number}\b")
+    chain = _chain()
+    if chain.count(number) >= 2 or len(chain) > VERIFY_MAX_DEPTH:
+        cycle = " → ".join(str(n) for n in [*chain, number])
+        return {"issue": number, "summary": "recursive verify: " + cycle,
+                "results": [{"id": "verify:cycle", "kind": "command", "passed": False,
+                             "summary": f"recursive verify: {cycle}", "detail": ""}]}
     lines, excluded = [], 0
     for k, (cmd, expect) in enumerate(parse_verify_lines(body), 1):
-        if nested and self_ref.search(cmd):
+        if any(int(n) in chain for n in _ISSUE_TOKEN.findall(cmd)):
             excluded += 1
         else:
             lines.append((k, cmd, expect))
     prev = os.environ.get(VERIFY_ENV)
-    os.environ[VERIFY_ENV] = str(number)
+    os.environ[VERIFY_ENV] = ",".join(str(n) for n in [*chain, number])
     try:
         results = [run_command_gate({"id": f"verify:{k}", "kind": "command",
                                      "cmd": cmd, "expect": expect}, cwd)
