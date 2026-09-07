@@ -76,7 +76,9 @@ Per-module interfaces:
 **`cli.py`** — owns `DEFAULT_CONFIG`, `load_config`, `parse_override`,
 `apply_overrides`, `build_arg_parser`, `main`. Config lives here deliberately:
 resolution-and-override is run-posture, exercised only at the entry point;
-`--set` typo-rejection and "gates are file-only" are CLI contract lines.
+unknown-key rejection (one check for `--set` and the file, so a deleted knob
+is refused by name rather than silently ignored) and "gates are file-only"
+are CLI contract lines.
 `cli.py` is also the imperative shell: the `trajectory` subcommand's git reads
 (branch, log, numstat) and file-argument loading happen here, feeding the pure
 `build_trajectory` — subprocess git is argument-gathering, not a module.
@@ -143,9 +145,10 @@ self-provision the default-path index (`codegraph init`/`index` via
 `--codegraph-bin` → `$CODEGRAPH_BIN` → PATH); a committed map with no
 working codegraph fails loud, a repo with no committed map is simply not
 adopted (check no-ops, read views say so). Responsibility one-liners live in
-a hash-keyed map.notes.json sidecar so staleness is mechanical. The gate is
-one `[[gates]]` **command** entry (`devloop map --check`) — no new gate
-kind. The codegraph db is opened through `index_client.open_ro`/`Error`,
+a hash-keyed map.notes.json sidecar so staleness is mechanical. The
+committed artifact and its gate were retired by dec-fd12489d (funloops#39
+removed the `map` gate from loop.toml; #28 rewrites this module into the
+dispatch pack). The codegraph db is opened through `index_client.open_ro`/`Error`,
 keeping index_client the package's only sqlite3 importer, and codemap speaks
 codegraph's schema itself — the per-database SQL-home carve-out §5 names.
 
@@ -173,10 +176,14 @@ states which plane runs it.**
 - **Deterministic kinds** (`command`, `diff`) — the rail *executes*:
   `execute(gate_cfg, ctx) -> GateResult`, where ctx is the worktree cwd (+
   base ref for diff).
-- **Judgment kinds** (`acceptance`, `review`, `simplify`) — the rail never
-  executes; the orchestrator dispatches a subagent and the rail *validates*
-  the subagent's return: `validate(gate_cfg, raw) -> GateResult`, rejecting
-  schema-violating returns (#99's re-ask loop keys off the rejection).
+- **Judgment kinds** (`judge`, `simplify`) — the rail never executes; the
+  orchestrator dispatches a subagent and the rail *validates* the subagent's
+  return: `validate(gate_cfg, raw) -> GateResult`, rejecting schema-violating
+  returns (#99's re-ask loop keys off the rejection). `judge` is the fused
+  acceptance+review stage (funloops#39, dec-611cbd8a): its envelope carries
+  `criteria[]` verdicts and `findings[]`, and only a criterion `not-met`
+  fails it. A gate entry may carry only the keys its kind reads
+  (`GATE_KEYS`); the config loader refuses any other key by name.
 
 `GateResult` is a plain dict shape, not a class: `{id, kind, passed, summary,
 detail}` — already what both executors emit and what the trajectory
@@ -187,8 +194,7 @@ Structurally, `gates.py` carries one registry per verb:
 
 ```python
 DETERMINISTIC = {"command": run_command_gate, "diff": run_diff_gate}
-JUDGMENT = {"acceptance": validate_acceptance, "review": validate_review,
-            "simplify": validate_simplify}
+JUDGMENT = {"judge": validate_judge, "simplify": validate_simplify}
 ```
 
 The `check` subcommand dispatches **only** through `DETERMINISTIC`; any other
@@ -231,11 +237,12 @@ internal):
 - `build_trajectory(issue, *, branch, commits, numstat, gates, fix_rounds,
   outcome, ...) -> dict` — pure; emits the weave_create-shaped payload.
   (mint face)
-- `build_prime_payload(issue_number, run_id, concepts, *, conn, holdout,
-  limit, budget_chars, decisions, query) -> dict` — the claim-time payload.
+- `build_prime_payload(issue_number, run_id, concepts, *, conn, limit,
+  budget_chars, decisions, query) -> dict` — the claim-time payload.
   `concepts` (ontology terms) and `query` (the issue's text) are the two
   retrieval legs; `decisions` are the file-anchored ids the orchestrator
-  resolved. (prime face)
+  resolved. It always serves what it finds — the sampled holdout was retired
+  by dec-cf8f0d33. (prime face)
 - `append_served_event(buffer_path, run_id, issue_number, served, session_id)`
   + `LOOP_PRIME_TOOL` — the served-context write-through to the session
   buffer JSONL.
@@ -253,7 +260,7 @@ seam, never here.
 
 **`skills[]` is the stage-dispatch log, not a capture of every Skill
 invocation.** It records the stages *this loop dispatched* — implementer,
-acceptance judge, reviewer, and future stages — as
+the judge, and future stages — as
 `{id, role, outcome, fix_rounds_attributed}`. The generic capture-all is
 **parked**: it needs a new mechanism (a Skill-tool hook or transcript scraping)
 and has no live reader, and a capability ships with its consumer or not at all.
@@ -263,8 +270,6 @@ then nothing implies capture-all exists.
 
 **Invocation-trajectory extension — the parking note above is the contract.**
 Internal to `prime.py`:
-`is_holdout` (the sha1 holdout — `build_prime_payload` computes it; moved
-off the public list 2026-08-01, it had no external consumer),
 `_coerce_builds_on`, the outcome-rank table, `render_prime_block`, and the two
 composition helpers over the seam (`query_trajectories`, `resolve_insights`).
 

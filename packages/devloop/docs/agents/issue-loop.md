@@ -41,9 +41,9 @@ issues each run and partitions the `ready-for-agent` set into:
 
 - **frontier** — open, unclaimed, every blocker CLOSED → runnable now;
 - **blocked** — some blocker still open (listed);
-- **claimed** — has an assignee (`claim_mode = assign`, the wayfinder
-  convention: the assignee IS the claim) or the legacy claim label. Either
-  way visible in the tracker UI, so trivially auditable.
+- **claimed** — has an assignee (the wayfinder convention: the assignee IS
+  the claim) or the legacy claim label. Either way visible in the tracker UI,
+  so trivially auditable.
 
 No full topological sort is ever needed. Each PR body says `Closes #N`, so a
 human merging a PR closes its issue, which moves the next rank of the DAG
@@ -114,20 +114,21 @@ threshold) touches no code.
 
 | kind | judged by | what it checks |
 |---|---|---|
-| `diff` | rail (deterministic) | forbidden paths, max changed lines |
-| `command` | rail (deterministic) | any shell command; pass = exit 0 |
-| `acceptance` | fresh LLM judge | the issue's own acceptance criteria, per-criterion, `threshold = all\|majority` |
-| `review` | fresh LLM reviewer | code-review findings vs `block_on` severities |
+| `diff` | rail (deterministic) | forbidden paths (no line cap) |
+| `command` | rail (deterministic) | any shell command; pass = exit 0 — the tests gate, and the issue's own `verify:` lines |
+| `judge` | fresh LLM judge | the one judgment stage: per-criterion verdicts against the issue's acceptance criteria (`threshold = all\|majority`) plus advisory findings that never block (dec-611cbd8a) |
 | `simplify` | fresh subagent (vendored ponytail-review) | over-engineering trim — the one **applying** gate. Runs last; `required = false`; shrinks the verified diff, re-runs `rerun` gates, reverts to the pre-simplify tip if either goes red |
 
 Design rules baked in:
 
 - **Goal and verification are inseparable** — an issue is only
-  `ready-for-agent` if its acceptance criteria are checkable, and the
-  acceptance gate scores exactly those criteria, not a generic "looks good".
+  `ready-for-agent` if its acceptance criteria are checkable, and the judge
+  scores exactly those criteria, not a generic "looks good". Nothing outside
+  the contract can fail a PR; what the judge sees beyond it is a finding for
+  the PR body and the triage lane.
 - **Fresh context for judgment.** Reviewing in the implementer's session
-  happens in the dumb zone; the acceptance judge and reviewer see only the
-  issue, the diff, and the evidence.
+  happens in the dumb zone; the judge sees only the issue, the diff, and the
+  evidence.
 - **Fix loop with a floor.** implement → gates → feed failures back →
   fix, up to `max_fix_rounds`; exhaustion routes the issue to
   `ready-for-human` with the full evidence trail instead of stalling the
@@ -152,10 +153,11 @@ TDD in the loop is **contingent on the baseline, not assumed**. Once per
 run, before any edits, the orchestrator runs the tests gate in the pristine
 implementer worktree — a deterministic baseline probe of origin/main.
 
-- **Green baseline + `tdd.mode = auto`** → red→green TDD is *enforced*
-  in the implementer's standing orders: each acceptance criterion gets its
-  failing test before its implementation. TDD only disciplines an agent when
-  a green suite makes "new red" attributable to the new work.
+- **Green baseline + `tdd.mode = auto`** → TDD is *enforced* in the
+  implementer's standing orders: each acceptance criterion gets its failing
+  test before its implementation, and the implementer applies its own cut
+  before returning. TDD only disciplines an agent when a green suite makes
+  "new red" attributable to the new work.
 - **Red baseline** → the whole-suite tests gate is unattributable, so by
   default (`require_green_baseline = true`) the loop refuses to implement
   and names the issue that owns the failure — fixing the baseline *is* the
@@ -184,13 +186,13 @@ implementer worktree — a deterministic baseline probe of origin/main.
 ## v1.1.0 alignment
 
 Updated for Pocock skills v1.1.0 (2026-07-08): native blocking edges +
-sub-issues read unioned with body text; claim by assignment; TDD narrowed to
-red→green with refactoring owned by the review stage; seam-scoped tests and
-the tautological-test anti-pattern in implementer standing orders; the
-code-review Fowler smell baseline as a judgement-only reviewer axis.
+sub-issues read unioned with body text; claim by assignment; seam-scoped tests
+and the tautological-test anti-pattern in implementer standing orders.
 Wayfinder needs no integration: its implementation tickets speak the same
 wire protocol (native edges, assignee claims), so they land on the same
-frontier unaided.
+frontier unaided. The 2026-09 revisit (dec-611cbd8a, dec-cf8f0d33) fused
+acceptance and review into one judge and made the acceptance criteria the
+definition of done.
 
 ## Origin
 
