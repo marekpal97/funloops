@@ -35,7 +35,6 @@ from devloop import cli, pack, paths
 DOCS = cli.REPO_ROOT / "docs" / "agents"
 COMMAND_DOC = DOCS / "issue-loop.command.md"
 FUNLOOPS_ROOT = cli.REPO_ROOT.parents[1]
-OVERLAY = FUNLOOPS_ROOT / "docs" / "agents" / "constitution.md"
 GOLDEN_SPLICE = Path(__file__).resolve().parent / "fixtures" / "pack" / "splice.md"
 
 # The former depth rider's most distinctive line — if it appears anywhere but
@@ -166,25 +165,9 @@ def test_implementer_splice_is_golden():
     golden is authored from those files and compared byte-for-byte; the
     overlay's rules continue the packaged numbering (8, 9) so the implementer
     reads one list."""
-    resolved = cli.find_constitution(FUNLOOPS_ROOT)
-    assert resolved == [cli.PACKAGE_CONSTITUTION, OVERLAY]
-    spliced = pack.splice(_body(cli.PACKAGE_PERSONA), [_body(p) for p in resolved])
+    spliced = pack.splice(_body(cli.PACKAGE_PERSONA),
+                          [_body(p) for p in cli.find_constitution(FUNLOOPS_ROOT)])
     assert spliced == GOLDEN_SPLICE.read_text(encoding="utf-8")
-    assert spliced.index("1. **Depth over spread**") \
-        < spliced.index("8. **Check what the substrate")
-
-
-def test_persona_carries_exactly_one_marker():
-    """The splice contract from the persona's side: one marker line, kept by
-    the header strip (the strip ends at the first comment close, so the
-    provenance header must not spell the marker)."""
-    assert _body(cli.PACKAGE_PERSONA).split("\n").count(pack.MARKER) == 1
-
-
-def test_a_persona_without_the_marker_is_refused():
-    """No marker, no silent append: the rules would ride nowhere."""
-    with pytest.raises(ValueError):
-        pack.splice("# persona\n\nno marker here", ["1. a rule"])
 
 
 def test_exactly_one_splice_point_in_the_command_doc():

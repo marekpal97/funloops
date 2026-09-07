@@ -148,8 +148,7 @@ def splice(persona: str, rules: list[str]) -> str:
     text that reads them (rule 5)."""
     lines = persona.split("\n")
     if lines.count(MARKER) != 1:
-        raise ValueError(f"persona must carry exactly one '{MARKER}' line, "
-                         f"found {lines.count(MARKER)}")
+        raise ValueError(f"persona must carry exactly one '{MARKER}' line")
     at = lines.index(MARKER)
     return "\n".join([*lines[:at], "\n\n".join(rules), *lines[at + 1:]])
 

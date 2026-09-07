@@ -22,14 +22,11 @@
       the above copyright notice and this permission notice being included.
 
   WIRING: a dispatch splice source, not a slash command. `devloop pack --role
-  implementer` serves the body below with the resolved constitution — the
-  packaged constitution.md, then the host repo's docs/agents/constitution.md
-  overlay — inserted in place of the one marker line below (the HTML comment
-  reading "constitution"; this header must not spell it, the header strip
-  ends at the first comment close); the orchestrator splices that once into
-  every implementer and fix-round dispatch (issue-loop.command.md §1b). A
-  persona without the marker is an error, never a silent append. Amendments
-  to this file are a human's PR.
+  implementer` replaces the one marker line below (the HTML comment reading
+  "constitution" — this header must not spell it; the strip ends at the first
+  comment close) with the resolved constitution; see constitution.md's header
+  for the layers. No marker is an error, never a silent append. Amendments
+  are a human's PR.
 -->
 # Ponytail, lazy senior dev mode
 
