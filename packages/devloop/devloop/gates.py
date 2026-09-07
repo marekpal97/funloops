@@ -86,7 +86,6 @@ _ISSUE_TOKEN = re.compile(r"""--issue\s*=?\s*["']?(\d+)\b""")
 # The chain of issues whose lines are running, outermost first (comma-joined
 # in the environment so child processes see it): the fixed-point guard.
 VERIFY_ENV = "DEVLOOP_VERIFY_ISSUE"
-VERIFY_MAX_DEPTH = 4
 
 
 def parse_verify_lines(body: str) -> list[tuple[str, str]]:
@@ -100,19 +99,12 @@ def parse_verify_lines(body: str) -> list[tuple[str, str]]:
         if line.lstrip().startswith("```"):
             fenced = not fenced
             continue
-        m = None if fenced else _VERIFY_LINE.match(line)
-        if m is None:
+        if fenced or not (m := _VERIFY_LINE.match(line)):
             continue
-        text = m.group(1)
-        if len(text) > 1 and text[0] == text[-1] == "`":
-            text = text[1:-1]
+        text = m.group(1).removeprefix("`").removesuffix("`")
         cmd, sep, expect = text.rpartition(" => ")
         lines.append((cmd.strip(), expect.strip()) if sep else (text.strip(), ""))
     return lines
-
-
-def _chain() -> list[int]:
-    return [int(n) for n in os.environ.get(VERIFY_ENV, "").split(",") if n.strip()]
 
 
 def run_verify_lines(number: int, body: str, cwd: Path) -> dict:
@@ -121,29 +113,21 @@ def run_verify_lines(number: int, body: str, cwd: Path) -> dict:
     position in the body; the tests gate's runner and default timeout);
     ``summary`` reads ``no verify lines`` for a body without any (a pass).
 
-    A line that itself runs ``check --issue`` on an issue whose lines are
-    already running (``VERIFY_ENV`` carries that chain) is a fixed point, not
-    an error: the nested run executes every OTHER line and says in its
-    summary how many it excluded, so the outer line passes iff the issue's
-    other lines pass. Nothing fails open — each real line runs, only the
-    computation in progress is not re-entered. A spelling the token match
-    cannot see (``--issue $N``) still recurses; the backstop is the chain
-    itself: an issue entered a second time over, or a chain past
-    ``VERIFY_MAX_DEPTH``, is ONE red result naming the cycle, never another
-    process.
+    A line re-running ``check --issue`` on an issue already in the chain
+    (``VERIFY_ENV``) is a fixed point: excluded, counted in the summary. The
+    backstop for a spelling the token match cannot see is the chain itself:
+    an issue entered a second time over is ONE red result naming the cycle.
     """
-    chain = _chain()
-    if chain.count(number) >= 2 or len(chain) > VERIFY_MAX_DEPTH:
+    chain = [int(n) for n in os.environ.get(VERIFY_ENV, "").split(",") if n.strip()]
+    if chain.count(number) >= 2:
         cycle = " → ".join(str(n) for n in [*chain, number])
         return {"issue": number, "summary": "recursive verify: " + cycle,
                 "results": [{"id": "verify:cycle", "kind": "command", "passed": False,
                              "summary": f"recursive verify: {cycle}", "detail": ""}]}
-    lines, excluded = [], 0
-    for k, (cmd, expect) in enumerate(parse_verify_lines(body), 1):
-        if any(int(n) in chain for n in _ISSUE_TOKEN.findall(cmd)):
-            excluded += 1
-        else:
-            lines.append((k, cmd, expect))
+    parsed = parse_verify_lines(body)
+    lines = [(k, c, e) for k, (c, e) in enumerate(parsed, 1)
+             if not any(int(n) in chain for n in _ISSUE_TOKEN.findall(c))]
+    excluded = len(parsed) - len(lines)
     prev = os.environ.get(VERIFY_ENV)
     os.environ[VERIFY_ENV] = ",".join(str(n) for n in [*chain, number])
     try:

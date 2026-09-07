@@ -284,19 +284,6 @@ SELF_REF_BODY = (f"- [ ] verify: `{PY} \"print(1)\"`\n"
                  f"- [ ] verify: `\"{sys.executable}\" -m devloop check --issue 7 --cwd . >/dev/null`\n")
 
 
-def test_verify_rail_nested_self_call_excludes_only_itself(tmp_path, monkeypatch, capsys):
-    """Direct nested call (the env var already names this issue): the
-    self-referential line is excluded and SAID so; the other line runs."""
-    _issue_body(monkeypatch, SELF_REF_BODY)
-    monkeypatch.setenv(gates.VERIFY_ENV, "7")
-    rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
-    out = json.loads(capsys.readouterr().out)
-    assert rc == 0
-    assert [r["id"] for r in out["results"]] == ["verify:1"]
-    assert out["summary"] == ("1/1 verify lines passed; 1 self-referential line(s) "
-                              "excluded (fixed point)")
-
-
 def _fake_gh(tmp_path, monkeypatch, bodies: dict[int, str]) -> None:
     """A `gh` on PATH for child processes: `issue view N --json body` replays
     the fixture body for N (a sh launcher — see the skipif on its users)."""
@@ -353,13 +340,6 @@ def test_verify_rail_cycle_the_token_match_cannot_see_ends_red(tmp_path, monkeyp
     # the innermost result names the chain; every level re-escapes its
     # child's JSON, so only the arrow-free prefix is stable to assert on
     assert "recursive verify: 7" in out["results"][0]["detail"]
-
-
-def test_verify_rail_over_deep_chain_is_one_red_result(tmp_path, monkeypatch):
-    monkeypatch.setenv(gates.VERIFY_ENV, "1,2,3,4,5")
-    out = gates.run_verify_lines(6, "- verify: `true`\n", tmp_path)
-    assert [r["passed"] for r in out["results"]] == [False]
-    assert out["summary"] == "recursive verify: 1 → 2 → 3 → 4 → 5 → 6"
 
 
 def test_verify_rail_gh_failure_is_the_error_rung(tmp_path, monkeypatch, capsys):

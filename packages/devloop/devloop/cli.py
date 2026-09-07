@@ -306,8 +306,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     what = p_check.add_mutually_exclusive_group(required=True)
     what.add_argument("--gate", help="a command | diff gate id from loop.toml")
     what.add_argument("--issue", type=int, metavar="N",
-                      help="run issue N's `verify:` lines as command gates "
-                           "({issue, results: [GateResult...], summary})")
+                      help="run issue N's verify: lines as command gates")
     p_check.add_argument("--cwd", default=".")
     p_check.add_argument("--base-ref", default="origin/main")
 
