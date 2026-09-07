@@ -54,7 +54,6 @@ from devloop.gates import (
     DETERMINISTIC,
     GATE_KEYS,
     JUDGMENT,
-    VERIFY_ENV,
     reject,
     run_verify_lines,
     validate,
@@ -465,10 +464,6 @@ def main(argv: list[str] | None = None) -> int:
         github.run(["issue", "edit", str(args.number), "--remove-assignee", "@me"])
         print(f"released #{args.number}")
     elif args.cmd == "check" and args.issue is not None:
-        if os.environ.get(VERIFY_ENV) == str(args.issue):
-            print(json.dumps({"error": f"recursive verify: #{args.issue}'s own verify "
-                                       "lines are already running this verb"}))
-            return 2
         cwd = Path(args.cwd).resolve()
         body = json.loads(github.run(["issue", "view", str(args.issue),
                                       "--json", "body"], cwd=cwd))["body"]

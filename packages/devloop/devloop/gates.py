@@ -80,7 +80,7 @@ def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict
 # `- [ ] verify: `<cmd> [=> <text>]`` — the checklist prefix is optional, the
 # backticks are stripped, and the LAST ` => ` splits off the expected stdout.
 _VERIFY_LINE = re.compile(r"^\s*(?:[-*]\s+(?:\[[ xX]\]\s+)?)?verify:\s*(.+?)\s*$", re.MULTILINE)
-VERIFY_ENV = "DEVLOOP_VERIFY_ISSUE"   # set while an issue's lines run: the recursion guard
+VERIFY_ENV = "DEVLOOP_VERIFY_ISSUE"   # set while an issue's lines run: the fixed-point guard
 
 
 def parse_verify_lines(body: str) -> list[tuple[str, str]]:
@@ -98,25 +98,42 @@ def parse_verify_lines(body: str) -> list[tuple[str, str]]:
 
 def run_verify_lines(number: int, body: str, cwd: Path) -> dict:
     """``check --issue``'s result: ``{issue, results: [GateResult…], summary}``
-    — one command GateResult per line (``id: verify:<k>``, the tests gate's
-    runner and default timeout); ``summary`` reads ``no verify lines`` for a
-    body without any, which is a pass."""
-    lines = parse_verify_lines(body)
+    — one command GateResult per line (``id: verify:<k>``, k = the line's
+    position in the body; the tests gate's runner and default timeout);
+    ``summary`` reads ``no verify lines`` for a body without any (a pass).
+
+    A line that itself runs ``check --issue <N>`` on its own issue is a fixed
+    point, not an error: the nested run (``VERIFY_ENV`` already names N)
+    executes every OTHER line and says in its summary which it excluded, so
+    the outer line passes iff the issue's other lines pass. Nothing fails
+    open — each real line runs (twice), only the computation in progress is
+    not re-entered. A nested call for a different issue runs normally.
+    """
+    nested = os.environ.get(VERIFY_ENV) == str(number)
+    self_ref = re.compile(rf"--issue[ =]{number}\b")
+    lines, excluded = [], 0
+    for k, (cmd, expect) in enumerate(parse_verify_lines(body), 1):
+        if nested and self_ref.search(cmd):
+            excluded += 1
+        else:
+            lines.append((k, cmd, expect))
     prev = os.environ.get(VERIFY_ENV)
     os.environ[VERIFY_ENV] = str(number)
     try:
         results = [run_command_gate({"id": f"verify:{k}", "kind": "command",
                                      "cmd": cmd, "expect": expect}, cwd)
-                   for k, (cmd, expect) in enumerate(lines, 1)]
+                   for k, cmd, expect in lines]
     finally:
         if prev is None:
             del os.environ[VERIFY_ENV]
         else:
             os.environ[VERIFY_ENV] = prev
     passed = sum(r["passed"] for r in results)
-    return {"issue": number, "results": results,
-            "summary": (f"{passed}/{len(results)} verify lines passed" if results
-                        else "no verify lines")}
+    summary = (f"{passed}/{len(results)} verify lines passed" if results
+               else "no verify lines")
+    if excluded:
+        summary += f"; {excluded} self-referential line(s) excluded (fixed point)"
+    return {"issue": number, "results": results, "summary": summary}
 
 
 def evaluate_diff_gate(gate: dict, numstat: str) -> dict:

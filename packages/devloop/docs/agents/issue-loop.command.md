@@ -205,16 +205,16 @@ uv run devloop check --gate <id> --cwd <worktree> --base-ref origin/main   # com
 uv run devloop check --issue <N> --cwd <worktree>                          # the verify rail
 ```
 
-`diff-guard` is a forbidden-paths check only; a breach is a fix round like any
-other, never an overage to approve.
+`diff-guard` is a forbidden-paths check only; a breach is a fix round, never an overage to approve.
 
-**The verify rail — the issue's own runnable criteria** (dec-2f5bf66a). After
-the tests gate, `check --issue <N>` runs every `verify:` line the body carries
-via the shell from the worktree root: one command `GateResult` per line (`id:
-verify:<k>`; pass = exit 0 plus, when the line carries ` => <text>`, that text
-in stdout) in `{issue, results, summary}`; no lines = `no verify lines`, exit 0.
-A red result is a **deterministic not-met** on that criterion: a fix round, rerun
-until green or `max_fix_rounds` is spent; a missing binary is red, named, never skipped.
+**The verify rail — the issue's own runnable criteria** (dec-2f5bf66a). After the
+tests gate, `check --issue <N>` runs every `verify:` line the body carries via the
+shell from the worktree root, one command `GateResult` per line (`id: verify:<k>`;
+pass = exit 0 plus, with ` => <text>`, that text in stdout), as `{issue, results,
+summary}`; no lines = `no verify lines`, exit 0; a line re-running `check --issue
+<N>` itself is a fixed point (the nested run runs the other lines, naming the
+exclusion). Red = **deterministic not-met**: a fix round, rerun until green or
+`max_fix_rounds` is spent; a missing binary is red, named, never skipped.
 
 **The judge — the one LLM judgment stage.** `kind: judge` — dispatch a **fresh
 judge subagent** (no implementation context) with the issue's acceptance

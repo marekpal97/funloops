@@ -5,6 +5,7 @@ and strings — no gh, no git, no network.
 """
 
 import json
+import os
 import sqlite3
 import sys
 
@@ -273,14 +274,39 @@ def test_verify_rail_with_no_lines_says_so_and_exits_zero(tmp_path, monkeypatch,
     assert out == {"issue": 25, "results": [], "summary": "no verify lines"}
 
 
-def test_verify_rail_refuses_to_recurse_into_itself(tmp_path, monkeypatch, capsys):
-    """A verify line that runs `check --issue N` on its own issue would fork
-    forever; the nested call is an error (exit 2), never a silent pass."""
-    _issue_body(monkeypatch, "- [ ] verify: `true`\n")
+SELF_REF_BODY = (f"- [ ] verify: `{PY} \"print(1)\"`\n"
+                 f"- [ ] verify: `\"{sys.executable}\" -m devloop check --issue 7 --cwd . >/dev/null`\n")
+
+
+def test_verify_rail_nested_self_call_excludes_only_itself(tmp_path, monkeypatch, capsys):
+    """Direct nested call (the env var already names this issue): the
+    self-referential line is excluded and SAID so; the other line runs."""
+    _issue_body(monkeypatch, SELF_REF_BODY)
     monkeypatch.setenv(gates.VERIFY_ENV, "7")
     rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
-    assert rc == 2
-    assert "recurs" in json.loads(capsys.readouterr().out)["error"]
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert [r["id"] for r in out["results"]] == ["verify:1"]
+    assert out["summary"] == ("1/1 verify lines passed; 1 self-referential line(s) "
+                              "excluded (fixed point)")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="sh launcher for the fake gh; >/dev/null")
+def test_verify_rail_self_referential_line_is_a_fixed_point(tmp_path, monkeypatch, capsys):
+    """Outer run: the self-referential line really re-enters the verb in a
+    child process (gh faked on PATH) and passes iff the other line passes."""
+    fake = tmp_path / "gh"
+    fake.write_text(f"#!/bin/sh\ncat <<'GH'\n{json.dumps({'body': SELF_REF_BODY})}\nGH\n",
+                    encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    _issue_body(monkeypatch, SELF_REF_BODY)
+    rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert [(r["id"], r["passed"]) for r in out["results"]] == [
+        ("verify:1", True), ("verify:2", True)]
+    assert out["summary"] == "2/2 verify lines passed"
 
 
 # ---------------------------------------------------------------------------
