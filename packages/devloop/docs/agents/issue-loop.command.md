@@ -202,19 +202,19 @@ execute-vs-validate): `devloop-boundaries.md` §3.
 
 ```bash
 uv run devloop check --gate <id> --cwd <worktree> --base-ref origin/main   # command | diff
+uv run devloop check --issue <N> --cwd <worktree>                          # the verify rail
 ```
 
 `diff-guard` is a forbidden-paths check only; a breach is a fix round like any
 other, never an overage to approve.
 
-**The verify rail — the issue's own runnable criteria.** After the tests gate,
-run every `verify:` line the issue body carries, each from the worktree root
-via the shell; exit 0 = pass. (The rail form `devloop check --issue <N>` does
-not exist yet — #40 delivers it, dec-2f5bf66a; until then the shell run IS the
-step.) A non-zero exit is a **deterministic not-met** on that criterion: a fix
-round exactly like a judge `not-met`, rerun until green or `max_fix_rounds` is
-spent. A missing prerequisite is a loud not-met naming what is absent, never a
-skip.
+**The verify rail — the issue's own runnable criteria** (dec-2f5bf66a). After
+the tests gate, `check --issue <N>` runs every `verify:` line the body carries
+via the shell from the worktree root: one command `GateResult` per line (`id:
+verify:<k>`; pass = exit 0 plus, when the line carries ` => <text>`, that text
+in stdout) in `{issue, results, summary}`; no lines = `no verify lines`, exit 0.
+A red result is a **deterministic not-met** on that criterion: a fix round, rerun
+until green or `max_fix_rounds` is spent; a missing binary is red, named, never skipped.
 
 **The judge — the one LLM judgment stage.** `kind: judge` — dispatch a **fresh
 judge subagent** (no implementation context) with the issue's acceptance

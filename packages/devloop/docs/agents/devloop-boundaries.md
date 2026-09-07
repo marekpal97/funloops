@@ -203,6 +203,10 @@ the /issue-loop command" error (previously an `else` branch; the registry
 promotes it from error-message prose to structure, byte-identical output).
 The `validate` subcommand (#99) dispatches **only** through `JUDGMENT`, and
 the two registries are pinned disjoint + covering the shipped pipeline.
+`check --issue N` (#40, dec-2f5bf66a) is the same verb's second form: the
+issue body's `verify:` lines run through `run_command_gate` as ad-hoc command
+gates, printed as `{issue, results: [GateResult…], summary}` — no new kind, no
+loop.toml key.
 
 A judgment result is `GateResult` plus `reasons`, and that key carries the
 whole execute-vs-validate difference: **empty `reasons` = a verdict**
