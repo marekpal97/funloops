@@ -30,30 +30,25 @@ class Issue(NamedTuple):
 
 def compose(number: int, issue: Issue, role: Role, persona: str,
             codegraph: Codegraph, prime: str = "", trace: str = "") -> str:
-    """The pack text. ``persona`` is the implementer's, already spliced with
-    the constitution (empty for the judge — the one role check is the
-    caller's), and the standing orders ride with it. The map is codegraph's:
-    both tiers, or the degraded block on any failure — never an exception."""
+    """The pack text. The persona (already spliced with the constitution) and
+    the standing orders are the implementer's — the one role check in the
+    pack; resolving the persona at all is the caller's. The map is
+    codegraph's, or the degraded block on any failure — never an exception."""
     try:
-        codegraph.sync()
-        catalog = render_tree(codegraph.files(), codegraph.root)
-        slices = [codegraph.context(issue.title)]
-        slices += [codegraph.node(f) for f in named_files(issue.body, codegraph.root)]
-        repo_map = (f"## Repo map — tier 1: catalog\n\n{catalog}\n\n"
-                    f"## Repo map — tier 2: issue slice\n\n"
-                    + "\n\n".join(s.strip("\n") for s in slices))
+        repo_map = codegraph.repo_map(issue)
     except CodegraphUnavailable as e:
         repo_map = DEGRADED.format(reason=e)
+    implementer = role == "implementer"
     parts = [f"# Dispatch pack — issue #{number} ({role})",
              f"## Issue\n\n{issue.title}\n\n{issue.body.strip()}"]
-    if persona:
+    if implementer:
         parts.append(f"## Persona\n\n{persona}")
     parts.append(repo_map)
     if prime.strip():
         parts.append(f"## Prior lessons\n\n{prime.strip()}")
     if trace.strip():
         parts.append(f"## Run trace\n\n{trace.strip()}")
-    if persona:
+    if implementer:
         parts.append(STANDING_ORDERS)
     return "\n\n".join(parts) + "\n"
 
@@ -62,14 +57,36 @@ class CodegraphUnavailable(Exception):
     """A codegraph verb could not run — the degraded-block trigger."""
 
 
+class FileRecord(NamedTuple):
+    """One entry of ``codegraph files -j`` as the pack reads it: the three
+    fields the catalog draws. Declared here so a shape mismatch degrades."""
+
+    path: str
+    language: str
+    node_count: int
+
+
 class Codegraph:
     """codegraph as a tool the pack invokes: a CLI whose output is spliced,
-    never a database it reads (no sqlite, no version pin, no schema test).
-    The index under ``root/.codegraph`` is machine-local and self-provisioned
-    by ``sync()``, so a fresh worktree maps too."""
+    never a database it reads (no sqlite, no version pin). Its one JSON verb
+    is parsed into ``FileRecord``; a record that does not fit degrades like
+    any other failure. The index under ``root/.codegraph`` is machine-local
+    and self-provisioned by ``sync()``, so a fresh worktree maps too."""
 
     def __init__(self, binary: str, root: Path):
         self.binary, self.root = binary, root
+
+    def repo_map(self, issue: Issue) -> str:
+        """Both tiers for one issue: the catalog, then the slice for the
+        issue's title and every file it names. Raises ``CodegraphUnavailable``
+        on any failure — the caller decides what a missing map means."""
+        self.sync()
+        catalog = render_tree(self.files(), self.root)
+        slices = [self.context(issue.title)]
+        slices += [self.node(f) for f in named_files(issue.body, self.root)]
+        return (f"## Repo map — tier 1: catalog\n\n{catalog}\n\n"
+                f"## Repo map — tier 2: issue slice\n\n"
+                + "\n\n".join(s.strip("\n") for s in slices))
 
     def sync(self) -> None:
         """``init -y`` when the index is absent, else ``sync``; both say nothing."""
@@ -78,16 +95,23 @@ class Codegraph:
         else:
             self._run("init", "-y", ".")
 
-    def files(self) -> list[dict]:
-        """``files -j``, parsed: the tool's own records, each ``{path, language,
-        nodeCount, size}``. An empty or unparseable list is no catalog."""
+    def files(self) -> list[FileRecord]:
+        """``files -j``, parsed into records. An empty list, a non-list, or an
+        entry missing a field is no catalog."""
         try:
             entries = json.loads(self._run("files", "-j", "-p", "."))
         except json.JSONDecodeError as e:
             raise CodegraphUnavailable(f"files: not JSON: {e}") from e
         if not isinstance(entries, list) or not entries:
             raise CodegraphUnavailable("files: empty output")
-        return entries
+        records = []
+        for entry in entries:
+            try:
+                records.append(FileRecord(str(entry["path"]), str(entry["language"]),
+                                          int(entry["nodeCount"])))
+            except (TypeError, KeyError, ValueError) as e:
+                raise CodegraphUnavailable(f"files: unexpected record: {entry!r}") from e
+        return records
 
     def context(self, title: str) -> str:
         """``context --no-code <title>``: the slice around the issue's title."""
@@ -127,19 +151,24 @@ def responsibility(path: Path) -> str:
     return doc.strip().splitlines()[0] if doc and doc.strip() else ""
 
 
-def render_tree(files: list[dict], root: Path) -> str:
+def render_tree(files: list[FileRecord], root: Path) -> str:
     """The catalog: ``Project Structure (N files):`` over a box-drawing tree
-    of the records' paths — sorted, directories before files at each level —
-    each file as ``name (language, N symbols)``, each module annotated with
-    its responsibility. Drawn here, deterministically, from the JSON."""
+    of the records' paths (either separator) — sorted, directories before
+    files at each level — each file as ``name (language, N symbols)``, each
+    module annotated with its responsibility. A path that is both a file and
+    a directory, or listed twice, is no catalog."""
     tree: dict = {}
     for f in files:
         node = tree
-        *dirs, name = f["path"].split("/")
+        *dirs, name = re.split(r"[\\/]", f.path)
         for d in dirs:
             node = node.setdefault(d, {})
-        label = f"{name} ({f['language']}, {f['nodeCount']} symbols)"
-        if note := responsibility(root / f["path"]):
+            if not isinstance(node, dict):
+                raise CodegraphUnavailable(f"files: {f.path!r} is under a file")
+        if name in node:
+            raise CodegraphUnavailable(f"files: {f.path!r} listed twice")
+        label = f"{name} ({f.language}, {f.node_count} symbols)"
+        if note := responsibility(root / f.path):
             label += f" — {note}"
         node[name] = label
     lines = [f"Project Structure ({len(files)} files):", ""]

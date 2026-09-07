@@ -5,9 +5,10 @@ Two seams, both at the verb's stdout:
 - **the pack** — with codegraph replaced by a fake binary that replays
   captured CLI output, the implementer pack is byte-pinned to a golden and
   byte-identical across two runs;
-- **the degraded path** — a missing binary, a verb that exits non-zero, or a
-  read verb that prints nothing all print the marked degraded block and exit
-  0 (never block, never a clean empty map).
+- **the degraded path** — a missing binary, a verb that exits non-zero, a
+  read verb that prints nothing, or a ``files -j`` record off the declared
+  shape all print the marked degraded block and exit 0 (never block, never a
+  clean empty map).
 
 Fixtures under ``fixtures/pack/``: ``repo/`` is the tree the captured output
 describes; ``files.json``, ``context.txt``, ``node-*.txt`` are codegraph
@@ -110,16 +111,17 @@ def test_implementer_pack_is_golden_and_byte_stable(repo, tmp_path, capsys):
 def test_render_tree_draws_depth_and_siblings_from_paths(tmp_path):
     """The catalog is drawn from ``files -j``'s records, not re-parsed from a
     drawn tree: directories before files at every level, names sorted,
-    ``│`` continuation only while a sibling follows, and a module's
-    responsibility appended wherever the path resolves to a docstring."""
+    ``│`` continuation only while a sibling follows, a module's
+    responsibility appended wherever the path resolves to a docstring, and a
+    backslash path (a Windows codegraph) nested like a slash one."""
     (tmp_path / "pkg" / "sub").mkdir(parents=True)
     (tmp_path / "pkg" / "sub" / "deep.py").write_text('"""Deep: the leaf."""\n',
                                                       encoding="utf-8")
-    files = [{"path": "pkg/zeta.py", "language": "python", "nodeCount": 2, "size": 1},
-             {"path": "pkg/sub/deep.py", "language": "python", "nodeCount": 1, "size": 1},
-             {"path": "tests/test_a.py", "language": "python", "nodeCount": 3, "size": 1},
-             {"path": "README.md", "language": "markdown", "nodeCount": 0, "size": 1},
-             {"path": "pkg/alpha.py", "language": "python", "nodeCount": 4, "size": 1}]
+    files = [pack.FileRecord("pkg/zeta.py", "python", 2),
+             pack.FileRecord("pkg/sub/deep.py", "python", 1),
+             pack.FileRecord(r"tests\test_a.py", "python", 3),
+             pack.FileRecord("README.md", "markdown", 0),
+             pack.FileRecord("pkg/alpha.py", "python", 4)]
     assert pack.render_tree(files, tmp_path).splitlines() == [
         "Project Structure (5 files):",
         "",
@@ -132,6 +134,9 @@ def test_render_tree_draws_depth_and_siblings_from_paths(tmp_path):
         "│   └── test_a.py (python, 3 symbols)",
         "└── README.md (markdown, 0 symbols)",
     ]
+    with pytest.raises(pack.CodegraphUnavailable):  # a file that is also a directory
+        pack.render_tree([*files, pack.FileRecord("pkg/alpha.py/x.py", "python", 1)],
+                         tmp_path)
 
 
 def test_missing_codegraph_degrades_and_exits_zero(repo, monkeypatch, capsys):
@@ -146,8 +151,10 @@ def test_missing_codegraph_degrades_and_exits_zero(repo, monkeypatch, capsys):
 @pytest.mark.parametrize("code", [
     "import sys; sys.exit(1)",   # a verb that fails (here: sync/init itself)
     "import sys; sys.exit(0)",   # exits clean with NO output: not a map either
+    # a `files -j` record that is not the declared shape (a renamed key)
+    'print(\'[{"path": "fx/core.py", "language": "python", "node_count": 5}]\')',
 ])
-def test_failing_or_silent_codegraph_degrades(repo, tmp_path, capsys, code):
+def test_failing_silent_or_misshapen_codegraph_degrades(repo, tmp_path, capsys, code):
     binary = fake_binary(tmp_path, code)
     assert cli.main(["pack", "7", "--cwd", str(repo), "--codegraph-bin", str(binary)]) == 0
     out = capsys.readouterr().out

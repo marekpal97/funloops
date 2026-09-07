@@ -600,7 +600,7 @@ def main(argv: list[str] | None = None) -> int:
         issue = pack.Issue(**json.loads(github.run(
             ["issue", "view", str(args.number), "--json", "title,body"], cwd=root)))
         persona = ""
-        if args.role == "implementer":
+        if args.role == "implementer":  # resolution is the CLI's; composition is pack's
             try:
                 # The rules fail closed (find_constitution raises; so does a
                 # persona missing from a docs-less wheel, or one without the
