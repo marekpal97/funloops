@@ -134,11 +134,12 @@ report into the deduped, ordered op list `board sweep --apply` replays.
 Conventions text: `issue-loop.command.md` §Board hygiene.
 
 **`pack.py`** — the dispatch pack (funloops#28; dec-f12457eb, dec-fd12489d,
-dec-d2de831e): `named_files`, `annotate_catalog`, `render_map`, `body`,
-`splice`, `compose`. Composes one dispatch in fixed order; codegraph is a CLI
-whose text is spliced, any failure degrades to a marked block, only the
-constitution fails closed. The order, the map's two tiers and the index
-self-provisioning are the module docstring's.
+dec-d2de831e): `Issue`, `Role`, `compose`, `Codegraph` (the tool object:
+`sync` · `files` · `context` · `node`), and below them `responsibility`,
+`render_tree`, `named_files`, `body`, `splice`. Composes one dispatch in fixed
+order; codegraph is a CLI whose output is spliced (the catalog drawn from
+`files -j`), any failure degrades to a marked block, only the constitution
+fails closed. The order and the map's two tiers are the module docstring's.
 
 **`index_client.py`** — §5.
 

@@ -1,0 +1,20 @@
+[
+  {
+    "path": "fx/__init__.py",
+    "language": "python",
+    "nodeCount": 1,
+    "size": 36
+  },
+  {
+    "path": "fx/core.py",
+    "language": "python",
+    "nodeCount": 5,
+    "size": 182
+  },
+  {
+    "path": "fx/helper.py",
+    "language": "python",
+    "nodeCount": 2,
+    "size": 42
+  }
+]

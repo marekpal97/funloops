@@ -10,8 +10,8 @@ Two seams, both at the verb's stdout:
   0 (never block, never a clean empty map).
 
 Fixtures under ``fixtures/pack/``: ``repo/`` is the tree the captured output
-describes; ``files.txt``, ``context.txt``, ``node-*.txt`` are codegraph
-1.6.0's literal stdout over it (``init -y``, then ``files`` / ``context
+describes; ``files.json``, ``context.txt``, ``node-*.txt`` are codegraph
+1.6.0's literal stdout over it (``init -y``, then ``files -j`` / ``context
 --no-code <title>`` / ``node -f <file> --symbols-only``); ``issue.md`` is the
 issue body; ``persona.md`` / ``constitution.md`` are two-line stand-ins for
 the packaged docs (the persona stand-in carries the constitution marker, as
@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from devloop import cli, github
+from devloop import cli, github, pack
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "pack"
 TITLE = "fx: annotate the catalog with docstrings"
@@ -82,8 +82,10 @@ if verb in ("init", "sync"):
 fix = Path({str(FIX)!r})
 if verb == "node":
     out = fix / f"node-{{Path(args[args.index('-f') + 1]).stem}}.txt"
-elif verb in ("files", "context"):
-    out = fix / f"{{verb}}.txt"
+elif verb == "files" and "-j" in args:
+    out = fix / "files.json"
+elif verb == "context":
+    out = fix / "context.txt"
 else:
     sys.exit(f"unexpected verb {{verb}}")
 sys.stdout.write(out.read_text(encoding="utf-8"))
@@ -103,6 +105,33 @@ def test_implementer_pack_is_golden_and_byte_stable(repo, tmp_path, capsys):
     assert log.read_text().split() == ["init", "files", "context", "node", "node"]
     assert cli.main(argv) == 0
     assert capsys.readouterr().out == first
+
+
+def test_render_tree_draws_depth_and_siblings_from_paths(tmp_path):
+    """The catalog is drawn from ``files -j``'s records, not re-parsed from a
+    drawn tree: directories before files at every level, names sorted,
+    ``│`` continuation only while a sibling follows, and a module's
+    responsibility appended wherever the path resolves to a docstring."""
+    (tmp_path / "pkg" / "sub").mkdir(parents=True)
+    (tmp_path / "pkg" / "sub" / "deep.py").write_text('"""Deep: the leaf."""\n',
+                                                      encoding="utf-8")
+    files = [{"path": "pkg/zeta.py", "language": "python", "nodeCount": 2, "size": 1},
+             {"path": "pkg/sub/deep.py", "language": "python", "nodeCount": 1, "size": 1},
+             {"path": "tests/test_a.py", "language": "python", "nodeCount": 3, "size": 1},
+             {"path": "README.md", "language": "markdown", "nodeCount": 0, "size": 1},
+             {"path": "pkg/alpha.py", "language": "python", "nodeCount": 4, "size": 1}]
+    assert pack.render_tree(files, tmp_path).splitlines() == [
+        "Project Structure (5 files):",
+        "",
+        "├── pkg",
+        "│   ├── sub",
+        "│   │   └── deep.py (python, 1 symbols) — Deep: the leaf.",
+        "│   ├── alpha.py (python, 4 symbols)",
+        "│   └── zeta.py (python, 2 symbols)",
+        "├── tests",
+        "│   └── test_a.py (python, 3 symbols)",
+        "└── README.md (markdown, 0 symbols)",
+    ]
 
 
 def test_missing_codegraph_degrades_and_exits_zero(repo, monkeypatch, capsys):

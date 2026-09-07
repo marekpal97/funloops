@@ -44,6 +44,7 @@ import os
 import subprocess
 import tomllib
 from pathlib import Path
+from typing import get_args
 
 from devloop import board, dag, github, index_client, pack, trajectory, triage
 
@@ -403,7 +404,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_pack = sub.add_parser("pack", help="compose one dispatch's context and print it", parents=[common])
     p_pack.add_argument("number", type=int)
-    p_pack.add_argument("--role", choices=["implementer", "judge"], default="implementer",
+    p_pack.add_argument("--role", choices=get_args(pack.Role), default="implementer",
                         help="implementer: issue + persona/constitution + repo map + "
                              "standing orders; judge: issue + repo map")
     p_pack.add_argument("--cwd", default=".",
@@ -596,8 +597,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if failed else 0
     elif args.cmd == "pack":
         root = Path(args.cwd).resolve()
-        issue = json.loads(github.run(["issue", "view", str(args.number),
-                                       "--json", "title,body"], cwd=root))
+        issue = pack.Issue(**json.loads(github.run(
+            ["issue", "view", str(args.number), "--json", "title,body"], cwd=root)))
         persona = ""
         if args.role == "implementer":
             try:
@@ -610,11 +611,9 @@ def main(argv: list[str] | None = None) -> int:
             except (FileNotFoundError, ValueError) as exc:
                 print(json.dumps({"error": str(exc)}))
                 return 2
-        repo_map = pack.render_map(args.codegraph_bin, root, issue["title"],
-                                   pack.named_files(issue["body"], root))
         print(pack.compose(
-            role=args.role, number=args.number, issue=issue, persona=persona,
-            repo_map=repo_map,
+            args.number, issue, args.role, persona,
+            pack.Codegraph(args.codegraph_bin, root),
             prime=Path(args.prime).read_text(encoding="utf-8") if args.prime else "",
             trace=Path(args.trace).read_text(encoding="utf-8") if args.trace else "",
         ), end="")

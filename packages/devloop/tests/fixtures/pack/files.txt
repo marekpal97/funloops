@@ -1,8 +1,0 @@
-
-Project Structure (3 files):
-
-└── fx
-    ├── __init__.py (python, 1 symbols)
-    ├── core.py (python, 5 symbols)
-    └── helper.py (python, 2 symbols)
-
