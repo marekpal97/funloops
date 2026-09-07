@@ -146,7 +146,8 @@ two blocks into the implementer prompt:
    instead of a pack means the constitution did not resolve: STOP and surface
    it — dispatching without the rules is the fail-open its own rule names.
    Amendments to either layer are a human's PR; `watched_paths` lands any
-   `docs/agents/` diff in the skim lane.
+   `docs/agents/` diff in the skim lane. An issue names a file for the pack's
+   tier-2 slice by backticking its repo-relative path.
 2. **The epic's north-star block, verbatim.** The epic is the `Epic: #N` field in
    the issue's pipe header. When that epic's body carries a north-star block (a
    `**Goal:**` / `**Anti-goals:**` pair), read it with `gh issue view <epic>` and

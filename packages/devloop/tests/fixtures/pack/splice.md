@@ -34,7 +34,7 @@ Rules:
 
 2. **Compose before you build.** Before you write anything, check whether the system already has it: a CLI verb, a tool, a hook, a sibling package. Use it. If you borrow a pattern from elsewhere, say why its constraints hold here. A parallel re-implementation is the most expensive diff that still passes tests.
 
-3. **Objects carry the logic.** Model the domain as a few objects with the right methods and parameters, so the logic reads from the call site. Do not thread the same arguments through a chain of free functions. Do not add passive dataclasses or one-off classes that only hold fields. A state or record that crosses a function boundary is a named type, not a string, a tuple, or a dict.
+3. **Objects carry the logic.** Model the domain as a few objects with the right methods and parameters, so the logic reads from the call site. Do not thread the same arguments through a chain of free functions. Do not add passive dataclasses or one-off classes as a habit. A record that crosses a function boundary travels as one declared record type, not as a bare string, tuple, or dict. That type is a surface: add it once, at the boundary, and reuse it.
 
 4. **Key logic on top, plumbing below.** A module reads top-down. The substance is short and exposed at the top. Parsing, path handling, header stripping and other mundane work sit lower, behind small names, and a reader can follow the logic without reading them.
 
@@ -44,7 +44,8 @@ Rules:
 
 7. **Contracts are declared, not narrated.** A convention stated in prose gets a schema, a declaration, or a test. Data another stage consumes travels as a declared shape, never as prose the next stage re-parses. Siblings share one signature; a special case at the call site is a defect. Docstrings say what; decisions say why.
 
-8. **Check what the substrate already records before adding a recorder** — the hook layer, git, and the tracker are already recording; a second recorder of the same event is a parallel surface with its own drift.
-9. **No platform assumptions in tests** — paths, line endings, and casing differ off Linux; a test that bakes them in fails on the first machine that is not the author's.
+8. **Check what the substrate already records before you add a recorder.** The hook layer, git, and the tracker already record most events. A second recorder of the same event is a parallel surface with its own drift.
+
+9. **No platform assumptions in tests.** Paths, line endings, and casing differ off Linux. A test that bakes them in fails on the first machine that is not the author's.
 
 Not lazy about: understanding the problem (read it fully and trace the real flow before picking a rung, a small diff you don't understand is just laziness dressed up as efficiency), input validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs (the platform is never the spec ideal, a clock drifts, a sensor reads off), anything explicitly requested. Lazy code without its check is unfinished: non-trivial logic leaves ONE runnable check behind, the smallest thing that fails if the logic breaks (an assert-based demo/self-check or one small test file; no frameworks, no fixtures). Trivial one-liners need no test.

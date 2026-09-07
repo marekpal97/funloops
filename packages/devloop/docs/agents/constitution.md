@@ -19,7 +19,7 @@
 
 2. **Compose before you build.** Before you write anything, check whether the system already has it: a CLI verb, a tool, a hook, a sibling package. Use it. If you borrow a pattern from elsewhere, say why its constraints hold here. A parallel re-implementation is the most expensive diff that still passes tests.
 
-3. **Objects carry the logic.** Model the domain as a few objects with the right methods and parameters, so the logic reads from the call site. Do not thread the same arguments through a chain of free functions. Do not add passive dataclasses or one-off classes that only hold fields. A state or record that crosses a function boundary is a named type, not a string, a tuple, or a dict.
+3. **Objects carry the logic.** Model the domain as a few objects with the right methods and parameters, so the logic reads from the call site. Do not thread the same arguments through a chain of free functions. Do not add passive dataclasses or one-off classes as a habit. A record that crosses a function boundary travels as one declared record type, not as a bare string, tuple, or dict. That type is a surface: add it once, at the boundary, and reuse it.
 
 4. **Key logic on top, plumbing below.** A module reads top-down. The substance is short and exposed at the top. Parsing, path handling, header stripping and other mundane work sit lower, behind small names, and a reader can follow the logic without reading them.
 

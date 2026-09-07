@@ -21,8 +21,7 @@ Role = Literal["implementer", "judge"]
 
 
 class Issue(NamedTuple):
-    """The issue as it crosses from ``gh`` into the pack — a NamedTuple because
-    the record is two fields and no behaviour; a class would be a passive one."""
+    """The issue as it crosses from ``gh`` into the pack: title and body."""
 
     title: str
     body: str
@@ -68,10 +67,11 @@ class FileRecord(NamedTuple):
 
 class Codegraph:
     """codegraph as a tool the pack invokes: a CLI whose output is spliced,
-    never a database it reads (no sqlite, no version pin). Its one JSON verb
-    is parsed into ``FileRecord``; a record that does not fit degrades like
-    any other failure. The index under ``root/.codegraph`` is machine-local
-    and self-provisioned by ``sync()``, so a fresh worktree maps too."""
+    never a database it reads (no sqlite, no version pin). The pack depends
+    on the record fields of ``files -j``; that dependency is checked where
+    the JSON is parsed into ``FileRecord``, and a shape mismatch degrades.
+    The index under ``root/.codegraph`` is machine-local and self-provisioned
+    by ``sync()``, so a fresh worktree maps too."""
 
     def __init__(self, binary: str, root: Path):
         self.binary, self.root = binary, root
