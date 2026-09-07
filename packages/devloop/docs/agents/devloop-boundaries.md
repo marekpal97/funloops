@@ -135,9 +135,11 @@ Conventions text: `issue-loop.command.md` §Board hygiene.
 
 **`pack.py`** — the dispatch pack (funloops#28; dec-f12457eb, dec-fd12489d,
 dec-d2de831e): `named_files`, `annotate_catalog`,
-`render_map`, `body`, `compose`. Composes one dispatch's context in a fixed
-order — issue body; persona with the constitution injected (implementer
-only); the two-tier repo map; the host extension's prime block and trace
+`render_map`, `body`, `splice`, `compose`. Composes one dispatch's context in
+a fixed order — issue body; persona with the resolved constitution (packaged,
+then the host overlay) spliced in at its one marker line (implementer only;
+a markerless persona fails closed); the two-tier repo map; the host
+extension's prime block and trace
 when supplied; drill-down standing orders (implementer only) — and `cli`
 prints it. The map is **codegraph's CLI text, spliced**: tier 1 is
 `codegraph files` with each module's docstring first line appended as its

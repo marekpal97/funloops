@@ -140,9 +140,8 @@ two blocks into the implementer prompt:
 1. **The pack.** `uv run devloop pack <N> --role implementer --cwd <worktree>
    [--trace FILE]` composes the dispatch context; splice its stdout **verbatim**
    (the judge's copy is `--role judge`: issue and repo map, no persona). In
-   order: the issue body; the body of the **vendored** `ponytail-persona.md`
-   beside this file with the constitution injected (the marker lands with the
-   persona ticket; until then the constitution follows the persona body) —
+   order: the issue body; the body of `ponytail-persona.md` beside this file
+   with the constitution injected at its one `<!-- constitution -->` line —
    the packaged `constitution.md` first, then the host repo's own
    `docs/agents/constitution.md` when it carries one: a repo overlay
    **extends** the default, **never replaces** it (dec-1746aec3;
