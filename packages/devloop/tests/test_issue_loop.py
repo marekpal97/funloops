@@ -6,10 +6,11 @@ and strings — no gh, no git, no network.
 
 import json
 import sqlite3
+import sys
 
 import pytest
 
-from devloop import cli, dag, gates, index_client, triage
+from devloop import cli, dag, gates, github, index_client, triage
 from devloop.trajectory import mint, prime
 
 # ---------------------------------------------------------------------------
@@ -182,6 +183,104 @@ def test_command_gate_timeout_is_a_result_not_a_traceback(tmp_path):
     result = gates.run_command_gate(gate, tmp_path)
     assert result["passed"] is False
     assert "timed out" in result["summary"]
+
+
+# ---------------------------------------------------------------------------
+# verify rail (#40, dec-2f5bf66a) — an issue body's `verify:` lines run as
+# per-issue command gates. Two seams: the pure parse (body → (command,
+# expected-stdout) pairs) and `check --issue`'s JSON stdout + exit code with
+# the gh fetch replaced by a fixture body.
+
+# The grammar in the wild (issues #28/#39/#40): a checklist item, the command
+# backticked, an optional ` => <text>` INSIDE the backticks. The prose lines
+# mention `verify:` too and must NOT parse.
+VERIFY_BODY = """\
+## What to build
+A criterion written as `verify: <command>` is executed by the rail.
+- New rail verb reads the `verify:` lines from its acceptance criteria.
+
+## Acceptance criteria
+- [ ] AC1: prose only — stays with the judge
+- [x] verify: `! test -f packages/devloop/devloop/codemap.py`
+- [ ] verify: `uv run devloop pack 28 --role implementer => Project Structure`
+* verify: `grep -qE 'map(\\.notes)?\\.json$' x`
+verify: `uv run devloop check --issue 25 --cwd . => no verify lines`
+"""
+
+
+def test_parse_verify_lines_takes_the_checklist_grammar():
+    assert gates.parse_verify_lines(VERIFY_BODY) == [
+        ("! test -f packages/devloop/devloop/codemap.py", ""),
+        ("uv run devloop pack 28 --role implementer", "Project Structure"),
+        ("grep -qE 'map(\\.notes)?\\.json$' x", ""),
+        ("uv run devloop check --issue 25 --cwd .", "no verify lines"),
+    ]
+    assert gates.parse_verify_lines("no runnable criteria here") == []
+
+
+PY = f'"{sys.executable}" -c'
+
+
+def _issue_body(monkeypatch, body: str) -> None:
+    """The gh seam: `check --issue` reads the body exactly as `pack` does."""
+    monkeypatch.delenv(gates.VERIFY_ENV, raising=False)
+    monkeypatch.setattr(github, "run", lambda args, cwd=None: json.dumps({"body": body}))
+
+
+def test_verify_rail_one_passing_one_failing_line(tmp_path, monkeypatch, capsys):
+    """AC1: exactly two GateResults, one passed and one failed, the failed one
+    naming its command; the verb exits 1 because a line is red."""
+    failing = f'{PY} "import sys; sys.exit(3)"'
+    _issue_body(monkeypatch, f"- [ ] verify: `{PY} \"print(1)\"`\n- [ ] verify: `{failing}`\n")
+    rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert out["issue"] == 7
+    assert [(r["id"], r["kind"], r["passed"]) for r in out["results"]] == [
+        ("verify:1", "command", True), ("verify:2", "command", False)]
+    assert failing in out["results"][1]["summary"]
+    assert set(out["results"][1]) >= {"id", "kind", "passed", "summary", "detail"}
+    assert out["summary"] == "1/2 verify lines passed"
+
+
+def test_verify_rail_missing_binary_is_named_never_skipped(tmp_path, monkeypatch, capsys):
+    """AC2: a command absent from PATH is a FAILED result whose summary names
+    the binary (the shell's 127 / cmd.exe's 9009 'not found' line)."""
+    _issue_body(monkeypatch, "- [ ] verify: `devloop-no-such-binary-xq --flag`\n")
+    rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert out["results"][0]["passed"] is False
+    assert "devloop-no-such-binary-xq" in out["results"][0]["summary"]
+
+
+def test_verify_rail_expected_stdout_substring(tmp_path, monkeypatch, capsys):
+    """` => <text>` requires the text in stdout — exit 0 alone is not a pass."""
+    _issue_body(monkeypatch, f"- [ ] verify: `{PY} \"print('hello')\" => hello`\n"
+                             f"- [ ] verify: `{PY} \"print('hello')\" => nope`\n")
+    rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert [r["passed"] for r in out["results"]] == [True, False]
+    assert "nope" in out["results"][1]["summary"]
+
+
+def test_verify_rail_with_no_lines_says_so_and_exits_zero(tmp_path, monkeypatch, capsys):
+    _issue_body(monkeypatch, "- [ ] AC1: prose only\n")
+    rc = cli.main(["check", "--issue", "25", "--cwd", str(tmp_path)])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out == {"issue": 25, "results": [], "summary": "no verify lines"}
+
+
+def test_verify_rail_refuses_to_recurse_into_itself(tmp_path, monkeypatch, capsys):
+    """A verify line that runs `check --issue N` on its own issue would fork
+    forever; the nested call is an error (exit 2), never a silent pass."""
+    _issue_body(monkeypatch, "- [ ] verify: `true`\n")
+    monkeypatch.setenv(gates.VERIFY_ENV, "7")
+    rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
+    assert rc == 2
+    assert "recurs" in json.loads(capsys.readouterr().out)["error"]
 
 
 # ---------------------------------------------------------------------------
