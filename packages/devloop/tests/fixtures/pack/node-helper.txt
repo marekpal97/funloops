@@ -1,0 +1,6 @@
+**fx/helper.py** — 1 symbol, used by 1 file: fx/core.py
+
+**Symbols**
+- `fmt` (function) (x: int) -> str — :1
+
+> Drop `symbolsOnly` (or pass `offset`/`limit`) to read the source, like Read.

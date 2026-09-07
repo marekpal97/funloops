@@ -122,8 +122,8 @@ module/dir; still nothing → let the fusion carry it.
 The rail reads the derived index read-only, fuses both legs over `[loop-run]`
 notes with RRF, weights them by outcome, and emits JSON: `block` (markdown to
 splice), `primed`, `served` (the insight and decision ids surfaced). It always
-serves what it finds; there is no held-out run. **Splice `block` verbatim into
-the implementer prompt, adjacent to the dispatch blocks below**, and add this
+serves what it finds; there is no held-out run. **Write `block` to a file and pass it to
+the pack below as `--prime <file>`**, and add this
 standing order: *Check prior decisions for every file you touch
 (`weave_graph(file_path=…, filter='decisions_for_file')`; fall back to `weave
 decisions --file <path>` if MCP is absent). Do not re-litigate a settled
@@ -137,32 +137,33 @@ to `context_served(source='loop-prime')`; `--dry-run` suppresses that write.
 **Dispatch blocks — every implementer and fix-round dispatch, no toggle.** Splice
 two blocks into the implementer prompt:
 
-1. **The persona, with the constitution injected.** The body of the **vendored**
-   `ponytail-persona.md` beside this file (below its provenance header) is the
-   single splice container: inject the resolved constitution at the persona's
-   injection marker (the marker lands with the persona ticket; until then,
-   append the constitution after the persona body). Splice its text; never
-   duplicate it here.
+1. **The pack.** `uv run devloop pack <N> --role implementer --cwd <worktree>
+   <set-flags>` composes the dispatch context; splice its stdout **verbatim**
+   (the judge's copy is `--role judge`: issue and repo map, no persona). In
+   order: the issue body; the body of the **vendored** `ponytail-persona.md`
+   beside this file with the constitution injected (the marker lands with the
+   persona ticket; until then the constitution follows the persona body) —
+   the packaged `constitution.md` first, then the host repo's own
+   `docs/agents/constitution.md` when it carries one: a repo overlay
+   **extends** the default, **never replaces** it (dec-1746aec3;
+   `cli.find_constitution`, also `devloop config`'s `constitution` array);
+   the repo map from codegraph's CLI — whole-repo catalog, then the issue's
+   slice — or, with no working codegraph, a block marked DEGRADED that tells
+   the implementer to gather the layout itself; the drill-down standing
+   orders. `{"error": …}` instead of a pack means the constitution did not
+   resolve: STOP and surface it — dispatching without the rules is the
+   fail-open its own rule names. Amendments to either layer are a human's PR;
+   `watched_paths` lands any `docs/agents/` diff in the skim lane.
 2. **The epic's north-star block, verbatim.** The epic is the `Epic: #N` field in
    the issue's pipe header. When that epic's body carries a north-star block (a
    `**Goal:**` / `**Anti-goals:**` pair), read it with `gh issue view <epic>` and
    splice it **unedited** — it is the standard the judge scores against, so
    paraphrasing moves the target. No epic or no block: splice nothing.
 
-**Resolving the constitution.** The `constitution` array in `devloop config`
-output is the resolved reading order: the packaged `constitution.md` first, then
-the host repo's own `docs/agents/constitution.md` when it carries one — a repo
-overlay **extends** the default, **never replaces** it (dec-1746aec3;
-`cli.find_constitution` behind the verb). Concatenate each listed file's body
-(below its provenance header) and inject it per block 1. If `constitution`
-carries an `error` instead of paths, STOP and surface it — dispatching without
-the rules is the fail-open its own rule names. Amendments to either layer are a
-human's PR; `watched_paths` lands any `docs/agents/` diff in the skim lane.
-
 Read the issue: `gh issue view <N> --comments`. Then dispatch an **implementer
 subagent** with worktree isolation (Agent tool, `isolation: "worktree"`) whose
-prompt contains, verbatim: the issue body, the acceptance criteria, the branch
-name (`<branch_prefix><N>`), the two dispatch blocks, and these standing orders:
+prompt contains, verbatim: the two dispatch blocks, the branch name
+(`<branch_prefix><N>`), and these standing orders:
 
 - Read the repo's architecture and design docs for the areas you touch before
   editing them; a documented standard overrides your instinct.

@@ -28,6 +28,8 @@ Subcommands:
   board      — doctor: lint one or more repos' boards against the grammar
                dag.py reads (JSON report, exit 1 on errors); sweep: replay
                the mechanical fixes (--plan by default, --apply runs them)
+  pack       — compose one dispatch's context (issue, persona + constitution,
+               the repo map spliced from codegraph's CLI) and print it
 
 Stdlib only. Config: the host repo's docs/agents/loop.toml, found by walking up
 from the cwd, else the copy shipped with the package (see find_config).
@@ -41,7 +43,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from devloop import board, dag, github, index_client, trajectory, triage
+from devloop import board, dag, github, index_client, pack, trajectory, triage
 
 # Imported by name: `main` binds a local `gates` in the trajectory branch,
 # which would shadow a module of that name for the whole function.
@@ -59,6 +61,7 @@ CONFIG_REL = Path("docs") / "agents" / "loop.toml"
 PACKAGE_CONFIG = REPO_ROOT / CONFIG_REL
 CONSTITUTION_REL = Path("docs") / "agents" / "constitution.md"
 PACKAGE_CONSTITUTION = REPO_ROOT / CONSTITUTION_REL
+PACKAGE_PERSONA = REPO_ROOT / "docs" / "agents" / "ponytail-persona.md"
 
 
 def _find_upward(rel: Path, start: Path | None = None) -> Path | None:
@@ -391,6 +394,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          help="sweep: restrict to these op kinds (create_label, add_label, "
                               "remove_label, add_blocker, retitle, delete_label)")
 
+    p_pack = sub.add_parser("pack", help="compose one dispatch's context and print it", parents=[common])
+    p_pack.add_argument("number", type=int)
+    p_pack.add_argument("--role", choices=["implementer", "judge"], default="implementer",
+                        help="implementer: issue + persona/constitution + repo map + "
+                             "standing orders; judge: issue + repo map")
+    p_pack.add_argument("--cwd", default=".",
+                        help="the worktree to map (its .codegraph index is self-provisioned)")
+    p_pack.add_argument("--codegraph-bin", default=None,
+                        help="codegraph executable (default: $CODEGRAPH_BIN, else "
+                             "`codegraph` on PATH); absent or failing → a degraded block")
+    p_pack.add_argument("--prime", default=None, metavar="FILE",
+                        help="host extension: file with the prime block to splice")
+    p_pack.add_argument("--trace", default=None, metavar="FILE",
+                        help="host extension: file with the run's threaded trace to splice")
+
     return parser
 
 
@@ -554,4 +572,26 @@ def main(argv: list[str] | None = None) -> int:
                 failed.append({**op, "error": (e.stderr or "").strip()})
         print(json.dumps({"applied": applied, "failed": failed}, indent=2))
         return 1 if failed else 0
+    elif args.cmd == "pack":
+        root = Path(args.cwd).resolve()
+        issue = json.loads(github.run(["issue", "view", str(args.number),
+                                       "--json", "title,body"]))
+        try:
+            # The rules fail closed (find_constitution raises; so does a
+            # persona missing from a docs-less wheel): an error marker, never
+            # a pack that dispatches without them.
+            persona = pack.body(PACKAGE_PERSONA.read_text(encoding="utf-8"))
+            constitution = [pack.body(p.read_text(encoding="utf-8"))
+                            for p in find_constitution(root)]
+        except FileNotFoundError as exc:
+            print(json.dumps({"error": str(exc)}))
+            return 2
+        repo_map = pack.render_map(pack.codegraph_bin(args.codegraph_bin), root,
+                                   issue["title"], pack.named_files(issue["body"], root))
+        print(pack.compose(
+            role=args.role, number=args.number, issue=issue, persona=persona,
+            constitution=constitution, repo_map=repo_map,
+            prime=Path(args.prime).read_text(encoding="utf-8") if args.prime else "",
+            trace=Path(args.trace).read_text(encoding="utf-8") if args.trace else "",
+        ), end="")
     return 0

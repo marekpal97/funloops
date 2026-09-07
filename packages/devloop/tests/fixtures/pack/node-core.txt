@@ -1,0 +1,7 @@
+**fx/core.py** — 2 symbols, no other indexed file depends on it
+
+**Symbols**
+- `LIMIT` (variable) = 5 — :10
+- `run` (function) (x: int) -> str — :13
+
+> Drop `symbolsOnly` (or pass `offset`/`limit`) to read the source, like Read.

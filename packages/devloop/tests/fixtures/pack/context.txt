@@ -1,0 +1,4 @@
+## Code Context
+
+**Query:** fx: annotate the catalog with docstrings
+

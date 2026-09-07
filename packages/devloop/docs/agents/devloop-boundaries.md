@@ -26,7 +26,7 @@ The loop is two planes with one seam between them:
 
 The seam between the planes is the **CLI subcommand surface** (JSON on stdout,
 exit codes): `config · plan · claim · release · check · validate · prime ·
-triage · trajectory · board`. That surface is the package's one external interface — the
+triage · trajectory · board · pack`. That surface is the package's one external interface — the
 orchestrator knows nothing else. It is reached through the `devloop` console
 script or `python -m devloop`; the two are one entry point, pinned byte-equal
 by `test_funloops_packaging.py`.
@@ -47,6 +47,7 @@ packages/devloop/
     cli.py             entry point: argparse, config resolution, dispatch
     dag.py             tracker-as-DAG math + the body-grammar it parses
     board.py           board hygiene: the grammar dag.py reads, as checks + sweep ops
+    pack.py            the dispatch pack: issue + persona/constitution + codegraph's CLI text
     gates.py           Gate protocol + deterministic executors
     triage.py          risk-lane classification of shipped PRs
     paths.py           leaf util: the three-form path matcher
@@ -60,7 +61,7 @@ packages/devloop/
   tests/
 ```
 
-Nine public names. `trajectory/` is **one module** with two implementation
+Ten public names. `trajectory/` is **one module** with two implementation
 files — its interface is what `trajectory/__init__.py` re-exports; `mint.py`
 and `prime.py` are internal seams, not siblings (§4). There is no `config.py`,
 no `utils.py`, no `git.py` (§2.1, §6). `docs/agents/` is the other plane's home
@@ -131,6 +132,25 @@ sweep **op** (`create_label · delete_label · add_label · remove_label ·
 retitle · add_blocker`). `doctor()` runs them all; `plan_sweep()` turns a
 report into the deduped, ordered op list `board sweep --apply` replays.
 Conventions text: `issue-loop.command.md` §Board hygiene.
+
+**`pack.py`** — the dispatch pack (funloops#28; dec-f12457eb, dec-fd12489d,
+dec-d2de831e): `codegraph_bin`, `named_files`, `annotate_catalog`,
+`render_map`, `body`, `compose`. Composes one dispatch's context in a fixed
+order — issue body; persona with the constitution injected (implementer
+only); the two-tier repo map; the host extension's prime block and trace
+when supplied; drill-down standing orders (implementer only) — and `cli`
+prints it. The map is **codegraph's CLI text, spliced**: tier 1 is
+`codegraph files` with each module's docstring first line appended as its
+responsibility (read from the source file; no sidecar), tier 2 is `context
+--no-code <title>` plus `node --file … --symbols-only` for every backticked
+existing file the issue body names. devloop reads no codegraph SQLite, pins
+no version, carries no schema test; the machine-local index is
+self-provisioned by CLI call (`init -y` when `.codegraph/` is absent, `sync`
+otherwise; `--codegraph-bin` → `$CODEGRAPH_BIN` → PATH). Any codegraph
+failure degrades to a block marked DEGRADED that asks the model to gather the
+layout itself — the pack never blocks; only the constitution failing to
+resolve is an `{"error": …}` (fail closed, as `config`). No committed
+artifact, no config key: the knobs are argparse.
 
 **`index_client.py`** — §5.
 
