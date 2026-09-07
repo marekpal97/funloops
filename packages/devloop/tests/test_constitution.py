@@ -108,7 +108,7 @@ def test_an_identical_copy_in_another_checkout_is_served_once(tmp_path):
 def test_a_missing_packaged_default_is_loud(tmp_path, monkeypatch):
     """A wheel that shipped no docs/ must not resolve to a nonexistent path
     the orchestrator splices as silence — losing every rule unannounced is
-    the fail-open rule 5 names. Resolution refuses instead."""
+    the fail-open rule 6 names. Resolution refuses instead."""
     monkeypatch.setattr(cli, "PACKAGE_CONSTITUTION",
                         tmp_path / "absent" / "constitution.md")
     with pytest.raises(FileNotFoundError):

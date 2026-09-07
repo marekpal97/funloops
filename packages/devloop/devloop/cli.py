@@ -112,7 +112,7 @@ def find_constitution(start: Path | None = None) -> list[Path]:
     shipped no ``docs/`` (the wheel packages only ``devloop/``) must not hand
     the orchestrator a path that splices as silence — a dispatch that loses
     every rule unannounced is the fail-open the constitution's own
-    rule 5 names. loop.toml's missing-file degrade is honest because defaults
+    rule 6 names. loop.toml's missing-file degrade is honest because defaults
     exist in code; the constitution has no in-code fallback.
     """
     if not PACKAGE_CONSTITUTION.is_file():
