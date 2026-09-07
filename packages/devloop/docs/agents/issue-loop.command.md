@@ -139,20 +139,14 @@ two blocks into the implementer prompt:
 
 1. **The pack.** `uv run devloop pack <N> --role implementer --cwd <worktree>
    [--trace FILE]` composes the dispatch context; splice its stdout **verbatim**
-   (the judge's copy is `--role judge`: issue and repo map, no persona). In
-   order: the issue body; the body of `ponytail-persona.md` beside this file
-   with the constitution injected at its one `<!-- constitution -->` line —
-   the packaged `constitution.md` first, then the host repo's own
-   `docs/agents/constitution.md` when it carries one: a repo overlay
-   **extends** the default, **never replaces** it (dec-1746aec3;
-   `cli.find_constitution`, also `devloop config`'s `constitution` array);
-   the repo map from codegraph's CLI — whole-repo catalog, then the issue's
-   slice — or, with no working codegraph, a block marked DEGRADED that tells
-   the implementer to gather the layout itself; the drill-down standing
-   orders. `{"error": …}` instead of a pack means the constitution did not
-   resolve: STOP and surface it — dispatching without the rules is the
-   fail-open its own rule names. Amendments to either layer are a human's PR;
-   `watched_paths` lands any `docs/agents/` diff in the skim lane.
+   (the judge's copy is `--role judge`: issue and repo map, no persona). It
+   carries `ponytail-persona.md` beside this file with the packaged
+   `constitution.md` injected, then the host's own `docs/agents/constitution.md`:
+   a repo overlay **extends** the default, **never replaces** it. `{"error": …}`
+   instead of a pack means the constitution did not resolve: STOP and surface
+   it — dispatching without the rules is the fail-open its own rule names.
+   Amendments to either layer are a human's PR; `watched_paths` lands any
+   `docs/agents/` diff in the skim lane.
 2. **The epic's north-star block, verbatim.** The epic is the `Epic: #N` field in
    the issue's pipe header. When that epic's body carries a north-star block (a
    `**Goal:**` / `**Anti-goals:**` pair), read it with `gh issue view <epic>` and

@@ -605,10 +605,8 @@ def main(argv: list[str] | None = None) -> int:
                 # persona missing from a docs-less wheel, or one without the
                 # marker): an error marker, never a pack that dispatches
                 # without them.
-                persona = pack.splice(
-                    pack.body(PACKAGE_PERSONA.read_text(encoding="utf-8")),
-                    [pack.body(p.read_text(encoding="utf-8"))
-                     for p in find_constitution(root)])
+                persona = pack.splice(pack.body(PACKAGE_PERSONA),
+                                      [pack.body(p) for p in find_constitution(root)])
             except (FileNotFoundError, ValueError) as exc:
                 print(json.dumps({"error": str(exc)}))
                 return 2

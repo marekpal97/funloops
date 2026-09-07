@@ -134,25 +134,11 @@ report into the deduped, ordered op list `board sweep --apply` replays.
 Conventions text: `issue-loop.command.md` §Board hygiene.
 
 **`pack.py`** — the dispatch pack (funloops#28; dec-f12457eb, dec-fd12489d,
-dec-d2de831e): `named_files`, `annotate_catalog`,
-`render_map`, `body`, `splice`, `compose`. Composes one dispatch's context in
-a fixed order — issue body; persona with the resolved constitution (packaged,
-then the host overlay) spliced in at its one marker line (implementer only;
-a markerless persona fails closed); the two-tier repo map; the host
-extension's prime block and trace
-when supplied; drill-down standing orders (implementer only) — and `cli`
-prints it. The map is **codegraph's CLI text, spliced**: tier 1 is
-`codegraph files` with each module's docstring first line appended as its
-responsibility (read from the source file; no sidecar), tier 2 is `context
---no-code <title>` plus `node --file … --symbols-only` for every backticked
-existing file the issue body names. devloop reads no codegraph SQLite, pins
-no version, carries no schema test; the machine-local index is
-self-provisioned by CLI call (`init -y` when `.codegraph/` is absent, `sync`
-otherwise; `--codegraph-bin` → `$CODEGRAPH_BIN` → PATH). Any codegraph
-failure degrades to a block marked DEGRADED that asks the model to gather the
-layout itself — the pack never blocks; only the constitution failing to
-resolve is an `{"error": …}` (fail closed, as `config`). No committed
-artifact, no config key: the knobs are argparse.
+dec-d2de831e): `named_files`, `annotate_catalog`, `render_map`, `body`,
+`splice`, `compose`. Composes one dispatch in fixed order; codegraph is a CLI
+whose text is spliced, any failure degrades to a marked block, only the
+constitution fails closed. The order, the map's two tiers and the index
+self-provisioning are the module docstring's.
 
 **`index_client.py`** — §5.
 

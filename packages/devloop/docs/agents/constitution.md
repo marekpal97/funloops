@@ -1,11 +1,7 @@
 <!--
   devloop's packaged constitution — what holds in the code, for any repo
-  devloop installs into. `devloop pack --role implementer` inserts the body
-  below at the persona's constitution marker line (ponytail-persona.md), so
-  it rides every implementer and fix-round dispatch. An installing repo
-  inherits this file with zero authoring and EXTENDS it via its own
-  docs/agents/constitution.md, resolved upward like loop.toml and inserted
-  after these rules — never substituted. Resolution: cli.find_constitution.
+  devloop installs into; inserted at the persona's marker by `devloop pack`;
+  a repo extends it via its own docs/agents/constitution.md (cli.find_constitution).
 
   A rule is packaged iff it holds for any repo and its text names the failure
   it prevents in general terms, needing no citation. Provenance is a vault

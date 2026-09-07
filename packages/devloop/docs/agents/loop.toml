@@ -101,29 +101,20 @@ required = true
 cmd = "uv run pytest -x -q"
 timeout_sec = 1200
 
-# The one judgment stage (dec-611cbd8a, dec-2d4bc03d): a fresh judge returns
-# criteria[] verdicts (the contract — the issue's acceptance criteria) plus
-# findings[] (everything else it saw, advisory). The gate fails iff a
-# criterion is not-met per `threshold`; findings never block — they go to
-# the PR body and the triage lane.
+# The one judgment stage: a fresh judge returns criteria[] verdicts against
+# the issue's acceptance criteria plus advisory findings[]. Fails iff a
+# criterion is not-met per `threshold`; findings never block.
 [[gates]]
 id = "judge"
 kind = "judge"
 required = true
 threshold = "all"        # all | majority — of the issue's acceptance criteria
 
-# simplify runs LAST, after the judge, and is safe by construction: it can only
-# SHRINK an already-verified diff and must preserve verified behavior. The
-# orchestrator (issue-loop.command.md §1c-simplify) snapshots the tip, dispatches
-# a subagent with the VENDORED ponytail-review skill on the slice diff, applies
-# its delete-list as a commit, then re-runs `rerun` (the deterministic + behavioral
-# gates) on the shrunk diff. If either goes red it hard-resets to the pre-simplify
-# tip and ships the original diff with `revert_note` in the PR body — so this gate
-# NEVER fails the pipeline. That is why required=false: its "failure" mode is the
-# revert, not a block. skill names the vendored delete-list source
-# (docs/agents/ponytail-review.command.md; the host /simplify skill is the fallback).
-# Also drives the §1e stack-tip pass: one whole-branch run before PR-open
-# — same rerun/revert_note, no separate gate.
+# simplify runs LAST and is safe by construction: it can only SHRINK an
+# already-verified diff. The orchestrator snapshots the tip, applies the
+# subagent's delete-list, re-runs `rerun`, and hard-resets to the snapshot if
+# either goes red — so required=false is literal: its failure mode is a revert,
+# not a block.
 [[gates]]
 id = "simplify"
 kind = "simplify"

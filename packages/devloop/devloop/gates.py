@@ -77,8 +77,6 @@ def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict
 # ad-hoc command gates. Strictness justification (dec-034ee0f7): the result
 # is the rail's, so the orchestrator cannot soften a red line into prose.
 
-# `- [ ] verify: `<cmd> [=> <text>]`` — the checklist prefix is optional, the
-# backticks are stripped, and the LAST ` => ` splits off the expected stdout.
 _VERIFY_LINE = re.compile(r"^\s*(?:[-*]\s+(?:\[[ xX]\]\s+)?)?verify:\s*(.+?)\s*$")
 # The `--issue N` token a verify line may carry, however spelled (`=`, quotes,
 # extra spaces); the number is anchored so `--issue 400` never reads as 40.

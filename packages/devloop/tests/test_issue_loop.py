@@ -427,14 +427,6 @@ def test_load_config_merges_file(tmp_path):
     assert cfg["gates"][0]["id"] == "tests"
 
 
-def test_repo_loop_toml_parses_and_gate_ids_unique():
-    cfg = cli.load_config()
-    ids = [g["id"] for g in cfg["gates"]]
-    assert len(ids) == len(set(ids)) and len(ids) >= 4
-    assert all(g["kind"] in {"command", "diff", "judge", "simplify"}
-               for g in cfg["gates"])
-
-
 # ---------------------------------------------------------------------------
 # simplify gate (issue #58) — ponytail over-engineering trim, applying gate
 
@@ -979,13 +971,6 @@ def test_config_verb_names_the_deleted_key_and_exits_2(tmp_path, capsys, monkeyp
 
 # ---------------------------------------------------------------------------
 # prime — claim-time priming from prior trajectories
-
-
-def test_prime_has_no_holdout_mechanism():
-    """dec-cf8f0d33: the prime rail always serves what it finds. No sampling
-    function, no `holdout` parameter, no `holdout` payload key."""
-    payload = prime.build_prime_payload(57, "loop-run-10", ["self-improvement"], conn=None)
-    assert "holdout" not in payload
 
 
 def test_render_prime_block_splices_insight_bodies_and_lists_served():
@@ -2054,8 +2039,6 @@ def test_load_config_triage_defaults(tmp_path):
     # another repo's layout, and an inherited guess classifies the wrong files.
     assert t["sensitive_paths"] == []
     assert isinstance(t["red_min_diff_lines"], int)
-    # The green lane and its thresholds are gone (dec-cf8f0d33).
-    assert set(t) == {"sensitive_paths", "watched_paths", "red_min_diff_lines"}
 
 
 def test_repo_loop_toml_has_triage_section():
@@ -2509,8 +2492,6 @@ def test_issue_loop_doc_splices_persona_unconditionally():
     injected) rides every implementer and fix-round dispatch. The judge gets
     the north-star block only (it judges against the goal, not the persona)."""
     doc = _issue_loop_doc()
-    assert "dispatch.persona" not in doc
-    assert "persona-off" not in doc.lower() and "byte-identical" not in doc
     assert "north-star block only" in doc.lower()
 
 

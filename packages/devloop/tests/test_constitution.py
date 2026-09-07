@@ -44,11 +44,6 @@ LADDER_CLAUSE_PHRASE = "consolidate, not scatter"
 CITATION = re.compile(r"#[0-9]{2,}|\b[0-9a-f]{7}\b|PR ")
 
 
-def _body(path: Path) -> str:
-    """What the pack splices: the rail's own header strip, so the two agree."""
-    return pack.body(path.read_text(encoding="utf-8"))
-
-
 # ---------------------------------------------------------------------------
 # Resolution seam
 
@@ -147,7 +142,7 @@ def test_seven_rules_and_no_citation_in_any_rule():
     """dec-d79e8e7b's durability test: a packaged rule names the failure it
     prevents in general terms; provenance is a decision id in the PR that
     adds the rule, never in the text an installing repo cannot resolve."""
-    rules = re.findall(r"^\d+\.\s.*$", _body(cli.PACKAGE_CONSTITUTION),
+    rules = re.findall(r"^\d+\.\s.*$", pack.body(cli.PACKAGE_CONSTITUTION),
                        re.MULTILINE)
     assert len(rules) == 7, f"{len(rules)} rules — the settled set is seven"
     for rule in rules:
@@ -165,8 +160,8 @@ def test_implementer_splice_is_golden():
     golden is authored from those files and compared byte-for-byte; the
     overlay's rules continue the packaged numbering (8, 9) so the implementer
     reads one list."""
-    spliced = pack.splice(_body(cli.PACKAGE_PERSONA),
-                          [_body(p) for p in cli.find_constitution(FUNLOOPS_ROOT)])
+    spliced = pack.splice(pack.body(cli.PACKAGE_PERSONA),
+                          [pack.body(p) for p in cli.find_constitution(FUNLOOPS_ROOT)])
     assert spliced == GOLDEN_SPLICE.read_text(encoding="utf-8")
 
 
@@ -183,7 +178,7 @@ def test_ladder_clause_lives_in_the_persona_alone():
     """The reading-the-ladder clause is dissolved into the persona
     (dec-d79e8e7b §3): no other packaged doc — the constitution included —
     carries it, so there is one home and no rider."""
-    assert LADDER_CLAUSE_PHRASE in _body(cli.PACKAGE_PERSONA)
+    assert LADDER_CLAUSE_PHRASE in pack.body(cli.PACKAGE_PERSONA)
     for doc in DOCS.glob("*.md"):
         if doc.name == "ponytail-persona.md":
             continue

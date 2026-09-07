@@ -129,9 +129,10 @@ symbol or file with its dependents), `codegraph impact <symbol>` and
 change)."""
 
 
-def body(text: str) -> str:
+def body(path: Path) -> str:
     """Everything below a doc's LEADING provenance header (``<!-- … -->``);
     a doc that opens with prose is served whole, whatever it contains."""
+    text = path.read_text(encoding="utf-8")
     if text.lstrip().startswith("<!--"):
         text = text.partition("-->")[2]
     return text.strip("\n")

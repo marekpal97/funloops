@@ -1,9 +1,6 @@
 <!--
-  funloops' constitution overlay — this repo's own rules, extending devloop's
-  packaged constitution (packages/devloop/docs/agents/constitution.md), never
-  replacing it. `devloop config` lists both paths, packaged first, and the
-  pack inserts this body right after the packaged rules, so the numbering
-  continues from theirs and the implementer reads one list.
+  funloops' overlay: inserted after devloop's packaged rules
+  (packages/devloop/docs/agents/constitution.md), so the numbering continues from theirs.
 -->
 
 8. **Check what the substrate already records before adding a recorder** — the hook layer, git, and the tracker are already recording; a second recorder of the same event is a parallel surface with its own drift.
