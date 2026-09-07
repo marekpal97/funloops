@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import tomllib
 from pathlib import Path
@@ -401,7 +402,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              "standing orders; judge: issue + repo map")
     p_pack.add_argument("--cwd", default=".",
                         help="the worktree to map (its .codegraph index is self-provisioned)")
-    p_pack.add_argument("--codegraph-bin", default=None,
+    p_pack.add_argument("--codegraph-bin",
+                        default=os.environ.get("CODEGRAPH_BIN") or "codegraph",
                         help="codegraph executable (default: $CODEGRAPH_BIN, else "
                              "`codegraph` on PATH); absent or failing → a degraded block")
     p_pack.add_argument("--prime", default=None, metavar="FILE",
@@ -576,23 +578,22 @@ def main(argv: list[str] | None = None) -> int:
         root = Path(args.cwd).resolve()
         issue = json.loads(github.run(["issue", "view", str(args.number),
                                        "--json", "title,body"], cwd=root))
-        persona, constitution = "", []
+        persona = ""
         if args.role == "implementer":
             try:
                 # The rules fail closed (find_constitution raises; so does a
                 # persona missing from a docs-less wheel): an error marker,
                 # never a pack that dispatches without them.
-                persona = pack.body(PACKAGE_PERSONA.read_text(encoding="utf-8"))
-                constitution = [pack.body(p.read_text(encoding="utf-8"))
-                                for p in find_constitution(root)]
+                persona = "\n\n".join(pack.body(p.read_text(encoding="utf-8"))
+                                      for p in [PACKAGE_PERSONA, *find_constitution(root)])
             except FileNotFoundError as exc:
                 print(json.dumps({"error": str(exc)}))
                 return 2
-        repo_map = pack.render_map(pack.codegraph_bin(args.codegraph_bin), root,
-                                   issue["title"], pack.named_files(issue["body"], root))
+        repo_map = pack.render_map(args.codegraph_bin, root, issue["title"],
+                                   pack.named_files(issue["body"], root))
         print(pack.compose(
             role=args.role, number=args.number, issue=issue, persona=persona,
-            constitution=constitution, repo_map=repo_map,
+            repo_map=repo_map,
             prime=Path(args.prime).read_text(encoding="utf-8") if args.prime else "",
             trace=Path(args.trace).read_text(encoding="utf-8") if args.trace else "",
         ), end="")

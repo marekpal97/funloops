@@ -29,7 +29,6 @@ from pathlib import Path
 import pytest
 
 from devloop import cli, github
-from devloop.cli import main
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "pack"
 TITLE = "fx: annotate the catalog with docstrings"
@@ -94,19 +93,19 @@ def test_implementer_pack_is_golden_and_byte_stable(repo, tmp_path, capsys):
     binary, log = fake_codegraph(tmp_path)
     argv = ["pack", "7", "--role", "implementer", "--cwd", str(repo),
             "--codegraph-bin", str(binary)]
-    assert main(argv) == 0
+    assert cli.main(argv) == 0
     first = capsys.readouterr().out
     assert first == (FIX / "implementer.md").read_text(encoding="utf-8")
     # no index in a fresh worktree → init; then the tiers in order, and one
     # node call per file the issue names (helper first: first mention wins)
     assert log.read_text().split() == ["init", "files", "context", "node", "node"]
-    assert main(argv) == 0
+    assert cli.main(argv) == 0
     assert capsys.readouterr().out == first
 
 
 def test_missing_codegraph_degrades_and_exits_zero(repo, monkeypatch, capsys):
     monkeypatch.setenv("CODEGRAPH_BIN", str(repo / "no-such-codegraph"))
-    assert main(["pack", "7", "--role", "implementer", "--cwd", str(repo)]) == 0
+    assert cli.main(["pack", "7", "--role", "implementer", "--cwd", str(repo)]) == 0
     out = capsys.readouterr().out
     assert "DEGRADED" in out and "gather" in out
     assert "Project Structure" not in out
@@ -119,7 +118,7 @@ def test_missing_codegraph_degrades_and_exits_zero(repo, monkeypatch, capsys):
 ])
 def test_failing_or_silent_codegraph_degrades(repo, tmp_path, capsys, code):
     binary = fake_binary(tmp_path, code)
-    assert main(["pack", "7", "--cwd", str(repo), "--codegraph-bin", str(binary)]) == 0
+    assert cli.main(["pack", "7", "--cwd", str(repo), "--codegraph-bin", str(binary)]) == 0
     out = capsys.readouterr().out
     assert "DEGRADED" in out
     assert "tier 1" not in out  # never an empty catalog under a clean heading
@@ -127,7 +126,7 @@ def test_failing_or_silent_codegraph_degrades(repo, tmp_path, capsys, code):
 
 def test_judge_pack_carries_no_persona(repo, tmp_path, capsys):
     binary, _ = fake_codegraph(tmp_path)
-    assert main(["pack", "7", "--role", "judge", "--cwd", str(repo),
+    assert cli.main(["pack", "7", "--role", "judge", "--cwd", str(repo),
                  "--codegraph-bin", str(binary)]) == 0
     out = capsys.readouterr().out
     assert "Fixture persona" not in out and "Fixture constitution" not in out
@@ -138,7 +137,7 @@ def test_host_extension_files_land_under_their_headings(repo, tmp_path, capsys):
     binary, _ = fake_codegraph(tmp_path)
     (tmp_path / "prime.md").write_text("lesson: reuse fmt\n", encoding="utf-8")
     (tmp_path / "trace.md").write_text("round 1: red then green\n", encoding="utf-8")
-    assert main(["pack", "7", "--cwd", str(repo), "--codegraph-bin", str(binary),
+    assert cli.main(["pack", "7", "--cwd", str(repo), "--codegraph-bin", str(binary),
                  "--prime", str(tmp_path / "prime.md"),
                  "--trace", str(tmp_path / "trace.md")]) == 0
     out = capsys.readouterr().out

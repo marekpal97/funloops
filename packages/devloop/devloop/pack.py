@@ -23,7 +23,6 @@ itself, and a missing map is a weaker dispatch, not a wrong one).
 from __future__ import annotations
 
 import ast
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -31,11 +30,6 @@ from pathlib import Path
 
 class CodegraphUnavailable(Exception):
     """A codegraph verb could not run — the degraded-block trigger."""
-
-
-def codegraph_bin(explicit: str | None) -> str:
-    """``--codegraph-bin`` → ``$CODEGRAPH_BIN`` → ``codegraph`` on PATH."""
-    return explicit or os.environ.get("CODEGRAPH_BIN") or "codegraph"
 
 
 def _codegraph(binary: str, root: Path, *args: str) -> str:
@@ -90,7 +84,6 @@ def named_files(body: str, root: Path) -> list[str]:
     """The files an issue names: every backticked token that resolves to an
     existing file inside ``root`` (symlinks followed, so a link out of the
     repo does not count), first mention first, deduped."""
-    root = root.resolve()
     found = [tok for tok in re.findall(r"`([^`\n]+)`", body)
              if (root / tok).resolve().is_relative_to(root) and (root / tok).is_file()]
     return list(dict.fromkeys(found))
@@ -143,14 +136,13 @@ def body(text: str) -> str:
 
 
 def compose(*, role: str, number: int, issue: dict, persona: str,
-            constitution: list[str], repo_map: str, prime: str = "",
-            trace: str = "") -> str:
-    """The pack text. Persona, constitution and standing orders are the
-    implementer's; the judge gets the contract and the map only."""
+            repo_map: str, prime: str = "", trace: str = "") -> str:
+    """The pack text. Persona (with the constitution injected) and standing
+    orders are the implementer's; the judge gets the contract and the map."""
     parts = [f"# Dispatch pack — issue #{number} ({role})",
              f"## Issue\n\n{issue['title']}\n\n{issue['body'].strip()}"]
     if role == "implementer":
-        parts.append("## Persona\n\n" + "\n\n".join([persona, *constitution]))
+        parts.append(f"## Persona\n\n{persona}")
     parts.append(repo_map)
     if prime.strip():
         parts.append(f"## Prior lessons\n\n{prime.strip()}")

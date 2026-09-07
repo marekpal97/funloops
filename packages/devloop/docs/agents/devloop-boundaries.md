@@ -134,7 +134,7 @@ report into the deduped, ordered op list `board sweep --apply` replays.
 Conventions text: `issue-loop.command.md` §Board hygiene.
 
 **`pack.py`** — the dispatch pack (funloops#28; dec-f12457eb, dec-fd12489d,
-dec-d2de831e): `codegraph_bin`, `named_files`, `annotate_catalog`,
+dec-d2de831e): `named_files`, `annotate_catalog`,
 `render_map`, `body`, `compose`. Composes one dispatch's context in a fixed
 order — issue body; persona with the constitution injected (implementer
 only); the two-tier repo map; the host extension's prime block and trace
