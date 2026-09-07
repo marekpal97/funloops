@@ -68,9 +68,12 @@ def test_command_doc_drives_the_devloop_rail():
     text = _doc(COMMAND_DOC)
     assert "scripts/issue_loop.py" not in text
     # Source of truth: argparse. Every subcommand the rail exposes is shown
-    # being invoked through `devloop`.
-    for name in _subcommands():
+    # being invoked through `devloop` — except `map`, retired from the loop by
+    # dec-fd12489d (the doc no longer references it) while its code awaits
+    # deletion by the pack ticket (#28).
+    for name in _subcommands() - {"map"}:
         assert f"devloop {name}" in text, name
+    assert "devloop map" not in text
 
 
 def test_command_doc_documents_the_symlink_wiring():

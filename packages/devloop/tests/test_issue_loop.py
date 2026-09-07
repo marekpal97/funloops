@@ -4,6 +4,7 @@ Everything here is pure: parsing and frontier computation take plain dicts
 and strings — no gh, no git, no network.
 """
 
+import inspect
 import json
 import sqlite3
 
@@ -189,7 +190,7 @@ def test_command_gate_timeout_is_a_result_not_a_traceback(tmp_path):
 
 
 def test_diff_gate_forbidden_path():
-    gate = {"id": "g", "forbidden_paths": [".github/workflows/"], "max_changed_lines": 100}
+    gate = {"id": "g", "forbidden_paths": [".github/workflows/"]}
     numstat = "3\t1\tsrc/thinkweave/core/config.py\n2\t0\t.github/workflows/ci.yml\n"
     result = gates.evaluate_diff_gate(gate, numstat)
     assert result["passed"] is False
@@ -209,15 +210,18 @@ def test_diff_gate_forbidden_paths_use_the_three_form_convention():
     assert gates.evaluate_diff_gate(gate, "1\t0\tops/secrets.env.example\n")["passed"] is True
 
 
-def test_diff_gate_max_lines():
-    gate = {"id": "g", "forbidden_paths": [], "max_changed_lines": 5}
-    numstat = "4\t3\tsrc/a.py\n"
-    result = gates.evaluate_diff_gate(gate, numstat)
-    assert result["passed"] is False and "7 changed lines" in result["summary"]
+def test_diff_gate_is_a_forbidden_paths_check_only():
+    """dec-cf8f0d33: the line cap is gone — diff-guard never fails on size.
+    A 5,000-line diff touching nothing forbidden passes; the summary still
+    reports the count as information for the PR body."""
+    gate = {"id": "g", "forbidden_paths": [".github/workflows/"]}
+    result = gates.evaluate_diff_gate(gate, "3000\t2000\tsrc/big.py\n")
+    assert result["passed"] is True
+    assert "5000 changed lines" in result["summary"]
 
 
 def test_diff_gate_passes_and_handles_binary():
-    gate = {"id": "g", "forbidden_paths": ["vault/"], "max_changed_lines": 100}
+    gate = {"id": "g", "forbidden_paths": ["vault/"]}
     numstat = "4\t3\tsrc/a.py\n-\t-\tassets/logo.png\n"
     result = gates.evaluate_diff_gate(gate, numstat)
     assert result["passed"] is True
@@ -231,7 +235,6 @@ def test_load_config_defaults_when_missing(tmp_path):
     cfg = cli.load_config(tmp_path / "nope.toml")
     assert cfg["loop"]["max_issues_per_run"] == 3
     assert cfg["loop"]["require_green_baseline"] is True
-    assert cfg["loop"]["claim_mode"] == "assign"
     assert cfg["loop"]["run_mode"] == "pass"
     assert cfg["labels"]["runnable"] == "ready-for-agent"
     assert cfg["tdd"]["mode"] == "auto"
@@ -260,7 +263,7 @@ def test_repo_loop_toml_parses_and_gate_ids_unique():
     cfg = cli.load_config()
     ids = [g["id"] for g in cfg["gates"]]
     assert len(ids) == len(set(ids)) and len(ids) >= 4
-    assert all(g["kind"] in {"command", "diff", "acceptance", "review", "simplify"}
+    assert all(g["kind"] in {"command", "diff", "judge", "simplify"}
                for g in cfg["gates"])
 
 
@@ -269,14 +272,13 @@ def test_repo_loop_toml_parses_and_gate_ids_unique():
 
 
 def test_gate_pipeline_order_is_pinned():
-    """The full pipeline order is a contract: diff-guard → map → tests →
-    acceptance → review → simplify. The cheap deterministic gates run first
-    (map before tests: a stale map fails in ms, not after the suite); simplify
-    runs LAST, after review, so it only ever shrinks an already-verified
-    diff."""
+    """The full pipeline order is a contract: diff-guard → tests → judge →
+    simplify. The cheap deterministic gates run first; the one judge stage
+    (dec-2d4bc03d, dec-611cbd8a) follows; simplify runs LAST so it only ever
+    shrinks an already-verified diff. No map gate (dec-fd12489d)."""
     cfg = cli.load_config()
     ids = [g["id"] for g in cfg["gates"]]
-    assert ids == ["diff-guard", "map", "tests", "acceptance", "review", "simplify"]
+    assert ids == ["diff-guard", "tests", "judge", "simplify"]
 
 
 def test_simplify_gate_shape():
@@ -292,7 +294,7 @@ def test_simplify_gate_shape():
     assert gate["required"] is False
     # It re-verifies the shrunk diff against exactly the deterministic +
     # behavioral gates, in order.
-    assert gate["rerun"] == ["tests", "acceptance"]
+    assert gate["rerun"] == ["tests", "judge"]
     assert "simplify-reverted" in gate["revert_note"]
     # The delete-list comes from the vendored ponytail-review skill.
     assert gate["skill"] == "ponytail-review"
@@ -740,30 +742,84 @@ def test_apply_overrides_noop_without_specs(tmp_path):
     assert cli.apply_overrides(cfg, []) is cfg
 
 
-def test_prime_holdout_is_an_overridable_loop_knob(tmp_path):
-    """prime_holdout ships as a [loop] default and is --set-overridable via the
-    existing mechanism (so `--set prime_holdout=0` disables holdout for a run)."""
+# --- deleted keys are rejected, named (issue #39 AC2, dec-cf8f0d33) ---------
+# The same unknown-key check `--set` always had now runs on the file too: a
+# knob the subtractive pass deleted is neither silently honored nor silently
+# ignored — the rail refuses the config and names the key.
+
+DELETED_SCALARS = [
+    ("loop", "prime_holdout", "5"),
+    ("loop", "draft_pr", "true"),
+    ("loop", "claim_mode", '"assign"'),
+    ("triage", "green_enabled", "false"),
+    ("triage", "green_max_diff_lines", "150"),
+    ("triage", "green_requires_first_try", "true"),
+]
+
+
+@pytest.mark.parametrize("section,key,value", DELETED_SCALARS)
+def test_load_config_rejects_deleted_scalar_keys_naming_them(tmp_path, section, key, value):
+    p = tmp_path / "loop.toml"
+    p.write_text(f"[{section}]\n{key} = {value}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=rf"unknown key '{section}\.{key}'"):
+        cli.load_config(p)
+
+
+def test_load_config_rejects_the_deleted_dispatch_section(tmp_path):
+    """`[dispatch] persona` is gone (dec-d79e8e7b addendum): the persona is
+    spliced unconditionally, so the whole section is unknown."""
+    p = tmp_path / "loop.toml"
+    p.write_text("[dispatch]\npersona = true\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="dispatch"):
+        cli.load_config(p)
+    assert "dispatch" not in cli.DEFAULT_CONFIG
+
+
+@pytest.mark.parametrize("kind,key,value", [
+    ("diff", "max_changed_lines", "2000"),
+    ("judge", "block_on", '["critical", "major"]'),
+    ("judge", "smells_baseline", "true"),
+])
+def test_load_config_rejects_deleted_gate_keys_naming_them(tmp_path, kind, key, value):
+    """Gate entries are checked against what their kind's verb reads; a deleted
+    key is named by its position and name so the fix is one line."""
+    p = tmp_path / "loop.toml"
+    p.write_text(f'[[gates]]\nid = "g"\nkind = "{kind}"\n{key} = {value}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=rf"gates\[0\]\.{key}"):
+        cli.load_config(p)
+
+
+def test_set_rejects_deleted_keys_too(tmp_path):
+    """The override path shares the check: a deleted knob is an unknown key."""
     cfg = cli.load_config(tmp_path / "nope.toml")
-    assert cfg["loop"]["prime_holdout"] == 5
-    overridden = cli.apply_overrides(cfg, ["prime_holdout=0"])
-    assert overridden["loop"]["prime_holdout"] == 0
+    for spec in ("prime_holdout=0", "dispatch.persona=false", "triage.green_enabled=true"):
+        with pytest.raises(ValueError):
+            cli.apply_overrides(cfg, [spec])
+
+
+def test_config_verb_names_the_deleted_key_and_exits_2(tmp_path, capsys, monkeypatch):
+    """End to end: a host whose loop.toml still carries a deleted knob gets an
+    error JSON naming it from every verb, not a config that quietly dropped it."""
+    (tmp_path / ".git").mkdir()
+    d = tmp_path / "docs" / "agents"
+    d.mkdir(parents=True)
+    (d / "loop.toml").write_text("[loop]\nprime_holdout = 5\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["config"]) == 2
+    assert "loop.prime_holdout" in json.loads(capsys.readouterr().out)["error"]
 
 
 # ---------------------------------------------------------------------------
 # prime — claim-time priming from prior trajectories
 
 
-def test_is_holdout_deterministic_and_disable():
-    # Expected values independently computed from sha1(run_id) mod N:
-    #   printf 'loop-run-10' | sha1sum  → 7a31...  int mod 5 == 0  → held out
-    #   printf 'loop-run-0'  | sha1sum  → 47eb...  int mod 5 == 1  → NOT held out
-    assert prime.is_holdout("loop-run-10", 5) is True
-    assert prime.is_holdout("loop-run-0", 5) is False
-    # Same run-id, same verdict across calls (no PYTHONHASHSEED dependence).
-    assert prime.is_holdout("loop-run-10", 5) is True
-    # holdout <= 0 disables holdout entirely.
-    assert prime.is_holdout("loop-run-10", 0) is False
-    assert prime.is_holdout("loop-run-10", -1) is False
+def test_prime_has_no_holdout_mechanism():
+    """dec-cf8f0d33: the prime rail always serves what it finds. No sampling
+    function, no `holdout` parameter, no `holdout` payload key."""
+    assert not hasattr(prime, "is_holdout")
+    assert "holdout" not in inspect.signature(prime.build_prime_payload).parameters
+    payload = prime.build_prime_payload(57, "loop-run-10", ["self-improvement"], conn=None)
+    assert "holdout" not in payload
 
 
 def test_render_prime_block_splices_insight_bodies_and_lists_served():
@@ -794,23 +850,11 @@ def test_render_prime_block_honors_char_budget():
     assert "n-ins2" not in served and "n-ins3" not in served
 
 
-def test_build_prime_payload_holdout_runs_unprimed():
-    payload = prime.build_prime_payload(
-        57, "loop-run-10", ["self-improvement"], conn=None, holdout=5,
-    )
-    assert payload["holdout"] is True
-    assert payload["primed"] is False
-    assert payload["served"] == []
-    assert payload["block"] == ""
-    assert "held out" in payload["note"]
-
-
 def test_build_prime_payload_no_index_is_a_clean_noop():
-    # No conn (index absent) and not held out → empty, no crash, loop unchanged.
+    # No conn (index absent) → empty, no crash, loop unchanged.
     payload = prime.build_prime_payload(
-        57, "loop-run-0", ["self-improvement"], conn=None, holdout=5,
+        57, "loop-run-0", ["self-improvement"], conn=None,
     )
-    assert payload["holdout"] is False
     assert payload["primed"] is False
     assert payload["served"] == [] and payload["block"] == ""
 
@@ -1015,7 +1059,7 @@ def test_build_prime_payload_serves_insight_bodies_end_to_end(tmp_path):
     conn = index_client.open_ro(str(db))
     try:
         payload = prime.build_prime_payload(
-            85, "loop-run-0", ["self-improvement"], conn=conn, holdout=5,
+            85, "loop-run-0", ["self-improvement"], conn=conn,
         )
     finally:
         conn.close()
@@ -1228,11 +1272,11 @@ def test_prime_erroring_fts_does_not_read_as_a_clean_empty_match(tmp_path):
     try:
         # Concept leg retrieved something → the broken FTS leg stays silent.
         served = prime.build_prime_payload(
-            1, "loop-run-0", ["retrieval"], conn=conn, holdout=5,
+            1, "loop-run-0", ["retrieval"], conn=conn,
             query="fuse the retrieval legs")
         # Nothing retrieved at all → the FTS failure reaches the note.
         empty = prime.build_prime_payload(
-            1, "loop-run-0", ["no-such-concept"], conn=conn, holdout=5,
+            1, "loop-run-0", ["no-such-concept"], conn=conn,
             query="fuse the retrieval legs")
     finally:
         conn.close()
@@ -1354,13 +1398,14 @@ def test_prime_writes_loop_prime_served_event_to_buffer(tmp_path):
     assert ev["args"]["run_id"] == "loop-run-0" and ev["args"]["issue"] == 57
 
 
-def test_prime_holdout_writes_no_buffer_event(tmp_path):
-    """A held-out run is unprimed: no served ids, no buffer event even if
-    --buffer is supplied."""
+def test_prime_unprimed_run_writes_no_buffer_event(tmp_path):
+    """An unprimed run (nothing found — here, no index at all) has no served
+    ids, so no buffer event even if --buffer is supplied."""
     buf = tmp_path / "buffer" / "ses-loop123.jsonl"
     rc = cli.main([
-        "prime", "57", "--run-id", "loop-run-10",  # sha1 mod 5 == 0 → held out
+        "prime", "57", "--run-id", "loop-run-10",
         "--concepts", "retrieval", "--buffer", str(buf),
+        "--db", str(tmp_path / "absent.db"),
     ])
     assert rc == 0
     assert not buf.exists()
@@ -1413,7 +1458,7 @@ def test_build_prime_payload_index_error_notes_degradation(tmp_path):
     conn = index_client.open_ro(str(db))
     try:
         payload = prime.build_prime_payload(
-            57, "loop-run-0", ["retrieval"], conn=conn, holdout=5,
+            57, "loop-run-0", ["retrieval"], conn=conn,
         )
     finally:
         conn.close()
@@ -1690,24 +1735,21 @@ def test_prime_argparse_contract():
 # Pure function: (signals, triage-cfg) -> {lane, label, reasons}. Precedence
 # red > yellow > green, every triggered rule listed (short-circuit reasons).
 
-# A green triage config (green enabled) so the green lane is reachable; the
-# repo default ships green DISABLED (see test_load_config_triage_defaults).
+# Two lanes only (dec-cf8f0d33 deleted the green lane): red routes to a human,
+# everything else is yellow (review-light) with its reasons listed.
 TRIAGE_CFG = {
-    "green_enabled": True,
     "sensitive_paths": [
         "hooks/", "src/thinkweave/surfaces/", "ontology.yaml",
         "sources.yaml", "*schema*",
     ],
     "watched_paths": ["docs/agents/"],
-    "green_max_diff_lines": 150,
-    "green_requires_first_try": True,
     "red_min_diff_lines": 800,
 }
 
 
 def _signals(**kw):
-    """A first-try, small, test-covered, minor-review, green-baseline PR —
-    the green archetype. Override one field per test to trip one lane."""
+    """A first-try, small, test-covered, minor-finding, green-baseline PR —
+    the clean archetype. Override one field per test to trip one rule."""
     base = {
         "fix_rounds": 0,
         "diff_lines": 20,
@@ -1721,28 +1763,21 @@ def _signals(**kw):
     return base
 
 
-# --- green lane -------------------------------------------------------------
+# --- no green lane ----------------------------------------------------------
 
 
-def test_classify_green_when_enabled():
+def test_clean_archetype_is_review_light_with_no_reasons():
+    """There is no auto-merge lane: the cleanest PR is still a human skim.
+    An empty reasons list is what tells the skimmer nothing tripped."""
     r = triage.classify_pr(_signals(), TRIAGE_CFG)
-    assert r["lane"] == "green"
-    assert r["label"] == "auto-merge-ok"
-    assert r["reasons"] == []
-
-
-def test_classify_green_disabled_downgrades_to_review_light():
-    # Acceptance criterion 2, second half: the same green archetype is
-    # review-light (not auto-merge-ok) when green is disabled — the repo default.
-    cfg = {**TRIAGE_CFG, "green_enabled": False}
-    r = triage.classify_pr(_signals(), cfg)
     assert r["lane"] == "yellow" and r["label"] == "review-light"
-    assert any("disabled" in x for x in r["reasons"])
+    assert r["reasons"] == []
+    assert set(triage.TRIAGE_LABELS) == {"yellow"}
 
 
-def test_minor_and_none_review_are_green_eligible():
-    assert triage.classify_pr(_signals(review_severity="none"), TRIAGE_CFG)["lane"] == "green"
-    assert triage.classify_pr(_signals(review_severity="minor"), TRIAGE_CFG)["lane"] == "green"
+def test_minor_and_none_findings_stay_yellow():
+    for sev in ("none", "minor"):
+        assert triage.classify_pr(_signals(review_severity=sev), TRIAGE_CFG)["lane"] == "yellow"
 
 
 # --- red lane ---------------------------------------------------------------
@@ -1822,13 +1857,6 @@ def test_classify_fix_rounds_yellow():
     assert any("fix round" in x for x in r["reasons"])
 
 
-def test_classify_medium_diff_yellow():
-    # >= green_max_diff_lines (150) but < red_min_diff_lines (800).
-    r = triage.classify_pr(_signals(diff_lines=300), TRIAGE_CFG)
-    assert r["lane"] == "yellow"
-    assert any("300" in x for x in r["reasons"])
-
-
 def test_classify_watched_path_yellow():
     r = triage.classify_pr(_signals(files_touched=["docs/agents/loop.toml"]), TRIAGE_CFG)
     assert r["lane"] == "yellow"
@@ -1838,11 +1866,6 @@ def test_classify_watched_path_yellow():
 def test_classify_no_test_coverage_yellow():
     r = triage.classify_pr(_signals(tests_touched=False), TRIAGE_CFG)
     assert r["lane"] == "yellow"
-
-
-def test_green_requires_first_try_knob_off_allows_fix_rounds():
-    cfg = {**TRIAGE_CFG, "green_requires_first_try": False}
-    assert triage.classify_pr(_signals(fix_rounds=3), cfg)["lane"] == "green"
 
 
 # --- thresholds are config, not hardcoded (acceptance criterion 3) ----------
@@ -1862,19 +1885,16 @@ def test_thresholds_read_from_config():
 def test_load_config_triage_defaults(tmp_path):
     cfg = cli.load_config(tmp_path / "nope.toml")
     t = cfg["triage"]
-    assert t["green_enabled"] is False   # ship conservative
     # No path is sensitive until a host says so: the packaged rail cannot know
     # another repo's layout, and an inherited guess classifies the wrong files.
     assert t["sensitive_paths"] == []
-    assert t["green_requires_first_try"] is True
-    assert isinstance(t["green_max_diff_lines"], int)
     assert isinstance(t["red_min_diff_lines"], int)
-    assert t["red_min_diff_lines"] > t["green_max_diff_lines"]
+    # The green lane and its thresholds are gone (dec-cf8f0d33).
+    assert set(t) == {"sensitive_paths", "watched_paths", "red_min_diff_lines"}
 
 
 def test_repo_loop_toml_has_triage_section():
     cfg = cli.load_config()
-    assert cfg["triage"]["green_enabled"] is False
     # Sensitive paths translated to THIS repo's layout: the CLI surface and the
     # gate pipeline, as bare basenames so they hold for every workspace member.
     sp = cfg["triage"]["sensitive_paths"]
@@ -1884,16 +1904,15 @@ def test_repo_loop_toml_has_triage_section():
 def test_triage_override_via_set(tmp_path):
     cfg = cli.apply_overrides(
         cli.load_config(tmp_path / "nope.toml"),
-        ["triage.green_max_diff_lines=200", "triage.green_enabled=true"],
+        ["triage.red_min_diff_lines=200"],
     )
-    assert cfg["triage"]["green_max_diff_lines"] == 200
-    assert cfg["triage"]["green_enabled"] is True
+    assert cfg["triage"]["red_min_diff_lines"] == 200
 
 
 def test_triage_override_rejects_unknown_key(tmp_path):
     cfg = cli.load_config(tmp_path / "nope.toml")
     with pytest.raises(ValueError, match="unknown key"):
-        cli.apply_overrides(cfg, ["triage.green_max_diff=200"])
+        cli.apply_overrides(cfg, ["triage.red_min_diff=200"])
 
 
 # --- CLI contract -----------------------------------------------------------
@@ -1921,7 +1940,7 @@ def test_triage_cli_red_via_default_config(tmp_path, capsys):
     assert out["issue"] == 59
 
 
-def test_triage_cli_green_needs_enable_override(tmp_path, capsys):
+def test_triage_cli_clean_pr_is_review_light(tmp_path, capsys):
     sig = tmp_path / "sig.json"
     sig.write_text(json.dumps({
         "fix_rounds": 0, "diff_lines": 10,
@@ -1929,12 +1948,8 @@ def test_triage_cli_green_needs_enable_override(tmp_path, capsys):
         "tests_touched": True, "review_severity": "minor", "baseline_green": True,
         "acceptance": "met",
     }), encoding="utf-8")
-    # Default config → green disabled → review-light.
-    cli.main(["triage", "--signals-json", str(sig)])
+    assert cli.main(["triage", "--signals-json", str(sig)]) == 0
     assert json.loads(capsys.readouterr().out)["label"] == "review-light"
-    # Enable green for this run → auto-merge-ok.
-    cli.main(["triage", "--signals-json", str(sig), "--set", "triage.green_enabled=true"])
-    assert json.loads(capsys.readouterr().out)["label"] == "auto-merge-ok"
 
 
 # ---------------------------------------------------------------------------
@@ -1999,11 +2014,11 @@ def test_empty_signals_is_red_on_all_three_safety_keys():
 
 def test_benign_absence_does_not_trip_red():
     # diff_lines / fix_rounds / files_touched absent is NOT a safety hole:
-    # with the three safety keys present and clean, the PR is still green.
+    # with the three safety keys present and clean, the PR is a clean skim.
     sig = {"tests_touched": True, "review_severity": "minor",
            "baseline_green": True, "acceptance": "met"}
     r = triage.classify_pr(sig, TRIAGE_CFG)
-    assert r["lane"] == "green"
+    assert r["lane"] == "yellow" and r["reasons"] == []
 
 
 def test_red_label_sourced_from_on_gate_failure(tmp_path, capsys):
@@ -2262,32 +2277,18 @@ def test_extension_points_do_not_claim_the_rail_runs_judgment_kinds():
 
 
 # ---------------------------------------------------------------------------
-# Dispatch persona + north-star splice (issue #89) — write-time simplification
-# pressure at the only point it works: dispatch. Seams: the [dispatch] persona
-# knob (default + override validation in the rail) and doc-grep contracts on
-# the command doc + vendored persona file, mirroring the #58/#61 pins.
+# Dispatch persona + north-star splice (issue #89, made unconditional by
+# dec-d79e8e7b) — write-time simplification pressure at the only point it
+# works: dispatch. Seams: doc-grep contracts on the command doc + vendored
+# persona file, mirroring the #58/#61 pins. The [dispatch] knob is gone; its
+# rejection is pinned with the other deleted keys above.
 
 
-def test_dispatch_persona_knob_defaults_on():
-    """[dispatch] persona = true is the default AND file-backed in loop.toml
-    (3-edit config pattern: file entry + DEFAULT_CONFIG + override path)."""
-    cfg = cli.load_config()
-    assert cfg["dispatch"]["persona"] is True
-    assert cli.DEFAULT_CONFIG["dispatch"]["persona"] is True
-    toml_text = (cli.REPO_ROOT / "docs" / "agents" / "loop.toml").read_text(
-        encoding="utf-8"
-    )
-    assert "[dispatch]" in toml_text
-    assert "persona = true" in toml_text
-
-
-def test_dispatch_persona_overridable_per_run():
-    """--set dispatch.persona=false flips the knob for one run; an unknown key
-    in [dispatch] stays a hard error (typo protection, same as every section)."""
-    cfg = cli.apply_overrides(cli.load_config(), ["dispatch.persona=false"])
-    assert cfg["dispatch"]["persona"] is False
-    with pytest.raises(ValueError):
-        cli.apply_overrides(cli.load_config(), ["dispatch.personna=false"])
+def test_shipped_configs_carry_no_dispatch_section():
+    for name in ("loop.toml", "loop.toml.template"):
+        text = (cli.REPO_ROOT / "docs" / "agents" / name).read_text(encoding="utf-8")
+        assert "[dispatch]" not in text, name
+    assert "dispatch" not in cli.load_config()
 
 
 def test_vendored_ponytail_persona_present_with_provenance():
@@ -2344,14 +2345,13 @@ def test_issue_loop_doc_sources_the_north_star_from_the_tracker():
     assert "review comments on PR #86" not in doc
 
 
-def test_issue_loop_doc_gates_splice_on_dispatch_persona_knob():
-    """Knob off → splice nothing anywhere: every dispatch prompt must be
-    byte-identical to the pre-#89 loop. Reviewer + acceptance-judge dispatches
-    get the north-star block only (they judge against the goal, not the
-    persona)."""
+def test_issue_loop_doc_splices_persona_unconditionally():
+    """dec-d79e8e7b addendum: no toggle — the persona (with the constitution
+    injected) rides every implementer and fix-round dispatch. The judge gets
+    the north-star block only (it judges against the goal, not the persona)."""
     doc = _issue_loop_doc()
-    assert "dispatch.persona" in doc
-    assert "byte-identical" in doc
+    assert "dispatch.persona" not in doc
+    assert "persona-off" not in doc.lower() and "byte-identical" not in doc
     assert "north-star block only" in doc.lower()
 
 
@@ -2469,72 +2469,79 @@ def test_build_trajectory_omits_stack_simplify_when_absent():
 
 
 # ---------------------------------------------------------------------------
-# Judgment-gate validators (issue #99) — the rail never EXECUTES acceptance /
-# review / simplify; it validates what the orchestrator's subagent returned,
-# rejecting a schema-violating return with per-field reasons so the
-# orchestrator re-asks instead of str()-coercing garbage downstream.
+# Judgment-gate validators (issue #99, fused by #39 / dec-611cbd8a) — the rail
+# never EXECUTES judge / simplify; it validates what the orchestrator's
+# subagent returned, rejecting a schema-violating return with per-field
+# reasons so the orchestrator re-asks instead of str()-coercing garbage
+# downstream.
 
 
 def _gate(gate_id):
     return next(g for g in cli.load_config()["gates"] if g["id"] == gate_id)
 
 
+def _met(*ids):
+    return [{"id": i, "verdict": "met", "evidence": f"{i} observed"} for i in ids]
+
+
 def test_gate_registries_are_disjoint_and_cover_the_pipeline():
     """Every kind has exactly one verb (boundary spec §3): a kind is either
     executed by the rail or validated by it, never both, and the shipped gate
-    pipeline names no kind outside the two registries."""
+    pipeline names no kind outside the two registries. Two judgment kinds:
+    acceptance+review collapsed into `judge` (no new kind, one fewer)."""
     assert not (set(gates.DETERMINISTIC) & set(gates.JUDGMENT))
     kinds = {g["kind"] for g in cli.load_config()["gates"]}
     assert kinds <= set(gates.DETERMINISTIC) | set(gates.JUDGMENT)
-    assert set(gates.JUDGMENT) == {"acceptance", "review", "simplify"}
+    assert set(gates.JUDGMENT) == {"judge", "simplify"}
 
 
-def test_validate_acceptance_all_met_passes():
-    """threshold=all: every criterion met → the gate passes, GateResult-shaped
-    with no rejection reasons."""
-    result = gates.validate(_gate("acceptance"), {"criteria": [
-        {"id": "AC1", "verdict": "met", "evidence": "test_x covers it"},
-        {"id": "AC2", "verdict": "met", "evidence": "test_y covers it"},
-    ]})
+def test_validate_judge_all_met_passes_whatever_the_findings_say():
+    """AC1: the fused envelope carries criteria verdicts AND findings; the
+    gate passes iff no criterion is not-met. A critical finding outside the
+    contract is advisory (PR body + triage lane) — it never blocks."""
+    result = gates.validate(_gate("judge"), {
+        "criteria": _met("AC1", "AC2"),
+        "findings": [{"severity": "critical", "finding": "out-of-contract concern"}],
+    })
     assert set(result) == {"id", "kind", "passed", "summary", "detail", "reasons"}
-    assert result["id"] == "acceptance" and result["kind"] == "acceptance"
+    assert result["id"] == "judge" and result["kind"] == "judge"
     assert result["passed"] is True
     assert result["reasons"] == []
     assert "2/2" in result["summary"]
 
 
-def test_validate_acceptance_one_not_met_fails_the_gate_without_rejecting():
-    """A gate verdict of `not-met` is a FIX ROUND, not a schema rejection —
-    passed=False with empty reasons (rc 1, not rc 2)."""
-    result = gates.validate(_gate("acceptance"), {"criteria": [
+def test_validate_judge_one_not_met_fails_the_gate_without_rejecting():
+    """A `not-met` is a FIX ROUND, not a schema rejection — passed=False with
+    empty reasons (rc 1, not rc 2). No findings at all is still a verdict."""
+    result = gates.validate(_gate("judge"), {"criteria": [
         {"id": "AC1", "verdict": "met", "evidence": "e"},
         {"id": "AC2", "verdict": "not-met", "evidence": "no test at the seam"},
-    ]})
+    ], "findings": []})
     assert result["passed"] is False
     assert result["reasons"] == []
 
 
-def test_validate_acceptance_majority_threshold():
-    """threshold=majority: strictly more than half met."""
-    gate = {**_gate("acceptance"), "threshold": "majority"}
+def test_validate_judge_majority_threshold():
+    """threshold=majority: strictly more than half met (the knob stays)."""
+    gate = {**_gate("judge"), "threshold": "majority"}
     payload = {"criteria": [
         {"id": "AC1", "verdict": "met", "evidence": "e"},
         {"id": "AC2", "verdict": "met", "evidence": "e"},
         {"id": "AC3", "verdict": "not-met", "evidence": "e"},
-    ]}
+    ], "findings": []}
     assert gates.validate(gate, payload)["passed"] is True
     payload["criteria"][1]["verdict"] = "not-met"
     assert gates.validate(gate, payload)["passed"] is False
 
 
-def test_validate_acceptance_rejects_unknown_verdict_naming_field_and_value():
+def test_validate_judge_rejects_unknown_verdict_naming_field_and_value():
     """An enum the judge invented is REJECTED (not coerced), and the reason
     names the offending field path and the value — that is what makes the
     re-ask actionable."""
-    result = gates.validate(_gate("acceptance"), {"criteria": [
+    result = gates.validate(_gate("judge"), {"criteria": [
         {"id": "AC1", "verdict": "met", "evidence": "e"},
         {"id": "AC2", "verdict": "probably", "evidence": "e"},
-    ]})
+    ], "findings": []})
     assert result["passed"] is False
     assert len(result["reasons"]) == 1
     reason = result["reasons"][0]
@@ -2542,50 +2549,44 @@ def test_validate_acceptance_rejects_unknown_verdict_naming_field_and_value():
     assert "probably" in reason and "met" in reason and "not-met" in reason
 
 
-def test_validate_acceptance_rejects_empty_evidence_and_empty_criteria():
+def test_validate_judge_rejects_empty_evidence_and_empty_criteria():
     """Evidence is the judge's whole contribution: a blank string is a schema
     violation, and so is a return with no criteria at all."""
-    result = gates.validate(_gate("acceptance"), {"criteria": [
+    result = gates.validate(_gate("judge"), {"criteria": [
         {"id": "AC1", "verdict": "met", "evidence": "   "},
-    ]})
+    ], "findings": []})
     assert result["passed"] is False
     assert any("criteria[0].evidence" in r for r in result["reasons"])
 
-    empty = gates.validate(_gate("acceptance"), {"criteria": []})
+    empty = gates.validate(_gate("judge"), {"criteria": [], "findings": []})
     assert empty["passed"] is False
     assert any(r.startswith("criteria:") for r in empty["reasons"])
+
+
+def test_validate_judge_rejects_bad_or_missing_findings():
+    """findings[] is half the envelope: an invented severity or a blank finding
+    is rejected naming the field, and a return that omits the list altogether
+    is a re-ask — silence is not "no findings"."""
+    bad = gates.validate(_gate("judge"), {"criteria": _met("AC1"), "findings": [
+        {"severity": "blocker", "finding": "x"},
+        {"severity": "minor", "finding": ""},
+    ]})
+    assert bad["passed"] is False
+    assert any("findings[0].severity" in r and "blocker" in r for r in bad["reasons"])
+    assert any("findings[1].finding" in r for r in bad["reasons"])
+    missing = gates.validate(_gate("judge"), {"criteria": _met("AC1")})
+    assert missing["passed"] is False
+    assert any(r.startswith("findings:") for r in missing["reasons"])
 
 
 def test_validate_rejects_non_object_payload_naming_the_payload():
     """A bare string / list pasted by mistake is rejected at the top level for
     every judgment kind — nothing downstream ever sees it."""
-    for kind in ("acceptance", "review", "simplify"):
+    for kind in ("judge", "simplify"):
         result = gates.validate(_gate(kind), ["not", "an", "object"])
         assert result["passed"] is False
         assert result["reasons"] == [
             "payload: expected a JSON object, got list"]  # reported once, not per section
-
-
-def test_validate_review_empty_findings_is_a_clean_pass():
-    """No findings = a clean review. An empty list is valid (unlike acceptance's
-    criteria, where zero criteria means the judge answered nothing)."""
-    result = gates.validate(_gate("review"), {"findings": []})
-    assert result["passed"] is True and result["reasons"] == []
-
-
-def test_validate_review_blocks_on_configured_severities():
-    """The gate fails iff a finding's severity is in the gate's block_on."""
-    gate = _gate("review")
-    assert gate["block_on"] == ["critical", "major"]
-    blocked = gates.validate(gate, {"findings": [
-        {"severity": "nit", "finding": "naming"},
-        {"severity": "major", "finding": "unguarded index read"},
-    ]})
-    assert blocked["passed"] is False and blocked["reasons"] == []
-    clean = gates.validate(gate, {"findings": [
-        {"severity": "minor", "finding": "naming"},
-    ]})
-    assert clean["passed"] is True
 
 
 def test_validate_simplify_accepts_the_trace_envelope():
@@ -2626,18 +2627,18 @@ def test_validate_cli_exit_codes_mirror_check(tmp_path, capsys):
     """rc 0 = gate passed, rc 1 = gate failed (fix round), rc 2 = schema
     rejection (re-ask) — the same three-way convention `check` already uses."""
     ok = _write_json(tmp_path, {"criteria": [
-        {"id": "AC1", "verdict": "met", "evidence": "e"}]})
-    assert cli.main(["validate", "--gate", "acceptance", "--return-json", ok]) == 0
+        {"id": "AC1", "verdict": "met", "evidence": "e"}], "findings": []})
+    assert cli.main(["validate", "--gate", "judge", "--return-json", ok]) == 0
     assert json.loads(capsys.readouterr().out)["passed"] is True
 
     failed = _write_json(tmp_path, {"criteria": [
-        {"id": "AC1", "verdict": "not-met", "evidence": "e"}]})
-    assert cli.main(["validate", "--gate", "acceptance", "--return-json", failed]) == 1
+        {"id": "AC1", "verdict": "not-met", "evidence": "e"}], "findings": []})
+    assert cli.main(["validate", "--gate", "judge", "--return-json", failed]) == 1
     capsys.readouterr()
 
     rejected = _write_json(tmp_path, {"criteria": [
-        {"id": "AC1", "verdict": "nope", "evidence": "e"}]})
-    assert cli.main(["validate", "--gate", "acceptance", "--return-json", rejected]) == 2
+        {"id": "AC1", "verdict": "nope", "evidence": "e"}], "findings": []})
+    assert cli.main(["validate", "--gate", "judge", "--return-json", rejected]) == 2
     out = json.loads(capsys.readouterr().out)
     assert any("criteria[0].verdict" in r for r in out["reasons"])
 
@@ -2700,7 +2701,7 @@ def test_validate_schemas_match_the_enums_the_command_doc_advertises():
     are the enums the rail accepts. Drift here is a silent re-ask loop."""
     section = (cli.REPO_ROOT / "docs" / "agents" / "issue-loop.command.md").read_text(
         encoding="utf-8")
-    for value in gates.ACCEPTANCE_VERDICTS + gates.REVIEW_SEVERITIES + gates.SIMPLIFY_OUTCOMES:
+    for value in gates.VERDICTS + gates.SEVERITIES + gates.SIMPLIFY_OUTCOMES:
         assert f'"{value}"' in section, value
 
 

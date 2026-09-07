@@ -55,13 +55,14 @@ def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict
 
 
 def evaluate_diff_gate(gate: dict, numstat: str) -> dict:
-    """Pure evaluation of `git diff --numstat` output against constraints.
+    """Pure evaluation of `git diff --numstat` output: a forbidden-paths check
+    only (dec-cf8f0d33 dropped the line cap — size is a triage signal, never a
+    block). The changed-line count is reported for the PR body.
 
     ``forbidden_paths`` patterns use :func:`devloop.paths.match`'s three forms;
     every shipped entry is the trailing-``/`` prefix case (the old ``startswith``).
     """
     forbidden = gate.get("forbidden_paths", [])
-    max_lines = gate.get("max_changed_lines")
     touched_forbidden, total = [], 0
     for line in numstat.strip().splitlines():
         parts = line.split("\t")
@@ -71,16 +72,12 @@ def evaluate_diff_gate(gate: dict, numstat: str) -> dict:
         total += (0 if added == "-" else int(added)) + (0 if deleted == "-" else int(deleted))
         if any(paths.match(path, p) for p in forbidden):
             touched_forbidden.append(path)
-    failures = []
-    if touched_forbidden:
-        failures.append(f"touches forbidden paths: {', '.join(touched_forbidden)}")
-    if max_lines is not None and total > max_lines:
-        failures.append(f"{total} changed lines > max {max_lines}")
     return {
         "id": gate["id"],
         "kind": "diff",
-        "passed": not failures,
-        "summary": "; ".join(failures) or f"{total} changed lines, no forbidden paths",
+        "passed": not touched_forbidden,
+        "summary": (f"touches forbidden paths: {', '.join(touched_forbidden)}"
+                    if touched_forbidden else f"{total} changed lines, no forbidden paths"),
         "detail": "",
     }
 
@@ -102,8 +99,8 @@ def run_diff_gate(gate: dict, cwd: Path, base_ref: str) -> dict:
 # field path, because coercing it would put the judge's mistake in the
 # trajectory as fact.
 
-ACCEPTANCE_VERDICTS = ("met", "not-met")
-REVIEW_SEVERITIES = ("critical", "major", "minor", "nit")
+VERDICTS = ("met", "not-met")
+SEVERITIES = ("critical", "major", "minor", "nit")
 SIMPLIFY_OUTCOMES = ("applied", "reverted", "lean")
 
 
@@ -155,39 +152,39 @@ def _enum(entry: dict, where: str, key: str, allowed: tuple[str, ...],
     return value
 
 
-def validate_acceptance(gate: dict, raw: dict) -> dict:
-    """``{criteria: [{id, verdict: met|not-met, evidence}]}``, one entry per
-    acceptance criterion. Passes per the gate's ``threshold``: ``majority``
+def validate_judge(gate: dict, raw: dict) -> dict:
+    """The one judgment stage (dec-611cbd8a, dec-2d4bc03d):
+    ``{criteria: [{id, verdict: met|not-met, evidence}],
+    findings: [{severity: critical|major|minor|nit, finding}]}``.
+
+    ``criteria`` is one entry per acceptance criterion and carries the whole
+    authority: the gate passes per the gate's ``threshold`` — ``majority``
     needs strictly more than half met, anything else is read as ``all`` (gates
-    are file-only config, a trusted input — unlike the subagent return here)."""
+    are file-only config, a trusted input — unlike the subagent return here).
+    ``findings`` is everything the judge saw outside the contract: schema-
+    checked so it can travel to the PR body and the triage lane as data, but
+    never a verdict — a critical finding blocks nothing. The list may be empty;
+    it may not be missing, so silence never reads as a clean review.
+    """
     reasons: list[str] = []
     verdicts = []
     for i, entry in _entries(raw, "criteria", reasons):
         where = f"criteria[{i}]"
         _text(entry, where, "id", reasons)
         _text(entry, where, "evidence", reasons)
-        verdicts.append(_enum(entry, where, "verdict", ACCEPTANCE_VERDICTS, reasons))
+        verdicts.append(_enum(entry, where, "verdict", VERDICTS, reasons))
+    findings = _entries(raw, "findings", reasons, allow_empty=True)
+    for i, entry in findings:
+        where = f"findings[{i}]"
+        _text(entry, where, "finding", reasons)
+        _enum(entry, where, "severity", SEVERITIES, reasons)
     threshold = gate.get("threshold", "all")
     met = sum(v == "met" for v in verdicts)
     passed = (met * 2 > len(verdicts) if threshold == "majority"
               else met == len(verdicts))
     return _verdict(gate, reasons, passed=passed,
-                    summary=f"{met}/{len(verdicts)} criteria met (threshold: {threshold})")
-
-
-def validate_review(gate: dict, raw: dict) -> dict:
-    """``{findings: [{severity: critical|major|minor|nit, finding}]}``. An empty
-    list is a clean review; the gate fails iff a severity is in ``block_on``."""
-    reasons: list[str] = []
-    severities = []
-    for i, entry in _entries(raw, "findings", reasons, allow_empty=True):
-        where = f"findings[{i}]"
-        _text(entry, where, "finding", reasons)
-        severities.append(_enum(entry, where, "severity", REVIEW_SEVERITIES, reasons))
-    blocking = [s for s in severities if s in gate.get("block_on", [])]
-    return _verdict(gate, reasons, passed=not blocking,
-                    summary=(f"{len(blocking)} blocking of {len(severities)} findings"
-                             if severities else "no findings"))
+                    summary=(f"{met}/{len(verdicts)} criteria met (threshold: "
+                             f"{threshold}); {len(findings)} findings"))
 
 
 def validate_simplify(gate: dict, raw: dict) -> dict:
@@ -213,8 +210,20 @@ def validate_simplify(gate: dict, raw: dict) -> dict:
 # dispatches ONLY through DETERMINISTIC — any other kind, judgment-side or typo,
 # gets the LLM-judged error; `validate` dispatches ONLY through JUDGMENT.
 DETERMINISTIC = {"command": run_command_gate, "diff": run_diff_gate}
-JUDGMENT = {"acceptance": validate_acceptance, "review": validate_review,
-            "simplify": validate_simplify}
+JUDGMENT = {"judge": validate_judge, "simplify": validate_simplify}
+
+# The keys each kind's verb reads (beyond the shared id/kind/required). The
+# config loader rejects a gate entry carrying any other key, naming it — so a
+# knob the subtractive pass deleted (block_on, max_changed_lines,
+# smells_baseline) is refused rather than silently inert, the same posture
+# `--set` has always taken on an unknown scalar knob.
+GATE_KEYS = {
+    "command": {"cmd", "timeout_sec"},
+    "diff": {"forbidden_paths"},
+    "judge": {"threshold"},
+    "simplify": {"skill", "rerun", "revert_note"},
+}
+COMMON_GATE_KEYS = {"id", "kind", "required"}
 
 
 def validate(gate: dict, raw: object) -> dict:

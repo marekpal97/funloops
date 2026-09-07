@@ -4,13 +4,10 @@
     "max_parallel": 1,
     "max_fix_rounds": 2,
     "training_mode": true,
-    "draft_pr": true,
     "branch_prefix": "loop/issue-",
     "require_green_baseline": true,
-    "claim_mode": "assign",
     "run_mode": "pass",
-    "delivery": "pr-per-issue",
-    "prime_holdout": 5
+    "delivery": "pr-per-issue"
   },
   "labels": {
     "runnable": "ready-for-agent",
@@ -20,11 +17,7 @@
   "tdd": {
     "mode": "auto"
   },
-  "dispatch": {
-    "persona": true
-  },
   "triage": {
-    "green_enabled": false,
     "sensitive_paths": [
       "hooks/",
       "src/thinkweave/surfaces/",
@@ -33,8 +26,6 @@
       "*schema*"
     ],
     "watched_paths": [],
-    "green_max_diff_lines": 150,
-    "green_requires_first_try": true,
     "red_min_diff_lines": 800
   },
   "gates": [
@@ -46,15 +37,7 @@
         ".github/workflows/",
         "dist/",
         "_old/"
-      ],
-      "max_changed_lines": 2000
-    },
-    {
-      "id": "map",
-      "kind": "command",
-      "required": true,
-      "cmd": "uv run devloop map --check",
-      "timeout_sec": 120
+      ]
     },
     {
       "id": "tests",
@@ -64,20 +47,10 @@
       "timeout_sec": 1200
     },
     {
-      "id": "acceptance",
-      "kind": "acceptance",
+      "id": "judge",
+      "kind": "judge",
       "required": true,
       "threshold": "all"
-    },
-    {
-      "id": "review",
-      "kind": "review",
-      "required": true,
-      "block_on": [
-        "critical",
-        "major"
-      ],
-      "smells_baseline": true
     },
     {
       "id": "simplify",
@@ -86,9 +59,9 @@
       "skill": "ponytail-review",
       "rerun": [
         "tests",
-        "acceptance"
+        "judge"
       ],
-      "revert_note": "\u26a0 simplify-reverted"
+      "revert_note": "⚠ simplify-reverted"
     }
   ],
   "constitution": []

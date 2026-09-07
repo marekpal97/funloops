@@ -9,18 +9,20 @@ computes the current frontier, plus the weakly-connected components that
 tell the orchestrator which open issues belong to one DAG (chase
 sequentially, ``run_mode=exhaust``) vs unrelated work (parallel-safe across
 components). LLM judgment stays in the /issue-loop command (implementer,
-acceptance judge, reviewer); everything schedulable is plain graph math here.
+judge); everything schedulable is plain graph math here.
 
 Subcommands:
   plan     — snapshot issues via `gh`, compute frontier + components (JSON)
-  claim    — claim an issue for a run (assignee by default, label mode kept)
+  claim    — claim an issue for a run (the assignee IS the claim)
   release  — drop the claim
-  config     — print resolved loop config (defaults merged with loop.toml)
+  config     — print resolved loop config (defaults merged with loop.toml;
+               an unknown or deleted key is refused by name)
   check      — run one deterministic gate (kind: command | diff) and emit JSON
-  validate   — validate a judgment gate's subagent return (kind: acceptance |
-               review | simplify) against its schema; rejects for a re-ask
+  validate   — validate a judgment gate's subagent return (kind: judge |
+               simplify) against its schema; rejects for a re-ask
   prime      — assemble prior-trajectory prime context for an issue at claim
-               time (reads the derived index read-only; holdout-aware)
+               time (reads the derived index read-only; always serves what
+               it finds)
   trajectory — assemble a per-issue trajectory payload for the memory feed
                (the optional host extension; shape: devloop-boundaries.md §4)
   board      — doctor: lint one or more repos' boards against the grammar
@@ -47,7 +49,14 @@ from devloop import board, codemap, dag, github, index_client, trajectory, triag
 
 # Imported by name: `main` binds a local `gates` in the trajectory branch,
 # which would shadow a module of that name for the whole function.
-from devloop.gates import DETERMINISTIC, JUDGMENT, reject, validate
+from devloop.gates import (
+    COMMON_GATE_KEYS,
+    DETERMINISTIC,
+    GATE_KEYS,
+    JUDGMENT,
+    reject,
+    validate,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_REL = Path("docs") / "agents" / "loop.toml"
@@ -129,22 +138,13 @@ DEFAULT_CONFIG: dict = {
         "max_parallel": 1,
         "max_fix_rounds": 2,
         "training_mode": True,
-        "draft_pr": True,
         "branch_prefix": "loop/issue-",
         "require_green_baseline": True,
-        "claim_mode": "assign",  # assign: assignee IS the claim (wayfinder) | label
         "run_mode": "pass",      # pass: one frontier pass | exhaust: re-plan until dry
         "delivery": "pr-per-issue",  # pr-per-issue | stacked (one branch, one final PR)
-        # stateless 1-in-N-in-expectation sampling (sha1(run_id) % N == 0), not
-        # a counter over runs; 0 = never hold out
-        "prime_holdout": 5,
     },
     "tdd": {
         "mode": "auto",  # auto: enforced iff the baseline probe is green
-    },
-    "dispatch": {
-        # Splice persona + north-star into dispatch prompts (issue #89); semantics: issue-loop.command.md §1b.
-        "persona": True,
     },
     "labels": {
         "runnable": "ready-for-agent",
@@ -152,9 +152,6 @@ DEFAULT_CONFIG: dict = {
         "on_gate_failure": "ready-for-human",
     },
     "triage": {
-        # Ship conservative: green (auto-merge-ok) is OFF until a repo has
-        # branch protection + required CI and graduates out of training mode.
-        "green_enabled": False,
         # Sensitive paths → always red. Three pattern forms (see classify_pr):
         # dir prefix (trailing '/'), bare basename, glob. Empty by default:
         # a packaged rail cannot know a host repo's layout, and a guess
@@ -163,41 +160,66 @@ DEFAULT_CONFIG: dict = {
         "sensitive_paths": [],
         # Watched paths → at most yellow (skim, don't gate). Empty by default.
         "watched_paths": [],
-        "green_max_diff_lines": 150,   # green requires diff below this
-        "green_requires_first_try": True,  # green requires fix_rounds == 0
         "red_min_diff_lines": 800,     # "big diff" → red
     },
     "gates": [],
 }
+
+# The scalar sections a file or --set may carry. Gates are file-only and
+# checked per kind (gates.GATE_KEYS); anything else is unknown by name.
+SECTIONS = ("loop", "labels", "tdd", "triage")
 
 
 # ---------------------------------------------------------------------------
 # Config
 
 
+def _known_key(section: str, key: str) -> None:
+    """One check for both config paths: a key DEFAULT_CONFIG does not carry is
+    unknown — a typo and a knob the subtractive pass deleted (dec-cf8f0d33)
+    are refused the same way, naming the key, never silently dropped."""
+    if key not in DEFAULT_CONFIG[section]:
+        known = ", ".join(sorted(DEFAULT_CONFIG[section]))
+        raise ValueError(f"unknown key '{section}.{key}' (known: {known})")
+
+
+def _checked_gates(gates: list[dict]) -> list[dict]:
+    """A gate entry may carry only the keys its kind's verb reads. An unknown
+    kind passes through untouched — `check`/`validate` refuse it by name."""
+    for i, gate in enumerate(gates):
+        allowed = GATE_KEYS.get(gate.get("kind"))
+        if allowed is None:
+            continue
+        for key in gate:
+            if key not in COMMON_GATE_KEYS | allowed:
+                known = ", ".join(sorted(COMMON_GATE_KEYS | allowed))
+                raise ValueError(
+                    f"unknown key 'gates[{i}].{key}' for kind '{gate['kind']}' (known: {known})")
+    return gates
+
+
 def load_config(path: Path | None = None) -> dict:
     """Defaults merged with loop.toml. Gates come only from the file.
 
     ``path`` defaults to whatever ``find_config`` resolves for the working
-    directory, so the host repo's file wins over the packaged one.
+    directory, so the host repo's file wins over the packaged one. A section
+    or key the defaults do not carry raises ``ValueError`` naming it.
     """
     path = path if path is not None else find_config()
-    cfg = {
-        "loop": dict(DEFAULT_CONFIG["loop"]),
-        "labels": dict(DEFAULT_CONFIG["labels"]),
-        "tdd": dict(DEFAULT_CONFIG["tdd"]),
-        "dispatch": dict(DEFAULT_CONFIG["dispatch"]),
-        "triage": dict(DEFAULT_CONFIG["triage"]),
-        "gates": [],
-    }
+    cfg: dict = {section: dict(DEFAULT_CONFIG[section]) for section in SECTIONS}
+    cfg["gates"] = []
     if path.exists():
         data = tomllib.loads(path.read_text(encoding="utf-8"))
-        cfg["loop"].update(data.get("loop", {}))
-        cfg["labels"].update(data.get("labels", {}))
-        cfg["tdd"].update(data.get("tdd", {}))
-        cfg["dispatch"].update(data.get("dispatch", {}))
-        cfg["triage"].update(data.get("triage", {}))
-        cfg["gates"] = data.get("gates", [])
+        for section, values in data.items():
+            if section == "gates":
+                cfg["gates"] = _checked_gates(values)
+                continue
+            if section not in SECTIONS:
+                raise ValueError(
+                    f"unknown section '{section}' in {path.name} (known: {' | '.join(SECTIONS)})")
+            for key in values:
+                _known_key(section, key)
+            cfg[section].update(values)
     return cfg
 
 
@@ -231,13 +253,10 @@ def apply_overrides(cfg: dict, specs: list[str]) -> dict:
     """
     for spec in specs:
         section, key, value = parse_override(spec)
-        if section not in ("loop", "labels", "tdd", "dispatch", "triage"):
+        if section not in SECTIONS:
             raise ValueError(
-                f"--set section '{section}' not overridable (loop | labels | tdd | dispatch | triage)"
-            )
-        if key not in DEFAULT_CONFIG[section]:
-            known = ", ".join(sorted(DEFAULT_CONFIG[section]))
-            raise ValueError(f"--set unknown key '{section}.{key}' (known: {known})")
+                f"--set section '{section}' not overridable ({' | '.join(SECTIONS)})")
+        _known_key(section, key)
         cfg[section][key] = value
     return cfg
 
@@ -290,7 +309,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_validate.add_argument("--gate", required=True)
     p_validate.add_argument("--return-json", required=True,
                             help="file with the subagent's JSON return (schema per "
-                                 "kind: acceptance {criteria[]}, review {findings[]}, "
+                                 "kind: judge {criteria[], findings[]}, "
                                  "simplify {outcome, lines_delta, cuts[], kept[]})")
 
     p_prime = sub.add_parser("prime", help="assemble prior-trajectory prime context for an issue", parents=[common])
@@ -349,7 +368,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              "skill-invocation tag alongside loop-run)")
     p_traj.add_argument("--primed", action=argparse.BooleanOptionalAction, default=None,
                         help="mirror the claim-time prime verdict: --primed (received "
-                             "prior-trajectory context) / --no-primed (deliberate holdout). "
+                             "prior-trajectory context) / --no-primed (nothing served). "
                              "Omit to leave both prime keys out (pre-#57 shape).")
     p_traj.add_argument("--served-json", default=None,
                         help="file with the served note ids (prime output's `served`) to "
@@ -434,27 +453,15 @@ def main(argv: list[str] | None = None) -> int:
         result = dag.compute_frontier(issues, cfg, limit=limit)
         print(json.dumps(result, indent=2))
     elif args.cmd == "claim":
-        if cfg["loop"]["claim_mode"] == "assign":
-            # wayfinder convention: the assignee IS the claim — renders
-            # natively in the tracker UI, no label vocabulary consumed.
-            github.run(["issue", "edit", str(args.number), "--add-assignee", "@me"])
-        else:
-            label = cfg["labels"]["claimed"]
-            subprocess.run(
-                ["gh", "label", "create", label, "--description",
-                 "Claimed by an /issue-loop run", "--color", "1d76db"],
-                capture_output=True,
-                check=False,
-            )  # idempotent: fails silently if it exists
-            github.run(["issue", "edit", str(args.number), "--add-label", label])
+        # wayfinder convention: the assignee IS the claim — renders natively
+        # in the tracker UI, no label vocabulary consumed (dec-cf8f0d33
+        # retired the label mode; labels.claimed stays readable for `plan`).
+        github.run(["issue", "edit", str(args.number), "--add-assignee", "@me"])
         github.run(["issue", "comment", str(args.number), "--body",
                     f"🤖 issue-loop: claimed by run `{args.run_id}`."])
         print(f"claimed #{args.number}")
     elif args.cmd == "release":
-        if cfg["loop"]["claim_mode"] == "assign":
-            github.run(["issue", "edit", str(args.number), "--remove-assignee", "@me"])
-        else:
-            github.run(["issue", "edit", str(args.number), "--remove-label", cfg["labels"]["claimed"]])
+        github.run(["issue", "edit", str(args.number), "--remove-assignee", "@me"])
         print(f"released #{args.number}")
     elif args.cmd in ("check", "validate"):
         gate = next((g for g in cfg["gates"] if g["id"] == args.gate), None)
@@ -488,7 +495,6 @@ def main(argv: list[str] | None = None) -> int:
         concepts = (_split_csv(args.concepts) if args.concepts is not None
                     else _split_csv(args.labels) if args.labels is not None
                     else github.fetch_labels(args.number))
-        holdout = cfg["loop"].get("prime_holdout", 5)
         conn = None
         db_path = index_client.resolve_db_path(args.db, args.vault)
         if db_path and Path(db_path).exists():
@@ -498,7 +504,7 @@ def main(argv: list[str] | None = None) -> int:
                 conn = None
         try:
             payload = trajectory.build_prime_payload(
-                args.number, args.run_id, concepts, conn=conn, holdout=holdout,
+                args.number, args.run_id, concepts, conn=conn,
                 limit=args.limit, budget_chars=args.budget_chars,
                 decisions=_split_csv(args.decisions) if args.decisions else None,
                 query=args.query,

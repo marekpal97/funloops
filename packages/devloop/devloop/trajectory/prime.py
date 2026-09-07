@@ -14,29 +14,10 @@ file is composition, rendering and policy only.
 from __future__ import annotations
 
 import datetime
-import hashlib
 import json
 from pathlib import Path
 
 from devloop.index_client import Connection, Error, note_bodies, trajectory_candidates
-
-
-def is_holdout(run_id: str, holdout: int) -> bool:
-    """Stateless 1-in-N-in-expectation holdout: some runs dispatch unprimed.
-
-    Loop runs are numerous, comparable, and gate-scored (#60's ``outcome``),
-    so periodically withholding prime context lets the outcome regression
-    separate "context helped" from "easy issue". The decision is
-    ``sha1(run_id) mod N == 0`` — sampling, not a counter: it holds out one run
-    in N *in expectation*, never literally every Nth run. It is stable across
-    processes (no PYTHONHASHSEED dependence, unlike ``hash()``) and
-    date/random-free, so it is hand-computable and testable. ``holdout <= 0``
-    disables holdout entirely.
-    """
-    if holdout <= 0:
-        return False
-    digest = int(hashlib.sha1(run_id.encode("utf-8")).hexdigest(), 16)
-    return digest % holdout == 0
 
 
 def _coerce_builds_on(raw: object) -> list[str]:
@@ -166,7 +147,7 @@ def render_prime_block(
 
 def build_prime_payload(
     issue_number: int, run_id: str, concepts: list[str], *,
-    conn: Connection | None = None, holdout: int = 5,
+    conn: Connection | None = None,
     limit: int = 3, budget_chars: int = 1200, decisions: list[str] | None = None,
     query: str = "",
 ) -> dict:
@@ -174,26 +155,19 @@ def build_prime_payload(
 
     ``concepts`` (ontology terms) and ``query`` (the issue's text) are the two
     retrieval legs; ``decisions`` are the file-anchored note ids the
-    orchestrator resolved at claim time.
+    orchestrator resolved at claim time. Prime always serves what it finds
+    (dec-cf8f0d33 retired the sampled holdout).
 
-    Output keys: ``primed`` (received prime context this run), ``holdout``
-    (deliberately withheld), ``served`` (note ids served — trajectory + decisions,
-    capped ``limit`` per kind), ``block`` (markdown to splice; ``''`` when
-    unprimed), ``note`` (why unprimed, when it is). A held-out or empty-match
-    run returns ``primed=False`` with no served ids and an empty block, so the
-    loop runs unchanged.
+    Output keys: ``primed`` (received prime context this run), ``served`` (note
+    ids served — trajectory + decisions, capped ``limit`` per kind), ``block``
+    (markdown to splice; ``''`` when unprimed), ``note`` (why unprimed, when it
+    is). An empty-match run returns ``primed=False`` with no served ids and an
+    empty block, so the loop runs unchanged.
     """
     payload = {
         "issue": issue_number, "run_id": run_id, "concepts": list(concepts),
-        "query": query, "holdout": is_holdout(run_id, holdout), "primed": False,
-        "served": [], "block": "", "note": "",
+        "query": query, "primed": False, "served": [], "block": "", "note": "",
     }
-    if payload["holdout"]:
-        payload["note"] = (
-            f"held out (1 run in {holdout} in expectation runs unprimed for the "
-            "outcome regression)"
-        )
-        return payload
     # The query — not the connect — is where a foreign/corrupt file
     # (DatabaseError) or an older index missing note_tags/note_concepts
     # (OperationalError) raises. Guard here so a bad index degrades to unprimed
