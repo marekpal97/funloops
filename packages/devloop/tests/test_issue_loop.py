@@ -2449,11 +2449,12 @@ def test_extension_points_do_not_claim_the_rail_runs_judgment_kinds():
 # rejection is pinned with the other deleted keys above.
 
 
-def test_vendored_ponytail_persona_present_with_provenance():
-    """The AGENTS.md ladder persona is vendored under docs/agents/ with the
-    SAME pinned-upstream provenance as the #58/#61 vendorings (source repo +
-    pinned sha + MIT notice). It is a dispatch splice source, not a slash
-    command — the command doc references this file, never duplicates it."""
+def test_forked_ponytail_persona_carries_provenance():
+    """The AGENTS.md ladder persona is devloop's own fork (dec-cac953a6, #41)
+    but keeps the provenance the #58/#61 vendorings carry (source repo + the
+    sha it forked from + MIT notice). It is a dispatch splice source, not a
+    slash command — the command doc references this file, never duplicates
+    it."""
     vendored = cli.REPO_ROOT / "docs" / "agents" / "ponytail-persona.md"
     assert vendored.exists()
     text = vendored.read_text(encoding="utf-8")

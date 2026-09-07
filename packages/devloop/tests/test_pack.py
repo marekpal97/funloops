@@ -14,8 +14,10 @@ describes; ``files.txt``, ``context.txt``, ``node-*.txt`` are codegraph
 1.6.0's literal stdout over it (``init -y``, then ``files`` / ``context
 --no-code <title>`` / ``node -f <file> --symbols-only``); ``issue.md`` is the
 issue body; ``persona.md`` / ``constitution.md`` are two-line stand-ins for
-the packaged docs so the golden pins the pack's composition, not their
-prose; ``implementer.md`` is the golden, captured once and hand-checked.
+the packaged docs (the persona stand-in carries the constitution marker, as
+the real one does) so the golden pins the pack's composition, not their
+prose; ``implementer.md`` is the golden, captured once and hand-checked. The
+REAL persona + rules + overlay splice is pinned in test_constitution.py.
 """
 
 from __future__ import annotations
@@ -122,6 +124,20 @@ def test_failing_or_silent_codegraph_degrades(repo, tmp_path, capsys, code):
     out = capsys.readouterr().out
     assert "DEGRADED" in out
     assert "tier 1" not in out  # never an empty catalog under a clean heading
+
+
+@pytest.mark.parametrize("persona", [None, "# No marker\n\nBe lazy.\n"])
+def test_persona_missing_or_markerless_fails_closed(repo, tmp_path, monkeypatch,
+                                                    capsys, persona):
+    """A docs-less wheel (no persona file) and a persona without the
+    constitution marker are the same rung: an error marker and exit 2, never
+    a pack that dispatches without the rules or appends them silently."""
+    path = tmp_path / "persona.md"
+    if persona is not None:
+        path.write_text(persona, encoding="utf-8")
+    monkeypatch.setattr(cli, "PACKAGE_PERSONA", path)
+    assert cli.main(["pack", "7", "--role", "implementer", "--cwd", str(repo)]) == 2
+    assert "error" in json.loads(capsys.readouterr().out)
 
 
 def test_judge_pack_carries_no_persona(repo, tmp_path, capsys):

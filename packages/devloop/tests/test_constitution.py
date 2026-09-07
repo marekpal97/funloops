@@ -7,15 +7,17 @@ Seams under test — the two the issue names:
    ``docs/agents/constitution.md`` overlay *extends* the default (appended
    after it), never replaces it. Same upward walk as loop.toml, opposite
    merge posture.
-2. **Splice** — the command doc names exactly one splice point for the
-   constitution, and the reading-the-ladder clause lives inside the
-   constitution itself: no post-persona rider block anywhere, and the
-   vendored persona carries none of it.
+2. **Splice** — the persona is the single splice container (issue #41,
+   dec-d79e8e7b): ``pack.splice`` inserts the resolved constitution at the
+   persona's one marker line, and the assembled text — the REAL packaged
+   persona, the REAL packaged rules, this repo's REAL overlay, in that
+   order — is pinned to a golden. The command doc names exactly one splice
+   point, and the reading-the-ladder clause lives in the persona alone.
 
-Sources of truth are the issue's acceptance criteria (≤ 40 lines, twelve
-rules, an incident per rule), dec-1746aec3's amendment convention
-(watched_paths covers the file), and the filesystem — never the code under
-test.
+Sources of truth are the issue's acceptance criteria (≤ 40 lines, seven
+rules, no citation in any rule's text), dec-1746aec3's amendment convention
+(watched_paths covers both layers), and the filesystem — never the code
+under test.
 """
 
 from __future__ import annotations
@@ -32,11 +34,15 @@ from devloop import cli, pack, paths
 
 DOCS = cli.REPO_ROOT / "docs" / "agents"
 COMMAND_DOC = DOCS / "issue-loop.command.md"
-PERSONA = DOCS / "ponytail-persona.md"
+FUNLOOPS_ROOT = cli.REPO_ROOT.parents[1]
+OVERLAY = FUNLOOPS_ROOT / "docs" / "agents" / "constitution.md"
+GOLDEN_SPLICE = Path(__file__).resolve().parent / "fixtures" / "pack" / "splice.md"
 
-# The rider's most distinctive line — if it appears anywhere but the
-# constitution, the depth rider survived as a second mechanism.
+# The former depth rider's most distinctive line — if it appears anywhere but
+# the persona, the reading-the-ladder clause survived as a second mechanism.
 LADDER_CLAUSE_PHRASE = "consolidate, not scatter"
+# AC3 verbatim: an issue/PR number, a bare 7-hex sha, or "PR " in a rule.
+CITATION = re.compile(r"#[0-9]{2,}|\b[0-9a-f]{7}\b|PR ")
 
 
 def _body(path: Path) -> str:
@@ -107,8 +113,8 @@ def test_an_identical_copy_in_another_checkout_is_served_once(tmp_path):
 
 def test_a_missing_packaged_default_is_loud(tmp_path, monkeypatch):
     """A wheel that shipped no docs/ must not resolve to a nonexistent path
-    the orchestrator splices as silence — losing all twelve rules unannounced
-    is the fail-open rule 7 names. Resolution refuses instead."""
+    the orchestrator splices as silence — losing every rule unannounced is
+    the fail-open rule 5 names. Resolution refuses instead."""
     monkeypatch.setattr(cli, "PACKAGE_CONSTITUTION",
                         tmp_path / "absent" / "constitution.md")
     with pytest.raises(FileNotFoundError):
@@ -138,37 +144,51 @@ def test_constitution_is_one_screen():
     assert len(lines) <= 40, f"{len(lines)} lines — the criterion is ≤ 40"
 
 
-def test_twelve_rules_each_citing_an_incident():
-    """'No rule without an incident': every numbered rule names a SHA, PR,
-    issue, or decision id — precedent, not policy."""
+def test_seven_rules_and_no_citation_in_any_rule():
+    """dec-d79e8e7b's durability test: a packaged rule names the failure it
+    prevents in general terms; provenance is a decision id in the PR that
+    adds the rule, never in the text an installing repo cannot resolve."""
     rules = re.findall(r"^\d+\.\s.*$", _body(cli.PACKAGE_CONSTITUTION),
                        re.MULTILINE)
-    assert len(rules) == 12, f"{len(rules)} rules — the report's set is twelve"
-    # An issue/PR number, a decision id, or a commit sha — where a sha must
-    # carry a digit, so English spelled in a-f ("defaced") never counts.
-    incident = re.compile(
-        r"#\d+|dec-[0-9a-f]+|\b(?=[0-9a-f]{7,40}\b)[0-9a-f]*\d[0-9a-f]*\b")
-    assert not incident.search("a defaced facade decade")
+    assert len(rules) == 7, f"{len(rules)} rules — the settled set is seven"
     for rule in rules:
-        assert incident.search(rule), f"rule cites no incident: {rule}"
-
-
-def test_ladder_clause_closes_the_constitution():
-    """The former depth rider is the *closing* clause, folded in — not a
-    separate block."""
-    paragraphs = [p for p in _body(cli.PACKAGE_CONSTITUTION).split("\n\n")
-                  if p.strip()]
-    closing = paragraphs[-1]
-    assert "ladder" in closing and LADDER_CLAUSE_PHRASE in closing
+        assert not CITATION.search(rule), f"rule cites an incident: {rule}"
 
 
 # ---------------------------------------------------------------------------
 # Splice seam
 
 
+def test_implementer_splice_is_golden():
+    """AC1 — seam: ``pack.splice``, the pure function the pack verb calls,
+    over the real packaged persona, the real packaged rules and this repo's
+    real overlay (resolved from the funloops root, packaged first). The
+    golden is authored from those files and compared byte-for-byte; the
+    overlay's rules continue the packaged numbering (8, 9) so the implementer
+    reads one list."""
+    resolved = cli.find_constitution(FUNLOOPS_ROOT)
+    assert resolved == [cli.PACKAGE_CONSTITUTION, OVERLAY]
+    spliced = pack.splice(_body(cli.PACKAGE_PERSONA), [_body(p) for p in resolved])
+    assert spliced == GOLDEN_SPLICE.read_text(encoding="utf-8")
+    assert spliced.index("1. **Depth over spread**") \
+        < spliced.index("8. **Check what the substrate")
+
+
+def test_persona_carries_exactly_one_marker():
+    """The splice contract from the persona's side: one marker line, kept by
+    the header strip (the strip ends at the first comment close, so the
+    provenance header must not spell the marker)."""
+    assert _body(cli.PACKAGE_PERSONA).split("\n").count(pack.MARKER) == 1
+
+
+def test_a_persona_without_the_marker_is_refused():
+    """No marker, no silent append: the rules would ride nowhere."""
+    with pytest.raises(ValueError):
+        pack.splice("# persona\n\nno marker here", ["1. a rule"])
+
+
 def test_exactly_one_splice_point_in_the_command_doc():
-    """Until `devloop pack` lands, dispatch assembly is the one splice point:
-    a single paragraph of the command doc names the file and defines the
+    """A single paragraph of the command doc names the file and defines the
     extend-not-replace resolution."""
     text = COMMAND_DOC.read_text(encoding="utf-8")
     naming = [p for p in text.split("\n\n") if "constitution.md" in p]
@@ -176,13 +196,13 @@ def test_exactly_one_splice_point_in_the_command_doc():
     assert "extends" in naming[0] and "never replaces" in naming[0]
 
 
-def test_no_post_persona_rider_anywhere():
-    """The persona stays byte-identical and the ladder clause has one home:
-    no doc but the constitution carries it, and the persona knows nothing of
-    the constitution."""
-    assert "constitution" not in PERSONA.read_text(encoding="utf-8").lower()
+def test_ladder_clause_lives_in_the_persona_alone():
+    """The reading-the-ladder clause is dissolved into the persona
+    (dec-d79e8e7b §3): no other packaged doc — the constitution included —
+    carries it, so there is one home and no rider."""
+    assert LADDER_CLAUSE_PHRASE in _body(cli.PACKAGE_PERSONA)
     for doc in DOCS.glob("*.md"):
-        if doc.name == "constitution.md":
+        if doc.name == "ponytail-persona.md":
             continue
         assert LADDER_CLAUSE_PHRASE not in doc.read_text(encoding="utf-8"), \
             f"the ladder clause leaked into {doc.name}"
@@ -196,12 +216,13 @@ def test_watched_paths_cover_the_constitution():
     """dec-1746aec3's predicted outcome: constitution.md stays under
     watched_paths, so an amendment PR is at most skim-lane, never invisible.
     Real matcher, real shipped configs — not a recomputed pattern. Both
-    audiences: funloops keeps its copy under packages/devloop/, an adopting
-    repo's overlay lives at the repo root — each shipped config must cover
-    its own arrangement."""
+    audiences: funloops keeps the packaged copy under packages/devloop/ AND
+    its own overlay at the repo root (#41), an adopting repo's overlay lives
+    at the repo root — each shipped config must cover its own arrangement."""
     funloops = cli.load_config(cli.PACKAGE_CONFIG)
-    assert any(paths.match("packages/devloop/docs/agents/constitution.md", p)
-               for p in funloops["triage"]["watched_paths"])
+    for rel in ("packages/devloop/docs/agents/constitution.md",
+                "docs/agents/constitution.md"):
+        assert any(paths.match(rel, p) for p in funloops["triage"]["watched_paths"]), rel
     template = cli.load_config(cli.REPO_ROOT / "docs" / "agents"
                                / "loop.toml.template")
     assert any(paths.match("docs/agents/constitution.md", p)
