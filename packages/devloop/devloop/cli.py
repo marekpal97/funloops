@@ -187,15 +187,14 @@ def _checked_gates(gates: list[dict]) -> list[dict]:
     """A gate entry names a known kind and carries only the keys that kind's
     verb reads; a stale kind (`review`) or a missing one is refused by name."""
     for i, gate in enumerate(gates):
-        allowed = GATE_KEYS.get(gate.get("kind"))
-        if allowed is None:
-            raise ValueError(f"unknown kind {gate.get('kind')!r} at gates[{i}] "
+        kind = gate.get("kind")
+        if kind not in GATE_KEYS:
+            raise ValueError(f"unknown kind {kind!r} at gates[{i}] "
                              f"(known: {', '.join(sorted(GATE_KEYS))})")
-        for key in gate:
-            if key not in COMMON_GATE_KEYS | allowed:
-                known = ", ".join(sorted(COMMON_GATE_KEYS | allowed))
-                raise ValueError(
-                    f"unknown key 'gates[{i}].{key}' for kind '{gate['kind']}' (known: {known})")
+        allowed = COMMON_GATE_KEYS | GATE_KEYS[kind]
+        for key in sorted(set(gate) - allowed):
+            raise ValueError(f"unknown key 'gates[{i}].{key}' for kind '{kind}' "
+                             f"(known: {', '.join(sorted(allowed))})")
     return gates
 
 
