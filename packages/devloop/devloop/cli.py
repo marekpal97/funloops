@@ -17,7 +17,8 @@ Subcommands:
   release  — drop the claim
   config     — print resolved loop config (defaults merged with loop.toml;
                an unknown or deleted key is refused by name)
-  check      — run one deterministic gate (kind: command | diff) and emit JSON
+  check      — run one deterministic gate (kind: command | diff) and emit JSON;
+               --issue N runs the issue's `verify:` lines as command gates
   validate   — validate a judgment gate's subagent return (kind: judge |
                simplify) against its schema; rejects for a re-ask
   prime      — assemble prior-trajectory prime context for an issue at claim
@@ -53,7 +54,9 @@ from devloop.gates import (
     DETERMINISTIC,
     GATE_KEYS,
     JUDGMENT,
+    VERIFY_ENV,
     reject,
+    run_verify_lines,
     validate,
 )
 
@@ -299,8 +302,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("config", help="print resolved config as JSON", parents=[common])
 
-    p_check = sub.add_parser("check", help="run one deterministic gate", parents=[common])
-    p_check.add_argument("--gate", required=True)
+    p_check = sub.add_parser(
+        "check", help="run one deterministic gate, or an issue's verify: lines", parents=[common])
+    what = p_check.add_mutually_exclusive_group(required=True)
+    what.add_argument("--gate", help="a command | diff gate id from loop.toml")
+    what.add_argument("--issue", type=int, metavar="N",
+                      help="run issue N's `verify:` lines as command gates "
+                           "({issue, results: [GateResult...], summary})")
     p_check.add_argument("--cwd", default=".")
     p_check.add_argument("--base-ref", default="origin/main")
 
@@ -456,6 +464,17 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "release":
         github.run(["issue", "edit", str(args.number), "--remove-assignee", "@me"])
         print(f"released #{args.number}")
+    elif args.cmd == "check" and args.issue is not None:
+        if os.environ.get(VERIFY_ENV) == str(args.issue):
+            print(json.dumps({"error": f"recursive verify: #{args.issue}'s own verify "
+                                       "lines are already running this verb"}))
+            return 2
+        cwd = Path(args.cwd).resolve()
+        body = json.loads(github.run(["issue", "view", str(args.issue),
+                                      "--json", "body"], cwd=cwd))["body"]
+        result = run_verify_lines(args.issue, body, cwd)
+        print(json.dumps(result, indent=2))
+        return 0 if all(r["passed"] for r in result["results"]) else 1
     elif args.cmd in ("check", "validate"):
         gate = next((g for g in cfg["gates"] if g["id"] == args.gate), None)
         if gate is None:

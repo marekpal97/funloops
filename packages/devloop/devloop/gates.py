@@ -14,15 +14,26 @@ the rejection's per-field detail (empty on a real verdict).
 
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 from pathlib import Path
 
 from devloop import paths
 
+# Exit codes a shell gives a command it cannot find: POSIX sh 127, cmd.exe 9009.
+_NOT_FOUND = (127, 9009)
+
 
 def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict:
     """``base_ref`` is unused — it is in the signature so both deterministic
-    executors share the registry's one calling convention."""
+    executors share the registry's one calling convention.
+
+    ``expect`` (set only by the verify rail, never a loop.toml key) is a
+    substring stdout must carry for the gate to pass. A command the shell
+    cannot find fails with the shell's own "not found" line in the summary, so
+    a missing binary is named, never read as a plain non-zero exit.
+    """
     timeout_sec = gate.get("timeout_sec", 900)
     try:
         proc = subprocess.run(
@@ -45,13 +56,67 @@ def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict
             "detail": "",
         }
     tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[-30:])
+    expect = gate.get("expect", "")
+    found = expect in proc.stdout
+    summary = f"`{gate['cmd']}` exited {proc.returncode}"
+    if expect:
+        summary += f"; stdout {'contains' if found else 'lacks'} {expect!r}"
+    if proc.returncode in _NOT_FOUND:
+        summary += f" — {(proc.stderr.strip().splitlines() or ['not found'])[-1]}"
     return {
         "id": gate["id"],
         "kind": "command",
-        "passed": proc.returncode == 0,
-        "summary": f"`{gate['cmd']}` exited {proc.returncode}",
+        "passed": proc.returncode == 0 and found,
+        "summary": summary,
         "detail": tail,
     }
+
+
+# ---------------------------------------------------------------------------
+# The verify rail (dec-2f5bf66a): an issue's own `verify:` lines, run as
+# ad-hoc command gates. Strictness justification (dec-034ee0f7): the result
+# is the rail's, so the orchestrator cannot soften a red line into prose.
+
+# `- [ ] verify: `<cmd> [=> <text>]`` — the checklist prefix is optional, the
+# backticks are stripped, and the LAST ` => ` splits off the expected stdout.
+_VERIFY_LINE = re.compile(r"^\s*(?:[-*]\s+(?:\[[ xX]\]\s+)?)?verify:\s*(.+?)\s*$", re.MULTILINE)
+VERIFY_ENV = "DEVLOOP_VERIFY_ISSUE"   # set while an issue's lines run: the recursion guard
+
+
+def parse_verify_lines(body: str) -> list[tuple[str, str]]:
+    """``[(command, expected_stdout_substring)]`` in body order; ``""`` when
+    the line carries no ``=>``. Prose that merely mentions ``verify:`` does
+    not start a line with it, so it never parses."""
+    lines = []
+    for text in _VERIFY_LINE.findall(body):
+        if len(text) > 1 and text[0] == text[-1] == "`":
+            text = text[1:-1]
+        cmd, sep, expect = text.rpartition(" => ")
+        lines.append((cmd.strip(), expect.strip()) if sep else (text.strip(), ""))
+    return lines
+
+
+def run_verify_lines(number: int, body: str, cwd: Path) -> dict:
+    """``check --issue``'s result: ``{issue, results: [GateResult…], summary}``
+    — one command GateResult per line (``id: verify:<k>``, the tests gate's
+    runner and default timeout); ``summary`` reads ``no verify lines`` for a
+    body without any, which is a pass."""
+    lines = parse_verify_lines(body)
+    prev = os.environ.get(VERIFY_ENV)
+    os.environ[VERIFY_ENV] = str(number)
+    try:
+        results = [run_command_gate({"id": f"verify:{k}", "kind": "command",
+                                     "cmd": cmd, "expect": expect}, cwd)
+                   for k, (cmd, expect) in enumerate(lines, 1)]
+    finally:
+        if prev is None:
+            del os.environ[VERIFY_ENV]
+        else:
+            os.environ[VERIFY_ENV] = prev
+    passed = sum(r["passed"] for r in results)
+    return {"issue": number, "results": results,
+            "summary": (f"{passed}/{len(results)} verify lines passed" if results
+                        else "no verify lines")}
 
 
 def evaluate_diff_gate(gate: dict, numstat: str) -> dict:
