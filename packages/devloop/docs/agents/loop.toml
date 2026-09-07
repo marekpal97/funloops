@@ -71,8 +71,10 @@ sensitive_paths = [
 # Watched paths → yellow with the path named (skim, never gate). The judgment
 # plane: doc changes steer every future run, so a human glances even when
 # gates are green. Glob form, not a dir prefix, so a second workspace member's
-# judgment plane lands in the same lane the day it appears.
-watched_paths = ["*/docs/agents/*"]
+# judgment plane lands in the same lane the day it appears; the dir prefix
+# is the repo-root overlay (docs/agents/constitution.md), which the glob's
+# leading `*/` cannot reach.
+watched_paths = ["*/docs/agents/*", "docs/agents/"]
 red_min_diff_lines = 800       # "big diff" → red (a human-lane signal, never a block)
 
 # ── Gate pipeline ─────────────────────────────────────────────────────────

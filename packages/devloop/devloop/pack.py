@@ -2,8 +2,10 @@
 
 ``devloop pack <N> --role implementer|judge`` (funloops#28; dec-f12457eb,
 dec-fd12489d, dec-d2de831e) prints, deterministically and in order: the
-issue body; the persona with the constitution injected (implementer only); the
-repo map spliced from codegraph's CLI text — tier 1 the whole-repo catalog
+issue body; the persona with the resolved constitution (packaged, then the
+host overlay) injected at its one marker line (implementer only; #41,
+dec-d79e8e7b); the repo map spliced from codegraph's CLI text — tier 1 the
+whole-repo catalog
 (``codegraph files``, each module annotated with the first line of its own
 docstring as its responsibility), tier 2 ``codegraph context --no-code
 <title>`` plus ``codegraph node --file … --symbols-only`` for every file the
@@ -16,7 +18,7 @@ no version pin, no schema test. The index under ``<root>/.codegraph`` is
 machine-local and self-provisioned by CLI call (``init -y`` when absent,
 ``sync`` otherwise) so a fresh worktree maps too. Any failure — no binary, a
 failed verb — degrades to a marked block asking the model to gather the
-layout itself; the pack never blocks (rule 7: a degraded path announces
+layout itself; the pack never blocks (rule 5: a degraded path announces
 itself, and a missing map is a weaker dispatch, not a wrong one).
 """
 
@@ -45,7 +47,7 @@ def _codegraph(binary: str, root: Path, *args: str) -> str:
             f"{args[0]} exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()}")
     # A read verb that prints nothing is not a map — it is a wrapper, a wrong
     # binary, or a version writing elsewhere; spliced, it would read as a
-    # clean empty catalog (rule 7). init/sync legitimately say nothing.
+    # clean empty catalog (rule 5). init/sync legitimately say nothing.
     if args[0] not in ("init", "sync") and not proc.stdout.strip():
         raise CodegraphUnavailable(f"{args[0]}: empty output")
     return proc.stdout
@@ -133,6 +135,23 @@ def body(text: str) -> str:
     if text.lstrip().startswith("<!--"):
         text = text.partition("-->")[2]
     return text.strip("\n")
+
+
+MARKER = "<!-- constitution -->"
+
+
+def splice(persona: str, rules: list[str]) -> str:
+    """The persona with the constitution injected: the ``rules`` bodies
+    (packaged first, then the host overlay) replace the persona's one
+    ``MARKER`` line, joined by a blank line. A persona without exactly one
+    marker is refused — appended silently, the rules would ride outside the
+    text that reads them (rule 5)."""
+    lines = persona.split("\n")
+    if lines.count(MARKER) != 1:
+        raise ValueError(f"persona must carry exactly one '{MARKER}' line, "
+                         f"found {lines.count(MARKER)}")
+    at = lines.index(MARKER)
+    return "\n".join([*lines[:at], "\n\n".join(rules), *lines[at + 1:]])
 
 
 def compose(*, role: str, number: int, issue: dict, persona: str,

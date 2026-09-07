@@ -110,8 +110,8 @@ def find_constitution(start: Path | None = None) -> list[Path]:
     A missing packaged default raises rather than resolving: an install that
     shipped no ``docs/`` (the wheel packages only ``devloop/``) must not hand
     the orchestrator a path that splices as silence — a dispatch that loses
-    all twelve rules unannounced is the fail-open the constitution's own
-    rule 7 names. loop.toml's missing-file degrade is honest because defaults
+    every rule unannounced is the fail-open the constitution's own
+    rule 5 names. loop.toml's missing-file degrade is honest because defaults
     exist in code; the constitution has no in-code fallback.
     """
     if not PACKAGE_CONSTITUTION.is_file():
@@ -602,11 +602,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.role == "implementer":
             try:
                 # The rules fail closed (find_constitution raises; so does a
-                # persona missing from a docs-less wheel): an error marker,
-                # never a pack that dispatches without them.
-                persona = "\n\n".join(pack.body(p.read_text(encoding="utf-8"))
-                                      for p in [PACKAGE_PERSONA, *find_constitution(root)])
-            except FileNotFoundError as exc:
+                # persona missing from a docs-less wheel, or one without the
+                # marker): an error marker, never a pack that dispatches
+                # without them.
+                persona = pack.splice(
+                    pack.body(PACKAGE_PERSONA.read_text(encoding="utf-8")),
+                    [pack.body(p.read_text(encoding="utf-8"))
+                     for p in find_constitution(root)])
+            except (FileNotFoundError, ValueError) as exc:
                 print(json.dumps({"error": str(exc)}))
                 return 2
         repo_map = pack.render_map(args.codegraph_bin, root, issue["title"],
