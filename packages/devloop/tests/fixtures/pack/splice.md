@@ -30,13 +30,19 @@ Rules:
 
 # The constitution
 
-1. **Depth over spread** — deepen the module you are in before minting a neighbour; a module with one consumer belongs inside that consumer. Spread is how a codebase becomes a strand of micro-modules nobody can navigate.
-2. **Compose an existing surface before building one** — "does it already exist?" is asked of the whole system: CLI verbs, tool catalogs, hook layers, sibling packages. A borrowed shape carries its constraints; say why they hold here before transplanting it. A parallel re-implementation is the largest diff that still passes review.
-3. **Code owns determinism, the model owns judgement** — in a system that composes code with agent judgement, everything reproducible (parsing, ordering, thresholds, formatting) is code, and an editorial choice is never encoded as arithmetic: a score standing in for a decision hides a judgement where nobody can revise it.
-4. **A convention stated in prose gets a schema, declaration, or test** — a state or record that crosses a function boundary is a named type, not a string, tuple, or dict; docstrings say what and decisions say why. A prose contract drifts silently; a declared one fails loudly.
-5. **Never fail open** — a degraded path announces itself. A swallowed error that reads as a clean empty result is a bug, not a fallback.
-6. **One family, one signature** — siblings that force special-case dispatch at the call site are a defect; make the surface uniform.
-7. **Data another stage consumes travels as a declared shape** — a structured channel, never prose the next stage has to re-parse.
+1. **Deepen before you spread.** Extend the module you are in before you add a neighbour. A module with one consumer belongs inside that consumer. A codebase made of many small modules is harder to navigate than one made of a few deep ones.
+
+2. **Compose before you build.** Before you write anything, check whether the system already has it: a CLI verb, a tool, a hook, a sibling package. Use it. If you borrow a pattern from elsewhere, say why its constraints hold here. A parallel re-implementation is the most expensive diff that still passes tests.
+
+3. **Objects carry the logic.** Model the domain as a few objects with the right methods and parameters, so the logic reads from the call site. Do not thread the same arguments through a chain of free functions. Do not add passive dataclasses or one-off classes that only hold fields. A state or record that crosses a function boundary is a named type, not a string, a tuple, or a dict.
+
+4. **Key logic on top, plumbing below.** A module reads top-down. The substance is short and exposed at the top. Parsing, path handling, header stripping and other mundane work sit lower, behind small names, and a reader can follow the logic without reading them.
+
+5. **Agents own judgement; code owns the tooling.** In a system that composes code with agent judgement, deciding what something means is the agent's job: whether a message is feedback, whether a criterion is met, what an issue needs. Never a regex, a score, or a threshold standing in for that decision. Code owns what lets the agent act: CLI verbs, input and output schemas, gates, sequencing, and the parsing of declared shapes. Everything reproducible is code. Nothing interpretive is.
+
+6. **Never fail open.** A degraded path announces itself. An error swallowed into a clean, empty result is a bug, not a fallback.
+
+7. **Contracts are declared, not narrated.** A convention stated in prose gets a schema, a declaration, or a test. Data another stage consumes travels as a declared shape, never as prose the next stage re-parses. Siblings share one signature; a special case at the call site is a defect. Docstrings say what; decisions say why.
 
 8. **Check what the substrate already records before adding a recorder** — the hook layer, git, and the tracker are already recording; a second recorder of the same event is a parallel surface with its own drift.
 9. **No platform assumptions in tests** — paths, line endings, and casing differ off Linux; a test that bakes them in fails on the first machine that is not the author's.
