@@ -13,14 +13,18 @@ Two seams, both at the verb's stdout:
   clean empty map).
 
 Fixtures under ``fixtures/pack/``: ``repo/`` is the tree the captured output
-describes; ``files.json``, ``context.txt``, ``node-*.txt`` are codegraph
-1.6.0's literal stdout over it (``init -y``, then ``files -j`` / ``context
---no-code <title>`` / ``node -f <file> --symbols-only``); ``issue.md`` is the
-issue body; ``persona.md`` / ``constitution.md`` are two-line stand-ins for
-the packaged docs so the goldens pin the pack's composition, not their prose;
-``implementer.md`` / ``judge.md`` are the goldens, captured once and
-hand-checked. The REAL rules + overlay numbering is pinned in
-test_constitution.py.
+describes; ``files.json``, ``context.txt``, ``context.json``, ``node-*.txt``
+are codegraph 1.6.0's literal stdout over it (``init -y``, then ``files -j``
+/ ``context --no-code <title>`` in markdown and ``-f json`` / ``node -f
+<file> --symbols-only``); ``issue.md`` is the issue body; ``persona.md`` /
+``constitution.md`` are two-line stand-ins for the packaged docs so the
+goldens pin the pack's composition, not their prose; ``implementer.md`` /
+``judge.md`` are the goldens, captured once and hand-checked. The REAL rules
++ overlay numbering is pinned in test_constitution.py.
+
+The map's third seam is ``pack.Directory`` (funloops#46, dec-e6561edc): a
+hand-built nested tree pins tier 1's directory lines, the fold order under a
+budget, and tier 2's expansion of a named directory.
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ import pytest
 from devloop import cli, github, pack
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "pack"
-TITLE = "fx: annotate the catalog with docstrings"
+TITLE = "fx: run fmt over the catalog"  # hits two entry points, both under fx/
 
 
 @pytest.fixture
@@ -73,7 +77,8 @@ def fake_binary(tmp_path, code: str) -> Path:
 
 def fake_codegraph(tmp_path):
     """Replays the captured output per verb; logs every verb it is asked for.
-    argv is ``--no-color <verb> …``; for ``node`` the file follows ``-f``."""
+    argv is ``--no-color <verb> …``; for ``node`` the file follows ``-f``;
+    ``context`` replays the JSON capture when ``-f json`` is asked for."""
     log = tmp_path / "verbs.log"
     binary = fake_binary(tmp_path, f"""\
 import sys
@@ -88,7 +93,7 @@ if verb == "node":
 elif verb == "files" and "-j" in args:
     out = fix / "files.json"
 elif verb == "context":
-    out = fix / "context.txt"
+    out = fix / ("context.json" if "json" in args else "context.txt")
 else:
     sys.exit(f"unexpected verb {{verb}}")
 sys.stdout.write(out.read_text(encoding="utf-8"))
@@ -107,42 +112,112 @@ def test_pack_is_golden_and_byte_stable(repo, tmp_path, capsys, role):
     assert cli.main(argv) == 0
     first = capsys.readouterr().out
     assert first == (FIX / f"{role}.md").read_text(encoding="utf-8")
-    # no index in a fresh worktree → init; then the tiers in order, and one
-    # node call per file the issue names (helper first: first mention wins)
-    assert log.read_text().split() == ["init", "files", "context", "node", "node"]
+    # no index in a fresh worktree → init; then the tiers in order: the
+    # catalog, the entry points (context as JSON), the spliced context, and
+    # one node call per file the issue names (helper first: first mention wins)
+    assert log.read_text().split() == ["init", "files", "context", "context",
+                                       "node", "node"]
     assert cli.main(argv) == 0
     assert capsys.readouterr().out == first
 
 
-def test_render_tree_draws_depth_and_siblings_from_paths(tmp_path):
-    """The catalog is drawn from ``files -j``'s records, not re-parsed from a
-    drawn tree: directories before files at every level, names sorted,
-    ``│`` continuation only while a sibling follows, a module's
-    responsibility appended wherever the path resolves to a docstring, and a
-    backslash path (a Windows codegraph) nested like a slash one."""
-    (tmp_path / "pkg" / "sub").mkdir(parents=True)
-    (tmp_path / "pkg" / "sub" / "deep.py").write_text('"""Deep: the leaf."""\n',
-                                                      encoding="utf-8")
-    files = [pack.FileRecord("pkg/zeta.py", "python", 2),
-             pack.FileRecord("pkg/sub/deep.py", "python", 1),
+@pytest.fixture
+def nested(tmp_path):
+    """A nested tree for the map's seam: two packages with docstrings, a
+    tests directory whose responsibility is its README's first line, a
+    tools directory holding files only in subdirectories, a leaf package
+    under a leaf package, and one backslash path (a Windows codegraph)."""
+    for rel, text in {"pkg/__init__.py": '"""Pkg: the package."""\n',
+                      "pkg/sub/__init__.py": '"""Sub: the leaf package."""\n',
+                      "pkg/sub/deep.py": '"""Deep: the leaf.\n\nNot this."""\n',
+                      "pkg/sub/deeper/z.py": "",
+                      "tests/README.md": "\n# Tests: the suite\n\nNot this.\n",
+                      "tests/test_a.py": "",
+                      "tools/a/x.py": "", "tools/b/y.py": ""}.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text, encoding="utf-8")
+    files = [pack.FileRecord("pkg/__init__.py", "python", 1),
+             pack.FileRecord("pkg/sub/__init__.py", "python", 1),
+             pack.FileRecord("pkg/sub/deep.py", "python", 2),
+             pack.FileRecord("pkg/sub/deeper/z.py", "python", 4),
              pack.FileRecord(r"tests\test_a.py", "python", 3),
-             pack.FileRecord("README.md", "markdown", 0),
-             pack.FileRecord("pkg/alpha.py", "python", 4)]
-    assert pack.render_tree(files, tmp_path).splitlines() == [
-        "Project Structure (5 files):",
+             pack.FileRecord("tools/b/y.py", "python", 6),
+             pack.FileRecord("tools/a/x.py", "python", 5)]
+    return tmp_path, files
+
+
+def test_tier1_lists_directories_with_counts_and_responsibility(nested):
+    """One line per directory holding files, path-sorted, counting only the
+    files directly under it; the responsibility is ``__init__.py``'s first
+    docstring line, else the README's first line."""
+    root, files = nested
+    assert pack.Directory.tree(files).catalog(root, budget=99).splitlines() == [
+        "Project Structure (7 files):",
         "",
-        "├── pkg",
-        "│   ├── sub",
-        "│   │   └── deep.py (python, 1 symbols) — Deep: the leaf.",
-        "│   ├── alpha.py (python, 4 symbols)",
-        "│   └── zeta.py (python, 2 symbols)",
-        "├── tests",
-        "│   └── test_a.py (python, 3 symbols)",
-        "└── README.md (markdown, 0 symbols)",
+        "pkg/ (1 files, 1 symbols) — Pkg: the package.",
+        "pkg/sub/ (2 files, 3 symbols) — Sub: the leaf package.",
+        "pkg/sub/deeper/ (1 files, 4 symbols)",
+        "tests/ (1 files, 3 symbols) — Tests: the suite",
+        "tools/a/ (1 files, 5 symbols)",
+        "tools/b/ (1 files, 6 symbols)",
     ]
     with pytest.raises(pack.CodegraphUnavailable):  # a file that is also a directory
-        pack.render_tree([*files, pack.FileRecord("pkg/alpha.py/x.py", "python", 1)],
-                         tmp_path)
+        pack.Directory.tree([*files, pack.FileRecord("pkg/sub/deep.py/x.py", "python", 1)])
+    with pytest.raises(pack.CodegraphUnavailable):  # listed twice
+        pack.Directory.tree([*files, pack.FileRecord("tools/a/x.py", "python", 1)])
+
+
+@pytest.mark.parametrize("budget, lines", [
+    (6, ["pkg/ (1 files, 1 symbols) — Pkg: the package.",
+         "pkg/sub/ (2 files, 3 symbols) — Sub: the leaf package.",
+         "pkg/sub/deeper/ (1 files, 4 symbols)",
+         "tests/ (1 files, 3 symbols) — Tests: the suite",
+         "tools/a/ (1 files, 5 symbols)",
+         "tools/b/ (1 files, 6 symbols)"]),
+    # pkg/sub (3 files) outranks tools (2 files) among the innermost folds
+    (5, ["pkg/ (1 files, 1 symbols) — Pkg: the package.",
+         "pkg/sub/ (3 files, 7 symbols) — Sub: the leaf package.",
+         "tests/ (1 files, 3 symbols) — Tests: the suite",
+         "tools/a/ (1 files, 5 symbols)",
+         "tools/b/ (1 files, 6 symbols)"]),
+    # then pkg (4 files) folds, counting its whole subtree
+    (4, ["pkg/ (4 files, 8 symbols) — Pkg: the package.",
+         "tests/ (1 files, 3 symbols) — Tests: the suite",
+         "tools/a/ (1 files, 5 symbols)",
+         "tools/b/ (1 files, 6 symbols)"]),
+    # then tools, a directory with no files of its own
+    (3, ["pkg/ (4 files, 8 symbols) — Pkg: the package.",
+         "tests/ (1 files, 3 symbols) — Tests: the suite",
+         "tools/ (2 files, 11 symbols)"]),
+    # the floor: the root never folds
+    (1, ["pkg/ (4 files, 8 symbols) — Pkg: the package.",
+         "tests/ (1 files, 3 symbols) — Tests: the suite",
+         "tools/ (2 files, 11 symbols)"]),
+])
+def test_tier1_folds_the_largest_innermost_directory_first(nested, budget, lines):
+    root, files = nested
+    assert pack.Directory.tree(files).catalog(root, budget=budget).splitlines()[2:] == lines
+
+
+def test_tier2_expands_named_directories_to_file_lines(nested):
+    """Each directory as its line over its files in today's file-line form;
+    over budget, the largest group folds to its line alone; a directory the
+    index does not hold is an empty line, never an error."""
+    root, files = nested
+    tree = pack.Directory.tree(files)
+    assert tree.slice(["pkg/sub"], root, budget=99).splitlines() == [
+        "pkg/sub/ (2 files, 3 symbols) — Sub: the leaf package.",
+        "├── __init__.py (python, 1 symbols) — Sub: the leaf package.",
+        "└── deep.py (python, 2 symbols) — Deep: the leaf.",
+    ]
+    assert tree.slice(["pkg/sub", "tools/a"], root, budget=4).splitlines() == [
+        "pkg/sub/ (2 files, 3 symbols) — Sub: the leaf package.",
+        "",
+        "tools/a/ (1 files, 5 symbols)",
+        "└── x.py (python, 5 symbols)",
+    ]
+    assert tree.slice(["nope"], root, budget=99) == "nope/ (0 files, 0 symbols)"
+    assert tree.slice([], root, budget=99) == ""
 
 
 def test_missing_codegraph_degrades_and_exits_zero(repo, monkeypatch, capsys):

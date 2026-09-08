@@ -1,0 +1,89 @@
+{
+  "query": "fx: run fmt over the catalog",
+  "summary": "Found 2 relevant code symbols across 2 files. Key entry points: run, fmt. 1 relationships identified.",
+  "entryPoints": [
+    {
+      "id": "function:1126f3bbc9a1b6ac0311b8d494fc3b51",
+      "kind": "function",
+      "name": "run",
+      "qualifiedName": "run",
+      "filePath": "fx/core.py",
+      "language": "python",
+      "startLine": 13,
+      "endLine": 14,
+      "signature": "(x: int) -> str",
+      "visibility": null,
+      "isExported": false,
+      "isAsync": false,
+      "isStatic": false
+    },
+    {
+      "id": "function:30ea3da44fe46c4731fc6e61c9513cbe",
+      "kind": "function",
+      "name": "fmt",
+      "qualifiedName": "fmt",
+      "filePath": "fx/helper.py",
+      "language": "python",
+      "startLine": 1,
+      "endLine": 2,
+      "signature": "(x: int) -> str",
+      "visibility": null,
+      "isExported": false,
+      "isAsync": false,
+      "isStatic": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "function:1126f3bbc9a1b6ac0311b8d494fc3b51",
+      "kind": "function",
+      "name": "run",
+      "qualifiedName": "run",
+      "filePath": "fx/core.py",
+      "language": "python",
+      "startLine": 13,
+      "endLine": 14,
+      "signature": "(x: int) -> str",
+      "visibility": null,
+      "isExported": false,
+      "isAsync": false,
+      "isStatic": false
+    },
+    {
+      "id": "function:30ea3da44fe46c4731fc6e61c9513cbe",
+      "kind": "function",
+      "name": "fmt",
+      "qualifiedName": "fmt",
+      "filePath": "fx/helper.py",
+      "language": "python",
+      "startLine": 1,
+      "endLine": 2,
+      "signature": "(x: int) -> str",
+      "visibility": null,
+      "isExported": false,
+      "isAsync": false,
+      "isStatic": false
+    }
+  ],
+  "edges": [
+    {
+      "source": "function:1126f3bbc9a1b6ac0311b8d494fc3b51",
+      "target": "function:30ea3da44fe46c4731fc6e61c9513cbe",
+      "kind": "calls",
+      "line": 14,
+      "column": 11
+    }
+  ],
+  "codeBlocks": [],
+  "relatedFiles": [
+    "fx/core.py",
+    "fx/helper.py"
+  ],
+  "stats": {
+    "nodeCount": 2,
+    "edgeCount": 1,
+    "fileCount": 2,
+    "codeBlockCount": 0,
+    "totalCodeSize": 0
+  }
+}

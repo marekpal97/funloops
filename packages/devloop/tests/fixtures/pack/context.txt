@@ -1,4 +1,20 @@
 ## Code Context
 
-**Query:** fx: annotate the catalog with docstrings
+**Query:** fx: run fmt over the catalog
 
+### Entry Points
+
+- **run** (function) - fx/core.py:13
+  `(x: int) -> str`
+- **fmt** (function) - fx/helper.py:1
+  `(x: int) -> str`
+
+
+### ⚠️ Low-confidence match
+
+This query matched mostly on common words, so the entry points above may be off-target — treat them as a starting point, not a complete answer. For a reliable result:
+- `codegraph_explore` with the **exact symbol names** you are after (class / function / method names), or
+- `codegraph_search <name>` for one specific symbol
+- `codegraph_files` a likely area: `fx`
+
+Do not assume the list above is comprehensive.
