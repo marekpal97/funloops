@@ -1,4 +1,4 @@
-# Dispatch pack — issue #7 (implementer)
+# Dispatch pack — issue #7 (judge)
 
 ## Issue
 
@@ -19,12 +19,6 @@ Append each module's docstring first line to the catalog. `fx/helper.py` has no 
 # Fixture constitution
 
 1. **One rule** — cited once (#1).
-
-## Persona
-
-# Fixture persona
-
-Be lazy: reuse before you write.
 
 ## Repo map — tier 1: catalog
 
@@ -55,12 +49,3 @@ Project Structure (3 files):
 - `run` (function) (x: int) -> str — :13
 
 > Drop `symbolsOnly` (or pass `offset`/`limit`) to read the source, like Read.
-
-## Standing orders — drill down with codegraph's CLI
-
-The catalog and slice above are already spliced; do not re-derive them. Before
-writing, look at what exists: `codegraph explore "<area>"` (an area's symbols
-and call paths), `codegraph node <symbol>` / `codegraph node -f <file>` (one
-symbol or file with its dependents), `codegraph impact <symbol>` and
-`codegraph callers` / `codegraph callees <symbol>` (who is affected by a
-change).

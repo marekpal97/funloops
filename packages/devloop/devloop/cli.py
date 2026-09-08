@@ -29,8 +29,9 @@ Subcommands:
   board      — doctor: lint one or more repos' boards against the grammar
                dag.py reads (JSON report, exit 1 on errors); sweep: replay
                the mechanical fixes (--plan by default, --apply runs them)
-  pack       — compose one dispatch's context (issue, persona + constitution,
-               the repo map spliced from codegraph's CLI) and print it
+  pack       — compose one dispatch's context (issue, the constitution as
+               rules, the persona for the implementer, the repo map spliced
+               from codegraph's CLI) and print it
 
 Stdlib only. Config: the host repo's docs/agents/loop.toml, found by walking up
 from the cwd, else the copy shipped with the package (see find_config).
@@ -405,8 +406,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_pack = sub.add_parser("pack", help="compose one dispatch's context and print it", parents=[common])
     p_pack.add_argument("number", type=int)
     p_pack.add_argument("--role", choices=get_args(pack.Role), default="implementer",
-                        help="implementer: issue + persona/constitution + repo map + "
-                             "standing orders; judge: issue + repo map")
+                        help="implementer: issue + rules + persona + repo map + "
+                             "standing orders; judge: issue + rules + repo map")
     p_pack.add_argument("--cwd", default=".",
                         help="the worktree to map (its .codegraph index is self-provisioned)")
     p_pack.add_argument("--codegraph-bin",
@@ -599,20 +600,17 @@ def main(argv: list[str] | None = None) -> int:
         root = Path(args.cwd).resolve()
         issue = pack.Issue(**json.loads(github.run(
             ["issue", "view", str(args.number), "--json", "title,body"], cwd=root)))
-        persona = ""
-        if args.role == "implementer":  # resolution is the CLI's; composition is pack's
-            try:
-                # The rules fail closed (find_constitution raises; so does a
-                # persona missing from a docs-less wheel, or one without the
-                # marker): an error marker, never a pack that dispatches
-                # without them.
-                persona = pack.splice(pack.body(PACKAGE_PERSONA),
-                                      [pack.body(p) for p in find_constitution(root)])
-            except (FileNotFoundError, ValueError) as exc:
-                print(json.dumps({"error": str(exc)}))
-                return 2
+        try:  # resolution is the CLI's; composition is pack's
+            # The rules and the persona fail closed (find_constitution
+            # raises; so does a persona missing from a docs-less wheel): an
+            # error marker, never a pack that dispatches without them.
+            rules = [pack.body(p) for p in find_constitution(root)]
+            persona = pack.body(PACKAGE_PERSONA) if args.role == "implementer" else ""
+        except FileNotFoundError as exc:
+            print(json.dumps({"error": str(exc)}))
+            return 2
         print(pack.compose(
-            args.number, issue, args.role, persona,
+            args.number, issue, args.role, rules, persona,
             pack.Codegraph(args.codegraph_bin, root),
             prime=Path(args.prime).read_text(encoding="utf-8") if args.prime else "",
             trace=Path(args.trace).read_text(encoding="utf-8") if args.trace else "",

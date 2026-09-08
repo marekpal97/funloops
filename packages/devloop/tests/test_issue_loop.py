@@ -2428,11 +2428,13 @@ def test_extension_points_do_not_claim_the_rail_runs_judgment_kinds():
 
 
 # ---------------------------------------------------------------------------
-# Dispatch persona + north-star splice (issue #89, made unconditional by
-# dec-d79e8e7b) — write-time simplification pressure at the only point it
-# works: dispatch. Seams: doc-grep contracts on the command doc + vendored
-# persona file, mirroring the #58/#61 pins. The [dispatch] knob is gone; its
-# rejection is pinned with the other deleted keys above.
+# Dispatch persona (issue #89, made unconditional by dec-d79e8e7b) —
+# write-time simplification pressure at the only point it works: dispatch.
+# Seams: doc-grep contracts on the command doc + vendored persona file,
+# mirroring the #58/#61 pins. The [dispatch] knob is gone; its rejection is
+# pinned with the other deleted keys above. The epic north-star block left
+# the loop with funloops#45 (dec-2f8c2322): the pack's Rules section is the
+# judge's standard now.
 
 
 def test_forked_ponytail_persona_carries_provenance():
@@ -2469,33 +2471,8 @@ def test_issue_loop_doc_splices_persona_by_reference():
     assert "ponytail-persona.md" in doc
     # Reference, not duplication: the ladder's persona line stays vendored-only.
     assert "lazy senior developer" not in doc
-    # The fix-round feedback re-splices the dispatch blocks.
-    assert "both dispatch blocks" in doc
-
-
-def test_issue_loop_doc_sources_the_north_star_from_the_tracker():
-    """The north-star block is the epic's own words, read from the tracker at
-    dispatch time and spliced UNEDITED. #149 removed the copy of one host's
-    epic that used to be inlined here: a hardcoded goal is the wrong goal for
-    every other repo, and stale for this one the moment the epic moves on. The
-    verbatim requirement survives — it is what the acceptance judge scores
-    against, so paraphrasing moves the target."""
-    doc = _issue_loop_doc()
-    assert "gh issue view <epic>" in doc
-    assert "verbatim" in doc and "unedited" in doc.lower()
-    assert "**Goal:**" in doc and "**Anti-goals:**" in doc  # the block's shape
-    # No inlined epic body: the marker phrases from the copy that used to live
-    # here must not have survived the rewrite.
-    assert "fewer POCs" not in doc
-    assert "review comments on PR #86" not in doc
-
-
-def test_issue_loop_doc_splices_persona_unconditionally():
-    """dec-d79e8e7b addendum: no toggle — the persona (with the constitution
-    injected) rides every implementer and fix-round dispatch. The judge gets
-    the north-star block only (it judges against the goal, not the persona)."""
-    doc = _issue_loop_doc()
-    assert "north-star block only" in doc.lower()
+    # The fix-round feedback re-splices the pack.
+    assert "re-splicing **the pack**" in doc
 
 
 # ---------------------------------------------------------------------------

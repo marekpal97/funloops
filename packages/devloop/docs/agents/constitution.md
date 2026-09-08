@@ -1,7 +1,8 @@
 <!--
   devloop's packaged constitution: what holds in the code, for any repo devloop
-  installs into. `devloop pack` inserts it at the persona's marker. A repo
-  extends it with its own docs/agents/constitution.md (cli.find_constitution).
+  installs into. `devloop pack` renders it as the `## Rules` section of both
+  roles' packs, so the judge cites a rule by number. A repo extends it with
+  its own docs/agents/constitution.md (cli.find_constitution).
 
   A rule is packaged only if it holds for any repo and names, in plain words,
   the failure it prevents. The rule text carries no citation; the PR that adds

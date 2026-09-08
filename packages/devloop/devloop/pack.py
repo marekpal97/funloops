@@ -1,11 +1,12 @@
 """The dispatch pack: one dispatch's context, printed by ``devloop pack``.
 
-In order: the issue; the persona with the resolved constitution at its marker
-(implementer only); the repo map — tier 1 the whole-repo catalog, tier 2 the
-slice for the issue's title and every file it names, both from codegraph's
-CLI, any failure degrading to a marked block; the prime block and the run's
-trace where the host supplies them; the standing orders (implementer only).
-Composition is hardcoded; argparse carries the only knobs.
+In order: the issue; the rules — the packaged constitution, then the host
+overlay, one continuously numbered list (both roles: the judge cites them);
+the persona (implementer only); the repo map — tier 1 the whole-repo catalog,
+tier 2 the slice for the issue's title and every file it names, both from
+codegraph's CLI, any failure degrading to a marked block; the prime block and
+the run's trace where the host supplies them; the standing orders
+(implementer only). Composition is hardcoded; argparse carries the only knobs.
 """
 
 from __future__ import annotations
@@ -27,19 +28,24 @@ class Issue(NamedTuple):
     body: str
 
 
-def compose(number: int, issue: Issue, role: Role, persona: str,
+def compose(number: int, issue: Issue, role: Role, rules: list[str], persona: str,
             codegraph: Codegraph, prime: str = "", trace: str = "") -> str:
-    """The pack text. The persona (already spliced with the constitution) and
-    the standing orders are the implementer's — the one role check in the
-    pack; resolving the persona at all is the caller's. The map is
-    codegraph's, or the degraded block on any failure — never an exception."""
+    """The pack text. ``rules`` are the resolved constitution bodies in order
+    and ride every role; the persona and the standing orders are the
+    implementer's — the one role check in the pack. Resolving the files is
+    the caller's; an empty ``rules`` is refused (a pack without the rules is
+    the fail-open rule 6 names). The map is codegraph's, or the degraded
+    block on any failure — never an exception."""
+    if not rules:
+        raise ValueError("a pack carries the rules; none were resolved")
     try:
         repo_map = codegraph.repo_map(issue)
     except CodegraphUnavailable as e:
         repo_map = DEGRADED.format(reason=e)
     implementer = role == "implementer"
     parts = [f"# Dispatch pack — issue #{number} ({role})",
-             f"## Issue\n\n{issue.title}\n\n{issue.body.strip()}"]
+             f"## Issue\n\n{issue.title}\n\n{issue.body.strip()}",
+             "## Rules\n\n" + "\n\n".join(rules)]
     if implementer:
         parts.append(f"## Persona\n\n{persona}")
     parts.append(repo_map)
@@ -205,19 +211,6 @@ def body(path: Path) -> str:
     return text.strip("\n")
 
 
-def splice(persona: str, rules: list[str]) -> str:
-    """The persona with the constitution injected: the ``rules`` bodies
-    (packaged first, then the host overlay) replace the persona's one
-    ``MARKER`` line, joined by a blank line. A persona without exactly one
-    marker is refused — appended silently, the rules would ride outside the
-    text that reads them (rule 6)."""
-    lines = persona.split("\n")
-    if lines.count(MARKER) != 1:
-        raise ValueError(f"persona must carry exactly one '{MARKER}' line")
-    at = lines.index(MARKER)
-    return "\n".join([*lines[:at], "\n\n".join(rules), *lines[at + 1:]])
-
-
 DEGRADED = """\
 ## Repo map — DEGRADED (codegraph unavailable: {reason})
 
@@ -236,6 +229,5 @@ symbol or file with its dependents), `codegraph impact <symbol>` and
 `codegraph callers` / `codegraph callees <symbol>` (who is affected by a
 change)."""
 
-MARKER = "<!-- constitution -->"
-
-# Provenance: funloops#28, #41; dec-f12457eb, dec-fd12489d, dec-d2de831e, dec-d79e8e7b, dec-ba48dbe2.
+# Provenance: funloops#28, #41, #45; dec-f12457eb, dec-fd12489d, dec-d2de831e,
+# dec-ba48dbe2, dec-2f8c2322 (supersedes dec-d79e8e7b's persona-as-splice-container).
