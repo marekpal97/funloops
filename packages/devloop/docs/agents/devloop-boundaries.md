@@ -133,16 +133,20 @@ retitle · add_blocker`). `doctor()` runs them all; `plan_sweep()` turns a
 report into the deduped, ordered op list `board sweep --apply` replays.
 Conventions text: `issue-loop.command.md` §Board hygiene.
 
-**`pack.py`** — the dispatch pack (funloops#28, #45; dec-f12457eb, dec-fd12489d,
-dec-d2de831e, dec-2f8c2322): `Issue`, `Role`, `compose`, `FileRecord`,
-`Codegraph` (the tool object: `repo_map` · `sync` · `files` · `context` ·
-`node`), and below them `responsibility`, `render_tree`, `named_files`,
-`body`. Composes one dispatch in fixed order: the constitution renders as a
-`## Rules` section for both roles (the judge's citation standard), the persona
-as a `## Persona` section for the implementer only; codegraph is a CLI whose
-output is spliced (the catalog drawn from `files -j`), any failure degrades to
-a marked block, only the rules and the persona fail closed. The order and the
-map's two tiers are the module docstring's.
+**`pack.py`** — the dispatch pack (funloops#28, #45, #46; dec-f12457eb,
+dec-fd12489d, dec-d2de831e, dec-2f8c2322, dec-e6561edc): `Issue`, `Role`,
+`compose`, `LINE_BUDGET`, `FileRecord`, `Codegraph` (the tool object:
+`repo_map` · `sync` · `files` · `context` · `entry_points` · `node`),
+`Directory` (the map object: `tree` · `catalog` · `slice`, and the fold
+below them), and below those `responsibility`, `parts`, `named_files`,
+`body`. Composes one dispatch in fixed order: the constitution renders
+as a `## Rules` section for both roles (the judge's citation standard), the
+persona as a `## Persona` section for the implementer only; codegraph is a
+CLI whose output is spliced (the directory tree drawn from `files -j`, the
+entry points from `context -f json`), any failure degrades to a marked block,
+only the rules and the persona fail closed. The order and the map's two tiers
+are the module docstring's; the line budget is a constant, never a config key
+or a flag (dec-e6561edc).
 
 **`index_client.py`** — §5.
 
