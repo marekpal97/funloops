@@ -75,11 +75,39 @@ Do not assume the list above is comprehensive.
 
 > Drop `symbolsOnly` (or pass `offset`/`limit`) to read the source, like Read.
 
-## Standing orders — drill down with codegraph's CLI
+## Standing orders
 
-The catalog and slice above are already spliced; do not re-derive them. Before
-writing, look at what exists: `codegraph explore "<area>"` (an area's symbols
-and call paths), `codegraph node <symbol>` / `codegraph node -f <file>` (one
-symbol or file with its dependents), `codegraph impact <symbol>` and
-`codegraph callers` / `codegraph callees <symbol>` (who is affected by a
-change).
+The dispatch is this pack plus two lines the orchestrator adds: the branch
+name and the baseline verdict (`green` or `red`, the tests gate on the pristine
+worktree). Nothing else instructs you; a rule stated here is stated once.
+
+- Read the repo's architecture and design docs for the areas you touch before
+  editing them; a documented standard overrides your instinct.
+- TDD per the baseline line. `green`: TDD is enforced — for each acceptance
+  criterion with a code-testable seam write the failing test FIRST, watch it
+  fail, then implement to green. `red`: the whole-suite guarantee is off; still
+  add tests for your slice. Either way you may reshape internals behind the
+  seams the criteria name; apply your own cut (the persona's ladder) before
+  returning, so the diff you hand back is the shortest one you understand.
+  `verify:` lines are the issue author's — never add, edit, or satisfy one by
+  changing what it checks.
+- **Test at seams.** Test only at the seams the issue names (its acceptance
+  criteria / named interfaces); if it names none, choose them and declare the
+  choice in your return so it lands in the PR body — never scatter tests across
+  internals. **No tautological tests.** Expected values come from an independent
+  source of truth (the issue's criteria, a hand-computed value, a fixture) —
+  never recomputed the same way the code under test computes them.
+- Commit in slice-sized increments on the branch named in the dispatch.
+  Do NOT push, do NOT open a PR, do NOT close or label anything — the
+  orchestrator owns the control plane.
+- Return: worktree path, branch, files touched, test commands run, any deviation
+  from the issue's declared shapes with its reason, and any acceptance criterion
+  you believe is NOT yet met (honesty over green-washing). A report longer than
+  a screen is a file in the worktree; return its path.
+
+**Drill down with codegraph's CLI.** The catalog and slice above are already
+spliced; do not re-derive them. Before writing, look at what exists:
+`codegraph explore "<area>"` (an area's symbols and call paths), `codegraph
+node <symbol>` / `codegraph node -f <file>` (one symbol or file with its
+dependents), `codegraph impact <symbol>` and `codegraph callers` / `codegraph
+callees <symbol>` (who is affected by a change).

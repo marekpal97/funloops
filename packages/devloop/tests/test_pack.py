@@ -121,6 +121,33 @@ def test_pack_is_golden_and_byte_stable(repo, tmp_path, capsys, role):
     assert capsys.readouterr().out == first
 
 
+class _NoMap:
+    """A codegraph that has no map: composition without the tool."""
+
+    def repo_map(self, issue):
+        raise pack.CodegraphUnavailable("stub")
+
+
+def test_standing_orders_carry_the_five_orders_for_the_implementer_only():
+    """funloops#47 (dec-72c80057): the doc's five §1b standing orders live in
+    the pack's section — read the docs for the areas touched, TDD read against
+    the dispatch's baseline line, test at seams with no tautological tests,
+    commit on the branch with no push and no PR, the return shape — beside the
+    codegraph drill-down. The judge's pack carries none of it."""
+    issue = pack.Issue("t", "b")
+    implementer = pack.compose(7, issue, "implementer", ["r"], "p", _NoMap())
+    judge = pack.compose(7, issue, "judge", ["r"], "", _NoMap())
+    orders = implementer.partition("## Standing orders")[2]
+    for phrase in ("architecture and design docs", "baseline", "TDD",
+                   "Test at seams", "No tautological tests", "Do NOT push",
+                   "do NOT open a PR", "Return", "codegraph explore"):
+        assert phrase in orders, phrase
+    # the return shape names its two channels: inline, or a file by path
+    assert "path" in orders
+    assert "## Standing orders" not in judge
+    assert "Test at seams" not in judge
+
+
 @pytest.fixture
 def nested(tmp_path):
     """A nested tree for the map's seam: two packages with docstrings, a
