@@ -209,10 +209,9 @@ rerun until green or `max_fix_rounds` is spent; a missing binary is red, named, 
 
 **The judge — the one LLM judgment stage.** `kind: judge` — dispatch a **fresh
 judge subagent** (a fresh agent, no implementation context) with the judge
-pack (`uv run --directory <worktree> devloop pack <N> --role judge`, §1b: the issue with its
-acceptance criteria and Interfaces block, the `## Rules` section, the repo
-map), `git diff origin/main...HEAD`, and the test and verify-rail output. Tell
-it, verbatim:
+pack (`uv run --directory <worktree> devloop pack <N> --role judge`, §1b),
+`git diff origin/main...HEAD`, and the test and verify-rail output. Tell it,
+verbatim:
 
 > The contract is the issue's acceptance criteria plus the Interfaces block's
 > intent. Judge the diff against that contract and nothing else. Return one

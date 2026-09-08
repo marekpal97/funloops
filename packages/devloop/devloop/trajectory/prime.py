@@ -141,13 +141,12 @@ def render_prime_block(
     piece until the char budget is spent — at least one always lands if any
     exist). A trajectory serves the BODIES of the insight notes it builds on,
     and ``served`` records the insight ids — that is what the run received.
-    ``decisions`` (:func:`resolve_decisions` records — the ticket's own ids and
-    the file-walk ids the orchestrator passed) close the block as a section of
-    one bullet each: id, title, then the summary line; an id the index does
-    not hold says so. The section sits outside the char budget: the caller's
-    ``limit`` already caps it, and the ticket's decisions are the why that
-    must arrive (dec-f5bdf9ea). ``served`` carries every id actually rendered.
-    Empty input → ``('', [])`` so the caller skips cleanly.
+    ``decisions`` (:func:`resolve_decisions` records) close the block as a
+    section of one bullet each: id, title, then the summary line; an id the
+    index does not hold says so. The section sits outside the char budget:
+    the caller's ``limit`` already caps it, and the ticket's decisions are the
+    why that must arrive (dec-f5bdf9ea). ``served`` carries every id actually
+    rendered. Empty input → ``('', [])`` so the caller skips cleanly.
     """
     decisions = decisions or []
     if not trajectories and not decisions:

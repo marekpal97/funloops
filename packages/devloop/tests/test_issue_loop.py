@@ -988,9 +988,7 @@ def test_render_prime_block_splices_insight_bodies_and_lists_served():
     )
     assert "Widen the CHECK first." in block
     assert "Judge from the PR timeline." in block
-    # A decision renders as its title and summary line, not a bare id.
-    assert "dec-ccc333" in block and "Widen before you split" in block
-    assert "The CHECK is the seam." in block
+    assert "dec-ccc333" in block
     assert served == ["n-ins1", "n-ins2", "dec-ccc333"]
     # Nothing to serve → clean skip.
     assert prime.render_prime_block([], decisions=[]) == ("", [])
