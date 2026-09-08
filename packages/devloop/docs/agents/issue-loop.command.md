@@ -149,10 +149,8 @@ never re-read into the prompt; `## Rules` — the packaged
 `docs/agents/constitution.md`, one continuously numbered list (a repo overlay
 **extends** the default, **never replaces** it); `## Persona` —
 `ponytail-persona.md`, the implementer's write-time posture; the repo map;
-`## Standing orders` — the implementer's five orders (read the docs for the
-areas touched, TDD per the baseline line, test at seams with no tautological
-tests, commit on the branch with no push and no PR, the return shape) and the
-codegraph drill-down, owned by `pack.py` and pinned by its golden. The judge's
+`## Standing orders` — the implementer's orders and the codegraph drill-down,
+owned by `pack.py` and pinned by its golden. The judge's
 copy is `--role judge`: the same issue, rules and map, no persona and no
 standing orders — the rules are the shape standard its findings cite (§1c),
 the persona is not its business. `{"error": …}` instead of
@@ -180,8 +178,8 @@ Run the configured gates **in order**, inside the implementer's worktree.
 **The gate split — which plane runs which kind.** `command` and `diff` gates
 **execute in the rail**: Python runs the shell command / the diff arithmetic and
 returns the verdict. `judge` and `simplify` are never executed by the rail —
-*this* orchestrator dispatches a fresh agent for each (never the fork type,
-§1b). A gate agent's report longer than a screen is written to a file in the
+*this* orchestrator dispatches a fresh agent for each (§1b). A gate agent's
+report longer than a screen is written to a file in the
 worktree and its path returned; you read the file. The rail's `check` runs the two
 deterministic kinds and refuses every other kind — judgment kind or typo alike —
 with `gate kind '<k>' is LLM-judged — run it from the /issue-loop command, not
@@ -361,8 +359,7 @@ One larger piece of work, no intermittent PRs. Requires a `--dag <N>` scope and
 is sequential (`max_parallel` is ignored). Differences from the flow above:
 
 - **One branch, one worktree.** `loop/dag-<N>`, created once from origin/main.
-  Each issue's implementer agent is FRESH (never the fork type, §1b) but
-  works in this same worktree,
+  Each issue's implementer agent is FRESH (§1b) but works in this same worktree,
   stacking commits on the previous slices. Record the tip sha before each issue.
 - **Blockers advance in-branch, not by merge.** After an issue passes all gates,
   add it to the done-list and re-plan with `plan --dag <N> --assume-done

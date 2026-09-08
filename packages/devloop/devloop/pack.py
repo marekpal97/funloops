@@ -7,9 +7,7 @@ at directory grain, tier 2 the slice for the issue: file lines for the
 directories its named files and the title's entry points land in, then
 codegraph's context and the named files' symbols, all from codegraph's CLI,
 any failure degrading to a marked block; the prime block and the run's trace
-where the host supplies them; the standing orders (implementer only) —
-the dispatch is the pack plus the branch and the baseline verdict, so the
-orders the command doc once carried live here.
+where the host supplies them; the standing orders (implementer only).
 Composition is hardcoded; argparse carries the only knobs.
 """
 
