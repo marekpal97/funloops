@@ -242,9 +242,11 @@ internal):
 - `build_prime_payload(issue_number, run_id, concepts, *, conn, limit,
   budget_chars, decisions, query) -> dict` — the claim-time payload.
   `concepts` (ontology terms) and `query` (the issue's text) are the two
-  retrieval legs; `decisions` are the file-anchored ids the orchestrator
-  resolved. It always serves what it finds — the sampled holdout was retired
-  by dec-cf8f0d33. (prime face)
+  retrieval legs; `decisions` are the decision ids the orchestrator passed
+  (the ticket's `## Decisions` ids merged with the file-walk ids), each
+  resolved to its title and first summary line for the block. It always
+  serves what it finds — the sampled holdout was retired by dec-cf8f0d33.
+  (prime face)
 - `append_served_event(buffer_path, run_id, issue_number, served, session_id)`
   + `LOOP_PRIME_TOOL` — the served-context write-through to the session
   buffer JSONL.
@@ -324,8 +326,10 @@ Interface (#94, completed by #100):
   carrying*: a vault with no `notes_fts` still primes on concepts, but a broken
   FTS with nothing else retrieved raises into the degrade guard — FTS is
   load-bearing, so its failure must not read as a clean empty match.
-- `note_bodies(conn, ids) -> dict[str, str]` — ids → body text, `type='note'`
-  only (a `builds_on` id may name a decision or session; those never serve).
+- `note_rows(conn, ids, note_type='note') -> dict[str, dict]` — ids →
+  `{title, body}` rows of one type: `'note'` for insight color (a `builds_on`
+  id may name a decision or session; those never serve as color),
+  `'decision'` for the decisions leg's titles and summary lines.
 
 The SQL-home invariant: every SQL string devloop issues lives here — the
 thinkweave index is the package's only database (codegraph is a CLI the pack

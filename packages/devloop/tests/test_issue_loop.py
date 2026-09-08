@@ -981,10 +981,16 @@ def test_render_prime_block_splices_insight_bodies_and_lists_served():
         {"id": "n-bbb222", "title": "trajectory judge", "issue": 60, "outcome": "shipped",
          "insights": [{"id": "n-ins2", "body": "Judge from the PR timeline."}]},
     ]
-    block, served = prime.render_prime_block(trajectories, decisions=["dec-ccc333"])
+    block, served = prime.render_prime_block(
+        trajectories,
+        decisions=[{"id": "dec-ccc333", "title": "Widen before you split",
+                    "summary": "The CHECK is the seam."}],
+    )
     assert "Widen the CHECK first." in block
     assert "Judge from the PR timeline." in block
-    assert "dec-ccc333" in block  # decisions folded in as adjacency
+    # A decision renders as its title and summary line, not a bare id.
+    assert "dec-ccc333" in block and "Widen before you split" in block
+    assert "The CHECK is the seam." in block
     assert served == ["n-ins1", "n-ins2", "dec-ccc333"]
     # Nothing to serve → clean skip.
     assert prime.render_prime_block([], decisions=[]) == ("", [])
@@ -1176,13 +1182,16 @@ def test_render_prime_block_v2_rendering_is_byte_stable():
     """AC2 pin: the served block for a v2 trajectory is byte-identical to the
     pre-#98 rendering. The expected string is hand-built from the documented
     format (heading, then ``### #<issue> — <title> (<outcome>)`` + the insight
-    bodies, then the decisions adjacency line), never recomputed by the
-    renderer."""
+    bodies, then the decisions section: one bullet per decision with its id,
+    title and summary line — funloops#49 replaced the bare id line; an id the
+    index does not hold says so), never recomputed by the renderer."""
     block, served = prime.render_prime_block(
         [{"id": "n-traj", "title": "prime rail", "issue": 57, "outcome": "shipped",
           "insights": [{"id": "n-ins1", "body": "Portable lesson one."},
                        {"id": "n-ins2", "body": "Portable lesson two."}]}],
-        decisions=["dec-ccc333"],
+        decisions=[{"id": "dec-ccc333", "title": "Widen before you split",
+                    "summary": "The CHECK is the seam."},
+                   {"id": "dec-ddd444", "title": "", "summary": ""}],
     )
     assert block == (
         "## Prior trajectories — reusable lessons from similar prior runs\n"
@@ -1191,9 +1200,40 @@ def test_render_prime_block_v2_rendering_is_byte_stable():
         "Portable lesson one.\n"
         "Portable lesson two.\n"
         "\n"
-        "Prior decisions for touched files: dec-ccc333\n"
+        "### Prior decisions\n"
+        "- **dec-ccc333** — Widen before you split\n"
+        "  The CHECK is the seam.\n"
+        "- **dec-ddd444** — (not in the index)\n"
     )
-    assert served == ["n-ins1", "n-ins2", "dec-ccc333"]
+    assert served == ["n-ins1", "n-ins2", "dec-ccc333", "dec-ddd444"]
+
+
+def test_build_prime_payload_renders_decision_title_and_summary(tmp_path):
+    """funloops#49 (dec-f5bdf9ea): the decisions leg resolves each id against
+    the index and renders the decision's title and the first prose line of its
+    body (the ``## Context`` rationale weave_extract writes first); an id the
+    index does not hold still lands, marked, so a dead pointer announces
+    itself. ``served`` records every id that arrived."""
+    db = tmp_path / "index.db"
+    _seed_index_db(db, note_id="n-seed", title="seed", concepts=["x"], body="y")
+    _add_note(db, note_id="dec-1", title="Serve decisions with titles",
+              body="# Serve decisions with titles\n\n## Context\n\n"
+                   "Bare ids are dead pointers.\nSecond line.\n\n"
+                   "## Decision\n\nRender the title.",
+              note_type="decision")
+    conn = index_client.open_ro(str(db))
+    try:
+        payload = prime.build_prime_payload(
+            49, "loop-run-0", ["unrelated"], conn=conn,
+            decisions=["dec-1", "dec-missing"],
+        )
+    finally:
+        conn.close()
+    assert payload["primed"] is True
+    assert payload["served"] == ["dec-1", "dec-missing"]
+    assert "- **dec-1** — Serve decisions with titles\n  Bare ids are dead pointers.\n" in payload["block"]
+    assert "Second line." not in payload["block"]
+    assert "- **dec-missing** — (not in the index)" in payload["block"]
 
 
 def test_build_prime_payload_serves_insight_bodies_end_to_end(tmp_path):
@@ -1451,7 +1491,8 @@ def test_prime_serves_file_anchored_decisions_without_any_trajectory(tmp_path, c
     payload = json.loads(capsys.readouterr().out)
     assert payload["primed"] is True
     assert payload["served"] == ["dec-1", "dec-2"]
-    assert "Prior decisions for touched files: dec-1, dec-2" in payload["block"]
+    # No index to resolve against: each id still lands, marked as unresolved.
+    assert "- **dec-1** — (not in the index)\n- **dec-2** — (not in the index)\n" in payload["block"]
 
 
 # --- Review round 1 (issue #85) — hardening the prime v2 seams --------------
@@ -2503,6 +2544,16 @@ def test_implementer_and_gate_subagents_return_long_reports_by_file_path():
         section = " ".join(_command_doc_subsection(marker).split())  # reflow-safe
         assert "longer than a screen" in section, marker
         assert "file in the worktree and its path returned" in section, marker
+
+
+def test_issue_loop_doc_1b_passes_the_tickets_decisions_to_the_decisions_leg():
+    """funloops#49 (dec-f5bdf9ea): §1b says the ticket's `## Decisions` ids go
+    to `--decisions`, merged with the ids the file walk finds, so the durable
+    why reaches the implementer through the pack."""
+    section = " ".join(_command_doc_subsection("### 1b.").split())  # reflow-safe
+    assert "`## Decisions`" in section
+    assert "merged with" in section
+    assert "`--decisions`" in section
 
 
 def test_loop_comments_end_at_the_gate_table():

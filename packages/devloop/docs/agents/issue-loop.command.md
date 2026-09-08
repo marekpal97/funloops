@@ -120,13 +120,18 @@ dead-join diagnosis and the host overlay doc's location are in
 `devloop-boundaries.md` §4): map the issue to 2–3 terms via `weave_concepts`; a
 labels-only call with no `--query` stamps a warning in the payload's `note`.
 `--query` is the issue's own text (title, or title + body): the full-text leg
-that lands when the concept guess misses. `--decisions` are file-anchored ids:
-files named in the issue body → `weave_graph(file_path=…,
-filter='decisions_for_file')`; nothing named or found → the same walk for their
-module/dir; still nothing → let the fusion carry it.
+that lands when the concept guess misses. `--decisions` are the ticket's own
+ids merged with the file-anchored ids: read the `dec-*` ids under the issue
+body's `## Decisions` heading (the durable why the ticket's three-sentence Why
+points at, dec-f5bdf9ea), then walk the files named in the issue body →
+`weave_graph(file_path=…, filter='decisions_for_file')`; nothing named or found
+→ the same walk for their module/dir; pass the union. Still nothing → let the
+fusion carry it.
 
 The rail reads the derived index read-only, fuses both legs over `[loop-run]`
-notes with RRF, weights them by outcome, and emits JSON: `block` (markdown to
+notes with RRF, weights them by outcome, resolves each decision id to its
+title and first summary line (an id the index does not hold is listed as
+such), and emits JSON: `block` (markdown to
 splice), `primed`, `served` (the insight and decision ids surfaced). It always
 serves what it finds; there is no held-out run. **Write `block` to a file and pass it to
 the pack below as `--prime <file>`**, and add this
