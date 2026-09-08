@@ -127,9 +127,8 @@ def find_constitution(start: Path | None = None) -> list[Path]:
         raise FileNotFoundError(
             f"packaged constitution missing: {PACKAGE_CONSTITUTION} — this "
             "install shipped no docs/; do not dispatch without the rules")
-    overlay = next((p for p in _walk_up(CONSTITUTION_REL, start)
-                    if not _is_packaged(p)), None)
-    return [PACKAGE_CONSTITUTION, *([overlay] if overlay else [])]
+    overlay = [p for p in _walk_up(CONSTITUTION_REL, start) if not _is_packaged(p)][:1]
+    return [PACKAGE_CONSTITUTION, *overlay]
 
 # Stamped on a prime payload built the pre-#100 way (labels as concepts, no
 # text leg) — the dead-by-vocabulary join; see issue-loop.command.md §1b.
