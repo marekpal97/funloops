@@ -6,13 +6,14 @@ and strings — no gh, no git, no network.
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
 
 import pytest
 
-from devloop import cli, dag, gates, github, index_client, triage
+from devloop import cli, dag, gates, github, index_client, pack, triage
 from devloop.trajectory import mint, prime
 
 # ---------------------------------------------------------------------------
@@ -2502,6 +2503,53 @@ def test_implementer_and_gate_subagents_return_long_reports_by_file_path():
         section = " ".join(_command_doc_subsection(marker).split())  # reflow-safe
         assert "longer than a screen" in section, marker
         assert "file in the worktree and its path returned" in section, marker
+
+
+def test_loop_comments_end_at_the_gate_table():
+    """funloops#48 (dec-f7e7dd53): the loop's issue comment is the run id, the
+    tip sha and the gate table, with nothing after the table — no PR url, no
+    commit list, no explanation. Both templates: §1d ship and §1e slice."""
+    for marker in ("### 1d.", "### 1e."):
+        section = " ".join(_command_doc_subsection(marker).split())  # reflow-safe
+        bodies = re.findall(r'gh issue comment <N> --body "([^"]*)"', section)
+        assert bodies, marker
+        for body in bodies:
+            assert body.endswith("<gate table>"), (marker, body)
+            assert "<run-id>" in body and "<sha>" in body, (marker, body)
+
+
+def test_pr_body_names_findings_once_and_cites_issued_findings_by_number():
+    """funloops#48 (dec-f7e7dd53): the PR body carries each fact once. §1d's
+    list says findings appear once and a carried finding that became an issue
+    is its number; §1e's one-PR bullet says one sentence and one gate table per
+    issue."""
+    ship = " ".join(_command_doc_subsection("### 1d.").split())
+    pr_body = ship[ship.index("PR body"):]
+    assert "findings once" in pr_body
+    assert "by number" in pr_body
+    stacked = " ".join(_command_doc_subsection("### 1e.").split())
+    assert "one sentence per issue" in stacked
+    assert "one gate table per issue" in stacked
+
+
+def test_judge_brief_says_a_finding_is_one_sentence():
+    """funloops#48 (dec-f7e7dd53): the judge brief (§1c) says a finding is one
+    sentence naming the rule or the exercised path — the same finding used to
+    arrive as a paragraph and then appear three times."""
+    section = " ".join(_command_doc_subsection("### 1c.").split())
+    assert "A finding is one sentence" in section
+
+
+def test_persona_return_section_carries_the_three_sentence_rules():
+    """funloops#48 (dec-f7e7dd53): the output style never reaches subagents,
+    so the sentence rules ride the persona every implementer reads. Its return
+    section carries exactly the three: one idea per sentence, under twenty
+    words, active voice."""
+    persona = pack.body(cli.PACKAGE_PERSONA)
+    assert "Return:" in persona
+    ret = persona[persona.index("Return:"):]
+    for rule in ("one idea per sentence", "under twenty words", "active voice"):
+        assert rule in ret.lower(), rule
 
 
 def test_stacked_ship_carries_stack_tip_simplify_before_pr_open():

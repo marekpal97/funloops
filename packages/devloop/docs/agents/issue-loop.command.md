@@ -218,10 +218,10 @@ it, verbatim:
 > line ran it, run it yourself and cite the output. Everything else you notice
 > — a risk, a smell, a better design, an edge case outside the contract — is a
 > finding with a severity (`"critical"` / `"major"` / `"minor"` / `"nit"`):
-> list it, do not fail the contract over it. A finding names the rule in the
-> Rules section it violates (by number) or the exercised path it breaks (the
-> documented verb and the normal state that reaches it); a finding that names
-> neither is dropped, not listed. Findings never block, whatever their
+> list it, do not fail the contract over it. A finding is one sentence naming
+> the rule in the Rules section it violates (by number) or the exercised path
+> it breaks (the documented verb and the normal state that reaches it); a
+> finding that names neither is dropped, not listed. Findings never block, whatever their
 > severity. Do not search for problems the contract does not name. Return
 > exactly this object:
 
@@ -305,12 +305,16 @@ comment the evidence + worktree path on the issue, report — do not push). Else
 ```bash
 git push -u origin <branch_prefix><N>
 gh pr create --draft --title "<issue title> (#<N>)" --body "<body>"
-gh issue comment <N> --body "🤖 issue-loop run <run-id>: PR <url> opened. <gate table>"
+gh issue comment <N> --body "🤖 issue-loop run <run-id>: shipped at <sha>. <gate table>"
 ```
 
-PR body must contain: `Closes #<N>`, a summary of the change, the gate evidence
-table (gate | verdict | summary), a *Findings* list (severity + finding, from
-the judge; "none" when empty), and the standard Claude Code attribution line.
+The comment is the run id, the tip sha and the gate table, nothing after the
+table: `Closes #<N>` links the PR to the issue natively, and the PR body owns
+the rest. PR body must contain: `Closes #<N>`, one sentence on the change, the
+gate evidence table (gate | verdict | summary), a *Findings* list (severity +
+finding, from the judge; "none" when empty) that names findings once — a
+finding carried from an earlier slice that became an issue is cited by number,
+never restated — and the standard Claude Code attribution line.
 Keep the `ready-for-agent` label and the assignee — the issue closes on merge;
 if the PR is rejected, a human unassigns to re-queue. **No stack-tip simplify
 here — a documented no-op:** a pr-per-issue branch holds one slice, so §1c's
@@ -371,8 +375,9 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   see the per-issue diff (`git diff <tip-before>...HEAD`) — cross-slice trimming
   belongs to the stack-tip pass below.
 - **Tracker visibility without PRs.** After each issue passes: `gh issue comment
-  <N> --body "🤖 issue-loop run <id>: slice landed on loop/dag-<root> at <sha> —
-  PR at end of run. <gate table>"`. Do NOT close the issue; do NOT open a PR yet.
+  <N> --body "🤖 issue-loop run <run-id>: slice landed on loop/dag-<root> at
+  <sha>. <gate table>"` — the same three parts as §1d's comment, nothing after
+  the table. Do NOT close the issue; do NOT open a PR yet.
 - **Stack-tip simplify — whole-branch ponytail review before PR-open.** The
   per-slice gate cannot see cross-slice redundancy (a later slice re-rolling an
   earlier slice's helper). So once the stack is final — DAG exhausted, cap hit,
@@ -396,8 +401,9 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   <!-- /host-extension -->
 - **One PR at the end** (DAG exhausted, cap hit, or an issue routed to human):
   push the branch and open a single draft PR whose body carries `Closes #A`
-  lines for every completed issue, the per-issue gate tables and findings, and
-  — if some of the DAG remains — which issues are NOT included and why.
+  lines for every completed issue, one sentence per issue, one gate table per
+  issue, findings once per §1d's list, and — if some of the DAG remains —
+  which issues are NOT included and why.
   `training_mode` pauses once, here. Then remove the `loop/dag-<N>` worktree
   (same teardown rule as §1d).
 - **A failed issue doesn't poison the stack.** If an issue exhausts its fix
