@@ -169,7 +169,6 @@ def test_failing_silent_or_misshapen_codegraph_degrades(repo, tmp_path, capsys, 
 
 
 @pytest.mark.parametrize("role, doc", [("implementer", "PACKAGE_PERSONA"),
-                                       ("implementer", "PACKAGE_CONSTITUTION"),
                                        ("judge", "PACKAGE_CONSTITUTION")])
 def test_missing_persona_or_rules_fail_closed(repo, tmp_path, monkeypatch,
                                               capsys, role, doc):

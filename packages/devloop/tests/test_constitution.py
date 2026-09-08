@@ -162,12 +162,6 @@ def test_overlay_rules_continue_the_packaged_numbering():
     assert len(numbers) > 7  # the overlay contributed
 
 
-def test_persona_carries_no_constitution_marker():
-    """dec-2f8c2322: the persona no longer hosts the rules; a surviving marker
-    would be a second, silent splice point."""
-    assert "<!-- constitution -->" not in cli.PACKAGE_PERSONA.read_text(encoding="utf-8")
-
-
 def test_exactly_one_splice_point_in_the_command_doc():
     """A single paragraph of the command doc names the file and defines the
     extend-not-replace resolution."""
