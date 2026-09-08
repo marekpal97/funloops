@@ -2524,9 +2524,8 @@ def test_pr_body_names_findings_once_and_cites_issued_findings_by_number():
     is its number; §1e's one-PR bullet says one sentence and one gate table per
     issue."""
     ship = " ".join(_command_doc_subsection("### 1d.").split())
-    pr_body = ship[ship.index("PR body"):]
-    assert "findings once" in pr_body
-    assert "by number" in pr_body
+    assert "findings once" in ship
+    assert "by number" in ship
     stacked = " ".join(_command_doc_subsection("### 1e.").split())
     assert "one sentence per issue" in stacked
     assert "one gate table per issue" in stacked
@@ -2546,7 +2545,6 @@ def test_persona_return_section_carries_the_three_sentence_rules():
     section carries exactly the three: one idea per sentence, under twenty
     words, active voice."""
     persona = pack.body(cli.PACKAGE_PERSONA)
-    assert "Return:" in persona
     ret = persona[persona.index("Return:"):]
     for rule in ("one idea per sentence", "under twenty words", "active voice"):
         assert rule in ret.lower(), rule

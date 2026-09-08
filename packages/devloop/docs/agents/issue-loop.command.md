@@ -376,8 +376,8 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   belongs to the stack-tip pass below.
 - **Tracker visibility without PRs.** After each issue passes: `gh issue comment
   <N> --body "🤖 issue-loop run <run-id>: slice landed on loop/dag-<root> at
-  <sha>. <gate table>"` — the same three parts as §1d's comment, nothing after
-  the table. Do NOT close the issue; do NOT open a PR yet.
+  <sha>. <gate table>"` — §1d's three parts. Do NOT close the issue; do NOT
+  open a PR yet.
 - **Stack-tip simplify — whole-branch ponytail review before PR-open.** The
   per-slice gate cannot see cross-slice redundancy (a later slice re-rolling an
   earlier slice's helper). So once the stack is final — DAG exhausted, cap hit,
