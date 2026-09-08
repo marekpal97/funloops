@@ -156,7 +156,9 @@ def test_the_loop_is_complete_without_a_host_vault():
                     "### 1d.", "### 1e.", "## 2. "):
         assert heading in spine, heading
     # The load-bearing content of each stage survives the strip.
-    for token in ("implementer subagent", "Do NOT push", "gh pr create",
+    # §1b's token is the dispatch shape: the standing orders (with "Do NOT
+    # push") moved into the pack, funloops#47 (dec-72c80057).
+    for token in ("implementer subagent", "the branch name", "gh pr create",
                   "max_fix_rounds", "git worktree remove"):
         assert token in spine, token
     # The preamble is where the extension is explained — it names the host and

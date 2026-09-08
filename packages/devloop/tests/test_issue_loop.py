@@ -2494,6 +2494,16 @@ def _command_doc_subsection(marker: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def test_implementer_and_gate_subagents_return_long_reports_by_file_path():
+    """funloops#47 (dec-72c80057): §1b (the implementer) and §1c (the judge and
+    simplify subagents) both say a report longer than a screen is written to a
+    file in the worktree and its path returned — inline returns were truncated."""
+    for marker in ("### 1b.", "### 1c."):
+        section = " ".join(_command_doc_subsection(marker).split())  # reflow-safe
+        assert "longer than a screen" in section, marker
+        assert "file in the worktree and its path returned" in section, marker
+
+
 def test_stacked_ship_carries_stack_tip_simplify_before_pr_open():
     """Acceptance: the command doc's ship step (§1e stacked delivery) carries
     the stack-tip simplify pass — cumulative merge-base diff (origin/main...HEAD,
