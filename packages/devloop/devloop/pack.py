@@ -177,8 +177,7 @@ class Directory:
     the lines rendered read a docstring or a README."""
 
     def __init__(self, path: str):
-        self.path, self.files, self.children = path, {}, {}
-        self.folded = False
+        self.path, self.files, self.children, self.folded = path, {}, {}, False
 
     @classmethod
     def tree(cls, files: list[FileRecord]) -> Directory:
@@ -240,9 +239,7 @@ class Directory:
         if self.folded:
             return []
         inner = [d for c in self.children.values() for d in c.foldable()]
-        if inner:
-            return inner
-        return [self] if self.path and len(self.lines()) > 1 else []
+        return inner or ([self] if self.path and len(self.lines()) > 1 else [])
 
     def find(self, path: str) -> Directory:
         """The directory at ``path``, or an empty one when the index holds no
@@ -291,7 +288,7 @@ class Directory:
         here = root.joinpath(*parts(self.path))
         if note := responsibility(here / "__init__.py"):
             return note
-        for readme in sorted(here.glob("README*")) if here.is_dir() else []:
+        for readme in sorted(here.glob("README*")):
             for raw in readme.read_text(encoding="utf-8", errors="replace").splitlines():
                 if line := raw.strip().lstrip("#").strip():
                     return line
