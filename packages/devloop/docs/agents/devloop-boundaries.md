@@ -8,10 +8,10 @@ package was designed and extracted before the carve-out into this workspace.
 Vocabulary: *module* = interface + implementation (scale-agnostic); *interface*
 = everything a caller must know (signatures, invariants, error modes, config);
 *seam* = where an interface lives; *deep* = much behavior behind a small
-interface. Terms per the codebase-design doctrine; goals per epic #88's
-north-star block (fewer POCs; deep but interpretable modules with boundaries at
-likely redesign points; conceptual fidelity; generic utils never beside key
-logic; no contract asserted in prose without an enforcing seam).
+interface. Terms per the codebase-design doctrine; goals per the packaged
+constitution (`constitution.md`: deep but interpretable modules with boundaries
+at likely redesign points — rule 1; generic utils never beside key logic — rule
+4; no contract asserted in prose without an enforcing seam — rule 7).
 
 ## 1. The two planes and the external seam
 
@@ -47,7 +47,7 @@ packages/devloop/
     cli.py             entry point: argparse, config resolution, dispatch
     dag.py             tracker-as-DAG math + the body-grammar it parses
     board.py           board hygiene: the grammar dag.py reads, as checks + sweep ops
-    pack.py            the dispatch pack: issue + persona/constitution + codegraph's CLI text
+    pack.py            the dispatch pack: issue + rules + persona + codegraph's CLI text
     gates.py           Gate protocol + deterministic executors
     triage.py          risk-lane classification of shipped PRs
     paths.py           leaf util: the three-form path matcher
@@ -133,13 +133,16 @@ retitle · add_blocker`). `doctor()` runs them all; `plan_sweep()` turns a
 report into the deduped, ordered op list `board sweep --apply` replays.
 Conventions text: `issue-loop.command.md` §Board hygiene.
 
-**`pack.py`** — the dispatch pack (funloops#28; dec-f12457eb, dec-fd12489d,
-dec-d2de831e): `Issue`, `Role`, `compose`, `FileRecord`, `Codegraph` (the
-tool object: `repo_map` · `sync` · `files` · `context` · `node`), and below them `responsibility`,
-`render_tree`, `named_files`, `body`, `splice`. Composes one dispatch in fixed
-order; codegraph is a CLI whose output is spliced (the catalog drawn from
-`files -j`), any failure degrades to a marked block, only the constitution
-fails closed. The order and the map's two tiers are the module docstring's.
+**`pack.py`** — the dispatch pack (funloops#28, #45; dec-f12457eb, dec-fd12489d,
+dec-d2de831e, dec-2f8c2322): `Issue`, `Role`, `compose`, `FileRecord`,
+`Codegraph` (the tool object: `repo_map` · `sync` · `files` · `context` ·
+`node`), and below them `responsibility`, `render_tree`, `named_files`,
+`body`. Composes one dispatch in fixed order: the constitution renders as a
+`## Rules` section for both roles (the judge's citation standard), the persona
+as a `## Persona` section for the implementer only; codegraph is a CLI whose
+output is spliced (the catalog drawn from `files -j`), any failure degrades to
+a marked block, only the rules and the persona fail closed. The order and the
+map's two tiers are the module docstring's.
 
 **`index_client.py`** — §5.
 
@@ -354,8 +357,8 @@ the schema pin can only live where a real index does:
 
 ## 6. Leaf-util doctrine
 
-The north-star bans generic utils beside key logic; the anti-goal bans
-speculative structure. The reconciling rule: **a leaf util exists only when
+Rule 4 bans generic utils beside key logic; rule 1 bans speculative
+structure. The reconciling rule: **a leaf util exists only when
 two modules need the same semantics** (one caller = hypothetical seam; two =
 real).
 

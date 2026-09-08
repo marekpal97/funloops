@@ -134,29 +134,26 @@ to `context_served(source='loop-prime')`; `--dry-run` suppresses that write.
 
 <!-- /host-extension -->
 
-**Dispatch blocks — every implementer and fix-round dispatch, no toggle.** Splice
-two blocks into the implementer prompt:
-
-1. **The pack.** `uv run devloop pack <N> --role implementer --cwd <worktree>
-   [--trace FILE]` composes the dispatch context; splice its stdout **verbatim**
-   (the judge's copy is `--role judge`: issue and repo map, no persona). It
-   carries `ponytail-persona.md` beside this file with the packaged
-   `constitution.md` injected, then the host's own `docs/agents/constitution.md`:
-   a repo overlay **extends** the default, **never replaces** it. `{"error": …}`
-   instead of a pack means the constitution did not resolve: STOP and surface
-   it — dispatching without the rules is the fail-open its own rule names.
-   Amendments to either layer are a human's PR; `watched_paths` lands any
-   `docs/agents/` diff in the skim lane. An issue names a file for the pack's
-   tier-2 slice by backticking its repo-relative path.
-2. **The epic's north-star block, verbatim.** The epic is the `Epic: #N` field in
-   the issue's pipe header. When that epic's body carries a north-star block (a
-   `**Goal:**` / `**Anti-goals:**` pair), read it with `gh issue view <epic>` and
-   splice it **unedited** — it is the standard the judge scores against, so
-   paraphrasing moves the target. No epic or no block: splice nothing.
+**The pack — every implementer and fix-round dispatch, no toggle.** `uv run
+devloop pack <N> --role implementer --cwd <worktree> [--trace FILE]` composes
+the dispatch context; splice its stdout **verbatim** into the implementer
+prompt. Its sections, in order: the issue; `## Rules` — the packaged
+`constitution.md` beside this file, then the host's own
+`docs/agents/constitution.md`, one continuously numbered list (a repo overlay
+**extends** the default, **never replaces** it); `## Persona` —
+`ponytail-persona.md`, the implementer's write-time posture; the repo map; the
+standing orders. The judge's copy is `--role judge`: the same issue, rules and
+map, no persona and no standing orders — the rules are the shape standard its
+findings cite (§1c), the persona is not its business. `{"error": …}` instead of
+a pack means the rules or the persona did not resolve: STOP and surface it —
+dispatching without the rules is the fail-open its own rule names. Amendments
+to either layer are a human's PR; `watched_paths` lands any `docs/agents/` diff
+in the skim lane. An issue names a file for the pack's tier-2 slice by
+backticking its repo-relative path.
 
 Read the issue: `gh issue view <N> --comments`. Then dispatch an **implementer
 subagent** with worktree isolation (Agent tool, `isolation: "worktree"`) whose
-prompt contains, verbatim: the two dispatch blocks, the branch name
+prompt contains, verbatim: the pack, the branch name
 (`<branch_prefix><N>`), and these standing orders:
 
 - Read the repo's architecture and design docs for the areas you touch before
@@ -211,10 +208,11 @@ cycle is one red result naming it. Red = **deterministic not-met**: a fix round,
 rerun until green or `max_fix_rounds` is spent; a missing binary is red, named, never skipped.
 
 **The judge — the one LLM judgment stage.** `kind: judge` — dispatch a **fresh
-judge subagent** (no implementation context) with the issue's acceptance
-criteria and Interfaces block, `git diff origin/main...HEAD`, the test and
-verify-rail output, and the **north-star block only** (§1b; it judges against
-the goal, not the persona). Tell it, verbatim:
+judge subagent** (no implementation context) with the judge pack (`uv run
+devloop pack <N> --role judge --cwd <worktree>`, §1b: the issue with its
+acceptance criteria and Interfaces block, the `## Rules` section, the repo
+map), `git diff origin/main...HEAD`, and the test and verify-rail output. Tell
+it, verbatim:
 
 > The contract is the issue's acceptance criteria plus the Interfaces block's
 > intent. Judge the diff against that contract and nothing else. Return one
@@ -225,8 +223,12 @@ the goal, not the persona). Tell it, verbatim:
 > line ran it, run it yourself and cite the output. Everything else you notice
 > — a risk, a smell, a better design, an edge case outside the contract — is a
 > finding with a severity (`"critical"` / `"major"` / `"minor"` / `"nit"`):
-> list it, do not fail the contract over it. Do not search for problems the
-> contract does not name. Return exactly this object:
+> list it, do not fail the contract over it. A finding names the rule in the
+> Rules section it violates (by number) or the exercised path it breaks (the
+> documented verb and the normal state that reaches it); a finding that names
+> neither is dropped, not listed. Findings never block, whatever their
+> severity. Do not search for problems the contract does not name. Return
+> exactly this object:
 
 ```json
 {"criteria": [{"id": "AC1", "verdict": "met", "evidence": "<one line>"}],
@@ -280,7 +282,7 @@ after every required gate is green**, and is safe by construction: it can only
 **On a required-gate failure:** feed the evidence (gate id, summary, detail, the
 failed criteria with their evidence, the red verify lines) back to the
 implementer subagent (SendMessage to the same agent — it keeps its context) for
-a fix round, re-splicing **both dispatch blocks** (§1b). Re-run the pipeline
+a fix round, re-splicing **the pack** (§1b). Re-run the pipeline
 **from the first failed gate**; the re-judge covers **only the failed criteria**
 (the envelope then carries just those entries) — it does not re-open met ones
 and does not hunt. `max_fix_rounds` is the budget; you never extend it. After
