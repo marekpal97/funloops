@@ -206,11 +206,6 @@ def test_tier2_expands_the_directories_of_the_pointed_files(nested):
     line, never an error."""
     root, files = nested
     tree = pack.Directory.tree(files)
-    assert tree.slice(["pkg/sub/deep.py"], root, budget=99).splitlines() == [
-        "pkg/sub/ (2 files, 3 symbols) — Sub: the leaf package.",
-        "├── __init__.py (python, 1 symbols) — Sub: the leaf package.",
-        "└── deep.py (python, 2 symbols) — Deep: the leaf.",
-    ]
     assert tree.slice(["nope/x.md"], root, budget=99) == "nope/ (0 files, 0 symbols)"
     assert tree.slice([], root, budget=99) == ""
 

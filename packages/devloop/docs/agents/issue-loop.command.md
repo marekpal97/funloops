@@ -239,8 +239,8 @@ verbatim:
 ```
 
 `evidence` and `finding` are never blank; `findings` may be empty, not absent.
-The `intent` entry is present only on a shown failure; the rail accepts it as
-it accepts any criterion id. **Only a criterion `not-met` blocks.** Findings
+The rail accepts `intent` as it accepts any criterion id.
+**Only a criterion `not-met` blocks.** Findings
 never do, whatever their severity: they go to the PR's findings comment and
 the triage lane (§1d) — never a fix round, never an issue.
 
@@ -406,13 +406,10 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   **cumulative merge-base diff** `git diff origin/main...HEAD`, and the
   subagent also receives the **whole-file** contents of every touched file
   (`git diff --name-only origin/main...HEAD`, then read each) so it can see a
-  later slice re-rolling an earlier slice's helper. Keep-or-revert reuses the
-  gate config: snapshot `pre=$(git rev-parse HEAD)`, apply the delete-list as
-  one commit, re-run the gate's `rerun` list — the `tests` gate on the whole
-  branch via the rail, nothing else — and on red `git reset --hard $pre` and
-  add the gate's `revert_note` (`⚠ simplify-reverted`, suffixed `(stack-tip)`)
-  to the PR body. Note the win (`stack-tip simplify: -<N> lines, tests green`)
-  or the revert.
+  later slice re-rolling an earlier slice's helper. Keep-or-revert is §1c's
+  steps 1, 3 and 4 on the whole branch (the gate's `rerun` list, `reset --hard
+  $pre` on red), the `revert_note` suffixed `(stack-tip)`. Note the win
+  (`stack-tip simplify: -<N> lines, tests green`) or the revert.
   <!-- host-extension: memory feed — needs a Thinkweave vault. -->
   Record the result in the final completed issue's §3 trace under
   `stack_simplify`.

@@ -25,9 +25,8 @@ Role = Literal["implementer", "judge"]
 
 # Each tier renders at most this many lines of its own; over it, the largest
 # directories fold first (dec-e6561edc: a fixed backstop, no config key).
-# Tier 2 always shows the files the issue points at, even past the budget
-# (funloops#53). Sized by the thinkweave judge pack: 6,000 chars of issue
-# and rules leave under 2,000 for the map inside its 8,000-char ceiling.
+# Sized by the thinkweave judge pack: 6,000 chars of issue and rules leave
+# under 2,000 for the map inside its 8,000-char ceiling.
 LINE_BUDGET = 16
 
 

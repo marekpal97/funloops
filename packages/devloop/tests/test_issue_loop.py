@@ -2026,12 +2026,6 @@ def test_classify_problem_review_red():
     assert r["lane"] == "red" and any("problem" in x for x in r["reasons"])
 
 
-def test_severity_vocabulary_is_none_note_problem():
-    """The signals table in §1d names the three values the classifier reads."""
-    ship = _command_doc_subsection("### 1d.")
-    assert "`none`/`note`/`problem`" in ship
-
-
 def test_classify_uncertain_acceptance_red():
     assert triage.classify_pr(_signals(acceptance="uncertain"), TRIAGE_CFG)["lane"] == "red"
     assert triage.classify_pr(_signals(acceptance="not-met"), TRIAGE_CFG)["lane"] == "red"
@@ -2593,6 +2587,7 @@ def test_findings_are_one_pr_comment_after_pr_open():
     assert "Findings: none" in raw
     ship = " ".join(raw.split())
     assert "findings once" in ship
+    assert "`none`/`note`/`problem`" in ship  # the signals table's severity values
     assert "PR body" in ship and "no longer lists" in ship
     stacked = " ".join(_command_doc_subsection("### 1e.").split())
     assert "one sentence per issue" in stacked
