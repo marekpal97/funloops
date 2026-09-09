@@ -2771,10 +2771,14 @@ def test_validate_judge_all_met_passes_whatever_the_findings_say():
 
 def test_validate_judge_one_not_met_fails_the_gate_without_rejecting():
     """A `not-met` is a FIX ROUND, not a schema rejection — passed=False with
-    empty reasons (rc 1, not rc 2). No findings at all is still a verdict."""
+    empty reasons (rc 1, not rc 2). No findings at all is still a verdict.
+    #56 (dec-39140113): the reserved `intent` id — changed code that no longer
+    works as the issue intends — rides the envelope as one more criterion; the
+    rail accepts it as it accepts any id, no rail change."""
     result = gates.validate(_gate("judge"), {"criteria": [
         {"id": "AC1", "verdict": "met", "evidence": "e"},
-        {"id": "AC2", "verdict": "not-met", "evidence": "no test at the seam"},
+        {"id": "intent", "verdict": "not-met",
+         "evidence": "ran uv run devloop check --issue 40 with a two-issue cycle; forked until killed"},
     ], "findings": []})
     assert result["passed"] is False
     assert result["reasons"] == []
@@ -2953,6 +2957,25 @@ def test_command_doc_wires_the_validate_verb_into_the_gate_pipeline():
     assert "re-ask" in section and "reasons" in section
     # Each judgment kind's schema is stated where its gate is.
     assert '"criteria"' in section and '"findings"' in section
+
+
+def test_judge_brief_blocks_on_a_shown_failure_under_the_reserved_intent_id():
+    """#56 (dec-39140113): the §1c judge brief says a prose criterion with no
+    verify line is run by the judge; changed code that no longer works as the
+    issue intends is `not-met` under the reserved id `intent`; a `not-met`
+    without a command, a test, or output is a finding. The envelope example
+    shows the `intent` entry. The real invariant (a `not-met` under any id
+    fails the gate) is pinned on the validator; this is the doc tripwire."""
+    text = (cli.REPO_ROOT / "docs" / "agents" / "issue-loop.command.md").read_text(
+        encoding="utf-8")
+    start = text.index("### 1c. Gate pipeline")
+    section = " ".join(text[start:text.index("\n### ", start + 1)].split())
+    assert "run it yourself" in section
+    assert "no longer works as the issue intends" in section
+    assert '"id": "intent"' in section
+    assert "it is a finding" in section
+    # `intent` is a criterion, so its fix round is the ordinary one.
+    assert "like any other criterion" in section
 
 
 def test_validate_schemas_match_the_enums_the_command_doc_advertises():

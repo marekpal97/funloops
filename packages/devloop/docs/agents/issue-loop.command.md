@@ -212,10 +212,14 @@ verbatim:
 > The contract is the issue's acceptance criteria plus the Interfaces block's
 > intent. Judge the diff against that contract and nothing else. Return one
 > verdict per criterion, `"met"` or `"not-met"`, each with one line of
-> evidence. A `not-met` must cite the criterion and the observable — a
-> command's output, a test, a diff line; if you cannot cite one, it is not a
-> `not-met`. Where a criterion is prose for an executable outcome and no verify
-> line ran it, run it yourself and cite the output. Everything else you notice
+> evidence. A criterion is not met when the code does not do what it says.
+> Where a criterion is prose and no verify line ran it, run it yourself and
+> cite the output; the output is its evidence.
+> Code the diff changes that no longer works as the issue intends is `not-met`
+> too, even when no criterion names the case: return it as one more criterion
+> under the reserved id `intent`, and only when you have the failure in hand.
+> Every `not-met` names a command, a test, or output; without one it is not a
+> `not-met`, it is a finding. Everything else you notice
 > — a risk, a smell, a better design, an edge case outside the contract — is a
 > finding with one of two severities: `"problem"` (the code is wrong or
 > fragile in a way you can describe but did not demonstrate; a human reads it
@@ -228,14 +232,17 @@ verbatim:
 > exactly this object:
 
 ```json
-{"criteria": [{"id": "AC1", "verdict": "met", "evidence": "<one line>"}],
+{"criteria": [{"id": "AC1", "verdict": "met", "evidence": "<one line>"},
+              {"id": "intent", "verdict": "not-met",
+               "evidence": "<the command or test you ran and its output>"}],
  "findings": [{"severity": "note", "finding": "<prose>"}]}
 ```
 
 `evidence` and `finding` are never blank; `findings` may be empty, not absent.
-**Only a criterion `not-met` blocks.** Findings never do, whatever their
-severity: they go to the PR's findings comment and the triage lane (§1d) —
-never a fix round, never an issue.
+The `intent` entry is present only on a shown failure; the rail accepts it as
+it accepts any criterion id. **Only a criterion `not-met` blocks.** Findings
+never do, whatever their severity: they go to the PR's findings comment and
+the triage lane (§1d) — never a fix round, never an issue.
 
 **Every judgment return is schema-checked before it becomes a verdict.** (For
 `simplify` the **vendored** skill owns its output format, a prose delete-list;
@@ -276,7 +283,9 @@ after every required gate is green**, and is safe by construction: it can only
 **On a required-gate failure:** feed the evidence (gate id, summary, detail, the
 failed criteria with their evidence, the red verify lines) back to the
 implementer subagent (SendMessage to the same agent — it keeps its context) for
-a fix round, re-splicing **the pack** (§1b). Re-run the pipeline
+a fix round, re-splicing **the pack** (§1b). An `intent` entry rides that round
+like any other criterion: the implementer gets its evidence, the command or
+test the judge ran and its output. Re-run the pipeline
 **from the first failed gate**; the re-judge covers **only the failed criteria**
 (the envelope then carries just those entries) — it does not re-open met ones
 and does not hunt. `max_fix_rounds` is the budget; you never extend it. After
