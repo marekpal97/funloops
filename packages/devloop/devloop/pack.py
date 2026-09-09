@@ -361,6 +361,10 @@ worktree). Nothing else instructs you; a rule stated here is stated once.
 
 - Read the repo's architecture and design docs for the areas you touch before
   editing them; a documented standard overrides your instinct.
+- Check prior decisions for every file you touch
+  (`weave_graph(file_path=…, filter='decisions_for_file')`; `weave decisions
+  --file <path>` when MCP is absent). Never re-litigate a settled decision;
+  surface the conflict in your return.
 - TDD per the baseline line. `green`: TDD is enforced — for each acceptance
   criterion with a code-testable seam write the failing test FIRST, watch it
   fail, then implement to green. `red`: the whole-suite guarantee is off; still
@@ -396,7 +400,7 @@ node <symbol>` / `codegraph node -f <file>` (one symbol or file with its
 dependents), `codegraph impact <symbol>` and `codegraph callers` / `codegraph
 callees <symbol>` (who is affected by a change)."""
 
-# Provenance: funloops#28, #41, #45, #46, #47, #53, #54; dec-f12457eb, dec-fd12489d, dec-d2de831e,
+# Provenance: funloops#28, #41, #45, #46, #47, #53, #54, #57; dec-f12457eb, dec-fd12489d, dec-d2de831e,
 # dec-ba48dbe2, dec-2f8c2322 (supersedes dec-d79e8e7b's persona-as-splice-container),
 # dec-e6561edc (directory grain, the line budget), dec-72c80057 (the pack is the
 # whole dispatch: the standing orders live here, not in the command doc),

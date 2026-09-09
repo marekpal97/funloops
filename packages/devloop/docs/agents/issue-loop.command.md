@@ -134,11 +134,7 @@ title and first summary line (an id the index does not hold is listed as
 such), and emits JSON: `block` (markdown to
 splice), `primed`, `served` (the insight and decision ids surfaced). It always
 serves what it finds; there is no held-out run. **Write `block` to a file and pass it to
-the pack below as `--prime <file>`**, and add this
-standing order: *Check prior decisions for every file you touch
-(`weave_graph(file_path=…, filter='decisions_for_file')`; fall back to `weave
-decisions --file <path>` if MCP is absent). Do not re-litigate a settled
-decision — surface conflicts instead.* Empty `block`: splice nothing. Record
+the pack below as `--prime <file>`.** Empty `block`: splice nothing. Record
 `primed` and `served` for §3. With `--buffer` (the loop session's buffer JSONL)
 the rail also logs the served ids as a `loop_prime` event the indexer projects
 to `context_served(source='loop-prime')`; `--dry-run` suppresses that write.

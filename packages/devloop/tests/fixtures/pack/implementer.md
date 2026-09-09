@@ -83,6 +83,10 @@ worktree). Nothing else instructs you; a rule stated here is stated once.
 
 - Read the repo's architecture and design docs for the areas you touch before
   editing them; a documented standard overrides your instinct.
+- Check prior decisions for every file you touch
+  (`weave_graph(file_path=…, filter='decisions_for_file')`; `weave decisions
+  --file <path>` when MCP is absent). Never re-litigate a settled decision;
+  surface the conflict in your return.
 - TDD per the baseline line. `green`: TDD is enforced — for each acceptance
   criterion with a code-testable seam write the failing test FIRST, watch it
   fail, then implement to green. `red`: the whole-suite guarantee is off; still
