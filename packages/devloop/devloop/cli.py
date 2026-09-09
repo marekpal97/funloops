@@ -441,7 +441,8 @@ def main(argv: list[str] | None = None) -> int:
             cfg["constitution"] = [str(p) for p in find_constitution()]
         except FileNotFoundError as exc:
             cfg["constitution"] = {"error": str(exc)}
-        print(json.dumps(cfg, indent=2))
+        # Compact, like `gh --json`: a verify line matches ` => ` as a raw substring, so lists stay on one line.
+        print(json.dumps(cfg))
     elif args.cmd == "plan":
         limit = args.limit if args.limit is not None else cfg["loop"]["max_issues_per_run"]
         issues = github.fetch_issues()
