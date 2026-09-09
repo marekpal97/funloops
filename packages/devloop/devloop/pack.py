@@ -207,12 +207,11 @@ class Directory:
     def slice(self, paths: list[str], root: Path, budget: int) -> str:
         """Tier 2: the directory of each pointed file as its line over its
         files, groups a blank line apart in path order. A group opens whole
-        while ``budget`` holds it, the group with the fewest files to add
-        first; past that it folds to the pointed files alone, budget or not,
-        or to the first files that still fit when the index holds none of
-        them, and ends in a fold line naming the count not shown (rule 6: a
-        fold reads as a fold). A directory the index does not hold renders
-        as an empty line."""
+        while ``budget`` holds it; past that it folds to the pointed files
+        alone, budget or not, or to the first files that still fit when the
+        index holds none of them, and ends in a fold line naming the count
+        not shown (rule 6: a fold reads as a fold). A directory the index
+        does not hold renders as an empty line."""
         pointed: dict[str, set[str]] = {}
         for p in paths:
             *dirs, name = parts(p)
@@ -221,15 +220,12 @@ class Directory:
         must = {g: sorted(pointed[g.path] & g.files.keys()) for g in groups}
         rest = {g: sorted(g.files.keys() - pointed[g.path]) for g in groups}
         left = budget - sum(1 + len(must[g]) for g in groups)
-        shown = {}
-        for g in sorted(rest, key=lambda g: len(rest[g])):
-            whole = len(rest[g]) <= max(left, 0)
-            shown[g] = len(rest[g]) if whole else 0 if must[g] else max(left - 1, 0)
-            left -= shown[g] + (shown[g] < len(rest[g]))  # a fold line costs one
-        return "\n\n".join(
-            "\n".join([g.line(root), *g.file_lines(root, must[g] + rest[g][:shown[g]],
-                                                   len(rest[g]) - shown[g])])
-            for g in groups)
+        blocks = []
+        for g in groups:
+            n = len(rest[g]) if len(rest[g]) <= left else 0 if must[g] else max(left - 1, 0)
+            left -= n + (n < len(rest[g]))  # a fold line costs one
+            blocks.append("\n".join([g.line(root), *g.file_lines(root, must[g] + rest[g][:n], len(rest[g]) - n)]))
+        return "\n\n".join(blocks)
 
     def fold(self, budget: int) -> None:
         """While the cut exceeds ``budget`` lines and something can fold: the
@@ -285,7 +281,7 @@ class Directory:
             text += f" — {note}"
         return text
 
-    def file_lines(self, root: Path, names: list[str], hidden: int = 0) -> list[str]:
+    def file_lines(self, root: Path, names: list[str], hidden: int) -> list[str]:
         """The named files directly under it, name order, in the catalog's
         old file-line form ``name (language, N symbols) — responsibility``,
         then the fold line ``… N more files`` when ``hidden`` files are not

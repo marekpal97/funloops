@@ -249,9 +249,9 @@ def test_tier2_over_budget_without_a_pointed_file_shows_the_first_files(wide):
     ]
 
 
-def test_tier2_fills_the_smallest_directory_first(wide):
-    """Two groups under one budget: the one with fewer files to add opens
-    whole, the wide one folds to its pointed file."""
+def test_tier2_two_groups_share_one_budget(wide):
+    """Two groups under one budget: the small one opens whole, the wide one
+    folds to its pointed file."""
     root, tree = wide
     assert tree.slice(["tests/test_a.py", "pkg/sub/deep.py"], root, budget=8).splitlines() == [
         "pkg/sub/ (2 files, 3 symbols) — Sub: the leaf package.",
