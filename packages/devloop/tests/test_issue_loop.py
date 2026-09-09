@@ -10,6 +10,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import tomllib
 
 import pytest
 
@@ -453,9 +454,12 @@ def test_simplify_gate_shape():
     # required=false: simplify can never fail the pipeline — its failure ships
     # the pre-simplify diff (documented in issue-loop.command.md §1c-simplify).
     assert gate["required"] is False
-    # It re-verifies the shrunk diff against exactly the deterministic +
-    # behavioral gates, in order.
-    assert gate["rerun"] == ["tests", "judge"]
+    # It re-verifies the shrunk diff against the tests gate alone
+    # (dec-0ab8ab6b): no second judge over a diff the judge already passed.
+    assert gate["rerun"] == ["tests"]
+    template = tomllib.loads((cli.REPO_ROOT / "docs" / "agents" / "loop.toml.template")
+                             .read_text(encoding="utf-8"))
+    assert next(g for g in template["gates"] if g["id"] == "simplify")["rerun"] == ["tests"]
     assert "simplify-reverted" in gate["revert_note"]
     # The delete-list comes from the vendored ponytail-review skill.
     assert gate["skill"] == "ponytail-review"
@@ -1690,7 +1694,7 @@ def _sample_trace() -> dict:
     return {
         "rounds": [
             {"gate": "review", "finding": "standalone existence test duplicates "
-             "the eight sibling guards", "severity": "minor",
+             "the eight sibling guards", "severity": "note",
              "disposition": "accepted", "fixed_by": "dropped the redundant test",
              "reviewer_note": "orchestrator bookkeeping — dropped"},
         ],
@@ -1724,7 +1728,7 @@ def test_build_trajectory_round_trips_semantic_trace():
     assert trace["rounds"] == [
         {"gate": "review",
          "finding": "standalone existence test duplicates the eight sibling guards",
-         "severity": "minor", "disposition": "accepted",
+         "severity": "note", "disposition": "accepted",
          "fixed_by": "dropped the redundant test"},
     ]
     assert trace["criteria"] == [
@@ -1942,14 +1946,14 @@ TRIAGE_CFG = {
 
 
 def _signals(**kw):
-    """A first-try, small, test-covered, minor-finding, green-baseline PR —
+    """A first-try, small, test-covered, note-finding, green-baseline PR —
     the clean archetype. Override one field per test to trip one rule."""
     base = {
         "fix_rounds": 0,
         "diff_lines": 20,
         "files_touched": ["src/thinkweave/core/foo.py", "tests/test_foo.py"],
         "tests_touched": True,
-        "review_severity": "minor",
+        "review_severity": "note",
         "baseline_green": True,
         "acceptance": "met",
     }
@@ -1969,7 +1973,7 @@ def test_clean_archetype_is_review_light_with_no_reasons():
     assert set(triage.TRIAGE_LABELS) == {"yellow"}
 
 
-def test_minor_and_none_findings_stay_yellow():
+def test_note_and_none_findings_stay_yellow():
     assert triage.classify_pr(_signals(review_severity="none"), TRIAGE_CFG)["lane"] == "yellow"
 
 
@@ -2018,9 +2022,23 @@ def test_classify_degraded_baseline_red():
     assert triage.classify_pr(_signals(baseline_green=False), TRIAGE_CFG)["lane"] == "red"
 
 
-def test_classify_major_and_critical_review_red():
-    assert triage.classify_pr(_signals(review_severity="major"), TRIAGE_CFG)["lane"] == "red"
-    assert triage.classify_pr(_signals(review_severity="critical"), TRIAGE_CFG)["lane"] == "red"
+def test_classify_problem_review_red():
+    """dec-39140113: two severities. `problem` is the red lane; the retired
+    four-level names are off-enum now, so they fail closed with the value named."""
+    r = triage.classify_pr(_signals(review_severity="problem"), TRIAGE_CFG)
+    assert r["lane"] == "red" and any("problem" in x for x in r["reasons"])
+    for retired in ("critical", "major", "minor", "nit"):
+        r = triage.classify_pr(_signals(review_severity=retired), TRIAGE_CFG)
+        assert r["lane"] == "red"
+        assert any("unrecognized" in x and retired in x for x in r["reasons"]), retired
+
+
+def test_severity_vocabulary_is_none_note_problem():
+    """The signals table in §1d and the triage docstring name the same three
+    values the classifier reads."""
+    assert "none|note|problem" in triage.classify_pr.__doc__
+    ship = _command_doc_subsection("### 1d.")
+    assert "`none`/`note`/`problem`" in ship
 
 
 def test_classify_uncertain_acceptance_red():
@@ -2032,12 +2050,12 @@ def test_red_lists_every_triggered_rule():
     # Short-circuit reasons: not just the first — every red rule that fired.
     r = triage.classify_pr(
         _signals(files_touched=["hooks/x.json"], diff_lines=900,
-                 baseline_green=False, review_severity="critical"),
+                 baseline_green=False, review_severity="problem"),
         TRIAGE_CFG)
     assert r["lane"] == "red"
     joined = " | ".join(r["reasons"])
     assert "hooks/x.json" in joined and "900" in joined
-    assert "baseline" in joined.lower() and "critical" in joined
+    assert "baseline" in joined.lower() and "problem" in joined
     assert len(r["reasons"]) >= 4
 
 
@@ -2122,7 +2140,7 @@ def test_triage_cli_red_via_default_config(tmp_path, capsys):
     sig = tmp_path / "sig.json"
     sig.write_text(json.dumps({
         "fix_rounds": 0, "diff_lines": 10, "files_touched": ["hooks/hooks.json"],
-        "tests_touched": True, "review_severity": "minor", "baseline_green": True,
+        "tests_touched": True, "review_severity": "note", "baseline_green": True,
     }), encoding="utf-8")
     rc = cli.main(["triage", "59", "--signals-json", str(sig)])
     out = json.loads(capsys.readouterr().out)
@@ -2136,7 +2154,7 @@ def test_triage_cli_clean_pr_is_review_light(tmp_path, capsys):
     sig.write_text(json.dumps({
         "fix_rounds": 0, "diff_lines": 10,
         "files_touched": ["src/thinkweave/core/foo.py", "tests/test_foo.py"],
-        "tests_touched": True, "review_severity": "minor", "baseline_green": True,
+        "tests_touched": True, "review_severity": "note", "baseline_green": True,
         "acceptance": "met",
     }), encoding="utf-8")
     assert cli.main(["triage", "--signals-json", str(sig)]) == 0
@@ -2206,7 +2224,7 @@ def test_empty_signals_is_red_on_all_three_safety_keys():
 def test_benign_absence_does_not_trip_red():
     # diff_lines / fix_rounds / files_touched absent is NOT a safety hole:
     # with the three safety keys present and clean, the PR is a clean skim.
-    sig = {"tests_touched": True, "review_severity": "minor",
+    sig = {"tests_touched": True, "review_severity": "note",
            "baseline_green": True, "acceptance": "met"}
     r = triage.classify_pr(sig, TRIAGE_CFG)
     assert r["lane"] == "yellow" and r["reasons"] == []
@@ -2523,14 +2541,19 @@ def test_issue_loop_doc_splices_persona_by_reference():
 
 def _command_doc_subsection(marker: str) -> str:
     """Extract one `### 1x.` subsection of issue-loop.command.md — from the
-    heading that starts with ``marker`` to the next heading of any level."""
+    heading that starts with ``marker`` to the next heading of any level.
+    A `#` line inside a ``` fence is an example (§1d's findings comment), not
+    a heading, so it never ends the section."""
     doc = cli.REPO_ROOT / "docs" / "agents" / "issue-loop.command.md"
     assert doc.exists(), "issue-loop.command.md must ship under docs/agents/"
     lines = doc.read_text(encoding="utf-8").splitlines()
     start = next(i for i, ln in enumerate(lines) if ln.startswith(marker))
-    end = next((i for i in range(start + 1, len(lines))
-                if lines[i].startswith("## ") or lines[i].startswith("### ")),
-               len(lines))
+    end, fenced = len(lines), False
+    for i in range(start + 1, len(lines)):
+        fenced ^= lines[i].startswith("```")
+        if not fenced and lines[i].startswith(("## ", "### ")):
+            end = i
+            break
     return "\n".join(lines[start:end])
 
 
@@ -2567,14 +2590,19 @@ def test_loop_comments_end_at_the_gate_table():
             assert "<run-id>" in body and "<sha>" in body, (marker, body)
 
 
-def test_pr_body_names_findings_once_and_cites_issued_findings_by_number():
-    """funloops#48 (dec-f7e7dd53): the PR body carries each fact once. §1d's
-    list says findings appear once and a carried finding that became an issue
-    is its number; §1e's one-PR bullet says one sentence and one gate table per
-    issue."""
-    ship = " ".join(_command_doc_subsection("### 1d.").split())
+def test_findings_are_one_pr_comment_after_pr_open():
+    """funloops#55 (dec-39140113, dec-f7e7dd53): findings have one home. §1d
+    posts them as one `gh pr comment` after `gh pr create`, a heading per
+    severity and a bullet per finding, `Findings: none` when empty; the PR
+    body's list says they live in that comment. §1e's one-PR bullet says one
+    sentence and one gate table per issue."""
+    raw = _command_doc_subsection("### 1d.")
+    assert raw.index("gh pr create") < raw.index("gh pr comment")
+    assert "### problem" in raw and "### note" in raw
+    assert "Findings: none" in raw
+    ship = " ".join(raw.split())
     assert "findings once" in ship
-    assert "by number" in ship
+    assert "PR body" in ship and "no longer lists" in ship
     stacked = " ".join(_command_doc_subsection("### 1e.").split())
     assert "one sentence per issue" in stacked
     assert "one gate table per issue" in stacked
@@ -2623,9 +2651,24 @@ def test_stack_tip_simplify_reuses_existing_gate_semantics():
     assert "rerun" in low
     assert "revert_note" in low or "simplify-reverted" in low
     assert "reset --hard" in sec
-    assert "individually passed" in low
     # The recording instruction names the trace key the rail shapes.
     assert "stack_simplify" in sec
+
+
+def test_simplify_reruns_tests_only_and_once_per_stack():
+    """funloops#55 (dec-0ab8ab6b): after the delete-list lands, only the tests
+    gate reruns — no judge after simplify in §1c's step 4 or in §1e's stack-tip
+    pass — and stacked delivery runs simplify once, at the tip, never per
+    slice. §3 says the per-slice `simplify` key is absent in stacked mode."""
+    c = _command_doc_subsection("### 1c.")
+    step = c[c.index("4. **Re-verify"):c.index("On a required-gate failure")]
+    assert "rerun" in step and "judge" not in step.lower()
+    e = _command_doc_subsection("### 1e.")
+    tip = e[e.lower().index("stack-tip simplify"):e.index("One PR at the end")]
+    assert "rerun" in tip and "judge" not in tip.lower()
+    assert "per-slice simplify" not in e
+    s3 = _command_doc_subsection("## 3.")
+    assert "absent" in s3 and "stacked" in s3 and "stack_simplify" in s3
 
 
 def test_pr_per_issue_ship_states_stack_tip_noop():
@@ -2722,11 +2765,12 @@ def test_gate_registries_are_disjoint_and_cover_the_pipeline():
 
 def test_validate_judge_all_met_passes_whatever_the_findings_say():
     """AC1: the fused envelope carries criteria verdicts AND findings; the
-    gate passes iff no criterion is not-met. A critical finding outside the
-    contract is advisory (PR body + triage lane) — it never blocks."""
+    gate passes iff no criterion is not-met. A problem finding outside the
+    contract is advisory (findings comment + triage lane) — it never blocks."""
+    assert gates.SEVERITIES == ("problem", "note")
     result = gates.validate(_gate("judge"), {
         "criteria": _met("AC1", "AC2"),
-        "findings": [{"severity": "critical", "finding": "out-of-contract concern"}],
+        "findings": [{"severity": "problem", "finding": "out-of-contract concern"}],
     })
     assert set(result) == {"id", "kind", "passed", "summary", "detail", "reasons"}
     assert result["id"] == "judge" and result["kind"] == "judge"
@@ -2789,15 +2833,15 @@ def test_validate_judge_rejects_empty_evidence_and_empty_criteria():
 
 
 def test_validate_judge_rejects_bad_or_missing_findings():
-    """findings[] is half the envelope: an invented severity or a blank finding
-    is rejected naming the field, and a return that omits the list altogether
-    is a re-ask — silence is not "no findings"."""
+    """findings[] is half the envelope: a retired four-level severity or a
+    blank finding is rejected naming the field, and a return that omits the
+    list altogether is a re-ask — silence is not "no findings"."""
     bad = gates.validate(_gate("judge"), {"criteria": _met("AC1"), "findings": [
-        {"severity": "blocker", "finding": "x"},
-        {"severity": "minor", "finding": ""},
+        {"severity": "major", "finding": "x"},
+        {"severity": "note", "finding": ""},
     ]})
     assert bad["passed"] is False
-    assert any("findings[0].severity" in r and "blocker" in r for r in bad["reasons"])
+    assert any("findings[0].severity" in r and "major" in r for r in bad["reasons"])
     assert any("findings[1].finding" in r for r in bad["reasons"])
     missing = gates.validate(_gate("judge"), {"criteria": _met("AC1")})
     assert missing["passed"] is False

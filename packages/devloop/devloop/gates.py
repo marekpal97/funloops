@@ -191,7 +191,7 @@ def run_diff_gate(gate: dict, cwd: Path, base_ref: str) -> dict:
 # trajectory as fact.
 
 VERDICTS = ("met", "not-met")
-SEVERITIES = ("critical", "major", "minor", "nit")
+SEVERITIES = ("problem", "note")
 SIMPLIFY_OUTCOMES = ("applied", "reverted", "lean")
 
 
@@ -246,16 +246,17 @@ def _enum(entry: dict, where: str, key: str, allowed: tuple[str, ...],
 def validate_judge(gate: dict, raw: dict) -> dict:
     """The one judgment stage (dec-611cbd8a, dec-2d4bc03d):
     ``{criteria: [{id, verdict: met|not-met, evidence}],
-    findings: [{severity: critical|major|minor|nit, finding}]}``.
+    findings: [{severity: problem|note, finding}]}``.
 
     ``criteria`` is one entry per acceptance criterion and carries the whole
     authority: the gate passes per the gate's ``threshold`` — ``majority``
     needs strictly more than half met, anything else is read as ``all`` (gates
     are file-only config, a trusted input — unlike the subagent return here).
     ``findings`` is everything the judge saw outside the contract: schema-
-    checked so it can travel to the PR body and the triage lane as data, but
-    never a verdict — a critical finding blocks nothing. The list may be empty;
-    it may not be missing, so silence never reads as a clean review.
+    checked so it can travel to the PR's findings comment and the triage lane
+    as data, but never a verdict — a ``problem`` blocks nothing here; it is the
+    red lane's signal (dec-39140113). The list may be empty; it may not be
+    missing, so silence never reads as a clean review.
     """
     reasons: list[str] = []
     verdicts = []
