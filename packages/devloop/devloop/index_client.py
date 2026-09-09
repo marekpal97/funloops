@@ -173,21 +173,25 @@ def trajectory_candidates(
     return _rrf(rankings)
 
 
-def note_bodies(conn: sqlite3.Connection, ids: list[str]) -> dict[str, str]:
-    """Read-only: ``{id: body_text}`` for the given ids that are ``type='note'``.
+def note_rows(
+    conn: sqlite3.Connection, ids: list[str], note_type: str = "note",
+) -> dict[str, dict]:
+    """Read-only: ``{id: {title, body}}`` for the given ids of ``note_type``.
 
     The type guard is load-bearing: a ``builds_on`` list may name a decision or
-    session id, and prime serves only insight-note bodies as color. Ids that
-    don't resolve are simply absent from the mapping.
+    session id, and prime serves only insight-note (``'note'``) bodies as
+    color; the decisions leg asks for ``'decision'`` rows. Ids that don't
+    resolve are simply absent from the mapping.
     """
     if not ids:
         return {}
     placeholders = ",".join("?" * len(ids))
     rows = conn.execute(
-        f"SELECT id, body_text FROM notes WHERE type = 'note' AND id IN ({placeholders})",
-        ids,
+        f"SELECT id, title, body_text FROM notes WHERE type = ? AND id IN ({placeholders})",
+        [note_type, *ids],
     ).fetchall()
-    return {r["id"]: (r["body_text"] or "").strip() for r in rows}
+    return {r["id"]: {"title": r["title"] or "", "body": (r["body_text"] or "").strip()}
+            for r in rows}
 
 
 def resolve_db_path(db: str | None, vault: str | None) -> str | None:

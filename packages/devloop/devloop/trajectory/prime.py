@@ -17,7 +17,7 @@ import datetime
 import json
 from pathlib import Path
 
-from devloop.index_client import Connection, Error, note_bodies, trajectory_candidates
+from devloop.index_client import Connection, Error, note_rows, trajectory_candidates
 
 
 def _coerce_builds_on(raw: object) -> list[str]:
@@ -51,8 +51,28 @@ def resolve_insights(conn: Connection, ids: list[str]) -> list[dict]:
     resolve to a note or resolve to an empty body. The index already holds these
     notes (they are ordinary notes minted at ship time).
     """
-    by_id = note_bodies(conn, ids)
-    return [{"id": i, "body": by_id[i]} for i in ids if by_id.get(i)]
+    by_id = note_rows(conn, ids)
+    return [{"id": i, "body": by_id[i]["body"]} for i in ids if by_id.get(i, {}).get("body")]
+
+
+def resolve_decisions(conn: Connection, ids: list[str]) -> list[dict]:
+    """The decisions leg's records: ``[{id, title, summary}]`` in ``ids`` order.
+
+    ``summary`` is the first prose line of the decision body — the ``## Context``
+    rationale weave_extract writes first, i.e. the why. An id the index does
+    not hold keeps its place with an empty title and summary, so the renderer
+    can say so rather than drop the pointer (a ticket citing a decision the
+    index has not caught up with must not lose it silently).
+    """
+    by_id = note_rows(conn, ids, "decision")
+    return [{"id": i, "title": by_id.get(i, {}).get("title", ""),
+             "summary": _first_prose_line(by_id.get(i, {}).get("body", ""))}
+            for i in ids]
+
+
+def _first_prose_line(body: str) -> str:
+    return next((ln.strip() for ln in body.splitlines()
+                 if ln.strip() and not ln.lstrip().startswith("#")), "")
 
 
 # Outcome-weighting rank for prime ordering (issue #85). merged-clean/stable
@@ -112,7 +132,7 @@ def query_trajectories(
 
 
 def render_prime_block(
-    trajectories: list[dict], decisions: list[str] | None = None,
+    trajectories: list[dict], decisions: list[dict] | None = None,
     budget_chars: int = 1200,
 ) -> tuple[str, list[str]]:
     """Render the primed-context markdown + the flat served-id list.
@@ -121,10 +141,12 @@ def render_prime_block(
     piece until the char budget is spent — at least one always lands if any
     exist). A trajectory serves the BODIES of the insight notes it builds on,
     and ``served`` records the insight ids — that is what the run received.
-    ``decisions`` (the decisions_for_file note ids the orchestrator already
-    resolved) are appended as an adjacency line so the served log records both
-    kinds. ``served`` carries every id actually rendered. Empty input →
-    ``('', [])`` so the caller skips cleanly.
+    ``decisions`` (:func:`resolve_decisions` records) close the block as a
+    section of one bullet each: id, title, then the summary line; an id the
+    index does not hold says so. The section sits outside the char budget:
+    the caller's ``limit`` already caps it, and the ticket's decisions are the
+    why that must arrive (dec-f5bdf9ea). ``served`` carries every id actually
+    rendered. Empty input → ``('', [])`` so the caller skips cleanly.
     """
     decisions = decisions or []
     if not trajectories and not decisions:
@@ -140,9 +162,14 @@ def render_prime_block(
         pieces.append(piece)
         served.extend(ins["id"] for ins in insights)
     if decisions:
-        pieces.append("Prior decisions for touched files: " + ", ".join(decisions))
-        served.extend(decisions)
+        pieces.append("### Prior decisions\n" + "".join(_decision_bullet(d) for d in decisions))
+        served.extend(d["id"] for d in decisions)
     return "\n".join(pieces).strip() + "\n", served
+
+
+def _decision_bullet(d: dict) -> str:
+    line = f"- **{d['id']}** — {d.get('title') or '(not in the index)'}\n"
+    return line + (f"  {d['summary']}\n" if d.get("summary") else "")
 
 
 def build_prime_payload(
@@ -154,9 +181,10 @@ def build_prime_payload(
     """Assemble the claim-time prime payload the orchestrator splices verbatim.
 
     ``concepts`` (ontology terms) and ``query`` (the issue's text) are the two
-    retrieval legs; ``decisions`` are the file-anchored note ids the
-    orchestrator resolved at claim time. Prime always serves what it finds
-    (dec-cf8f0d33 retired the sampled holdout).
+    retrieval legs; ``decisions`` are the decision note ids the orchestrator
+    passed at claim time — the ticket's ``## Decisions`` ids merged with the
+    file-walk ids — resolved here to title + summary line. Prime always serves
+    what it finds (dec-cf8f0d33 retired the sampled holdout).
 
     Output keys: ``primed`` (received prime context this run), ``served`` (note
     ids served — trajectory + decisions, capped ``limit`` per kind), ``block``
@@ -174,13 +202,15 @@ def build_prime_payload(
     # rather than crashing the loop (this module's never-crash invariant).
     index_error = False
     trajectories: list[dict] = []
+    ids = list(dict.fromkeys(decisions or []))[:limit]  # merged legs may repeat an id
+    resolved = [{"id": i, "title": "", "summary": ""} for i in ids]  # no index: bare
     if conn is not None:
         try:
             trajectories = query_trajectories(conn, concepts, limit, query=query)
+            resolved = resolve_decisions(conn, ids)
         except Error:
             index_error = True
-    decisions = (decisions or [])[:limit]
-    block, served = render_prime_block(trajectories, decisions, budget_chars)
+    block, served = render_prime_block(trajectories, resolved, budget_chars)
     payload["block"] = block
     payload["served"] = served
     payload["primed"] = bool(served)

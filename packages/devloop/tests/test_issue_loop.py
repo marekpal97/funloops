@@ -6,13 +6,14 @@ and strings — no gh, no git, no network.
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
 
 import pytest
 
-from devloop import cli, dag, gates, github, index_client, triage
+from devloop import cli, dag, gates, github, index_client, pack, triage
 from devloop.trajectory import mint, prime
 
 # ---------------------------------------------------------------------------
@@ -980,10 +981,14 @@ def test_render_prime_block_splices_insight_bodies_and_lists_served():
         {"id": "n-bbb222", "title": "trajectory judge", "issue": 60, "outcome": "shipped",
          "insights": [{"id": "n-ins2", "body": "Judge from the PR timeline."}]},
     ]
-    block, served = prime.render_prime_block(trajectories, decisions=["dec-ccc333"])
+    block, served = prime.render_prime_block(
+        trajectories,
+        decisions=[{"id": "dec-ccc333", "title": "Widen before you split",
+                    "summary": "The CHECK is the seam."}],
+    )
     assert "Widen the CHECK first." in block
     assert "Judge from the PR timeline." in block
-    assert "dec-ccc333" in block  # decisions folded in as adjacency
+    assert "dec-ccc333" in block
     assert served == ["n-ins1", "n-ins2", "dec-ccc333"]
     # Nothing to serve → clean skip.
     assert prime.render_prime_block([], decisions=[]) == ("", [])
@@ -1175,13 +1180,16 @@ def test_render_prime_block_v2_rendering_is_byte_stable():
     """AC2 pin: the served block for a v2 trajectory is byte-identical to the
     pre-#98 rendering. The expected string is hand-built from the documented
     format (heading, then ``### #<issue> — <title> (<outcome>)`` + the insight
-    bodies, then the decisions adjacency line), never recomputed by the
-    renderer."""
+    bodies, then the decisions section: one bullet per decision with its id,
+    title and summary line — funloops#49 replaced the bare id line; an id the
+    index does not hold says so), never recomputed by the renderer."""
     block, served = prime.render_prime_block(
         [{"id": "n-traj", "title": "prime rail", "issue": 57, "outcome": "shipped",
           "insights": [{"id": "n-ins1", "body": "Portable lesson one."},
                        {"id": "n-ins2", "body": "Portable lesson two."}]}],
-        decisions=["dec-ccc333"],
+        decisions=[{"id": "dec-ccc333", "title": "Widen before you split",
+                    "summary": "The CHECK is the seam."},
+                   {"id": "dec-ddd444", "title": "", "summary": ""}],
     )
     assert block == (
         "## Prior trajectories — reusable lessons from similar prior runs\n"
@@ -1190,9 +1198,40 @@ def test_render_prime_block_v2_rendering_is_byte_stable():
         "Portable lesson one.\n"
         "Portable lesson two.\n"
         "\n"
-        "Prior decisions for touched files: dec-ccc333\n"
+        "### Prior decisions\n"
+        "- **dec-ccc333** — Widen before you split\n"
+        "  The CHECK is the seam.\n"
+        "- **dec-ddd444** — (not in the index)\n"
     )
-    assert served == ["n-ins1", "n-ins2", "dec-ccc333"]
+    assert served == ["n-ins1", "n-ins2", "dec-ccc333", "dec-ddd444"]
+
+
+def test_build_prime_payload_renders_decision_title_and_summary(tmp_path):
+    """funloops#49 (dec-f5bdf9ea): the decisions leg resolves each id against
+    the index and renders the decision's title and the first prose line of its
+    body (the ``## Context`` rationale weave_extract writes first); an id the
+    index does not hold still lands, marked, so a dead pointer announces
+    itself. ``served`` records every id that arrived."""
+    db = tmp_path / "index.db"
+    _seed_index_db(db, note_id="n-seed", title="seed", concepts=["x"], body="y")
+    _add_note(db, note_id="dec-1", title="Serve decisions with titles",
+              body="# Serve decisions with titles\n\n## Context\n\n"
+                   "Bare ids are dead pointers.\nSecond line.\n\n"
+                   "## Decision\n\nRender the title.",
+              note_type="decision")
+    conn = index_client.open_ro(str(db))
+    try:
+        payload = prime.build_prime_payload(
+            49, "loop-run-0", ["unrelated"], conn=conn,
+            decisions=["dec-1", "dec-missing"],
+        )
+    finally:
+        conn.close()
+    assert payload["primed"] is True
+    assert payload["served"] == ["dec-1", "dec-missing"]
+    assert "- **dec-1** — Serve decisions with titles\n  Bare ids are dead pointers.\n" in payload["block"]
+    assert "Second line." not in payload["block"]
+    assert "- **dec-missing** — (not in the index)" in payload["block"]
 
 
 def test_build_prime_payload_serves_insight_bodies_end_to_end(tmp_path):
@@ -1450,7 +1489,8 @@ def test_prime_serves_file_anchored_decisions_without_any_trajectory(tmp_path, c
     payload = json.loads(capsys.readouterr().out)
     assert payload["primed"] is True
     assert payload["served"] == ["dec-1", "dec-2"]
-    assert "Prior decisions for touched files: dec-1, dec-2" in payload["block"]
+    # No index to resolve against: each id still lands, marked as unresolved.
+    assert "- **dec-1** — (not in the index)\n- **dec-2** — (not in the index)\n" in payload["block"]
 
 
 # --- Review round 1 (issue #85) — hardening the prime v2 seams --------------
@@ -2428,11 +2468,13 @@ def test_extension_points_do_not_claim_the_rail_runs_judgment_kinds():
 
 
 # ---------------------------------------------------------------------------
-# Dispatch persona + north-star splice (issue #89, made unconditional by
-# dec-d79e8e7b) — write-time simplification pressure at the only point it
-# works: dispatch. Seams: doc-grep contracts on the command doc + vendored
-# persona file, mirroring the #58/#61 pins. The [dispatch] knob is gone; its
-# rejection is pinned with the other deleted keys above.
+# Dispatch persona (issue #89, made unconditional by dec-d79e8e7b) —
+# write-time simplification pressure at the only point it works: dispatch.
+# Seams: doc-grep contracts on the command doc + vendored persona file,
+# mirroring the #58/#61 pins. The [dispatch] knob is gone; its rejection is
+# pinned with the other deleted keys above. The epic north-star block left
+# the loop with funloops#45 (dec-2f8c2322): the pack's Rules section is the
+# judge's standard now.
 
 
 def test_forked_ponytail_persona_carries_provenance():
@@ -2469,33 +2511,8 @@ def test_issue_loop_doc_splices_persona_by_reference():
     assert "ponytail-persona.md" in doc
     # Reference, not duplication: the ladder's persona line stays vendored-only.
     assert "lazy senior developer" not in doc
-    # The fix-round feedback re-splices the dispatch blocks.
-    assert "both dispatch blocks" in doc
-
-
-def test_issue_loop_doc_sources_the_north_star_from_the_tracker():
-    """The north-star block is the epic's own words, read from the tracker at
-    dispatch time and spliced UNEDITED. #149 removed the copy of one host's
-    epic that used to be inlined here: a hardcoded goal is the wrong goal for
-    every other repo, and stale for this one the moment the epic moves on. The
-    verbatim requirement survives — it is what the acceptance judge scores
-    against, so paraphrasing moves the target."""
-    doc = _issue_loop_doc()
-    assert "gh issue view <epic>" in doc
-    assert "verbatim" in doc and "unedited" in doc.lower()
-    assert "**Goal:**" in doc and "**Anti-goals:**" in doc  # the block's shape
-    # No inlined epic body: the marker phrases from the copy that used to live
-    # here must not have survived the rewrite.
-    assert "fewer POCs" not in doc
-    assert "review comments on PR #86" not in doc
-
-
-def test_issue_loop_doc_splices_persona_unconditionally():
-    """dec-d79e8e7b addendum: no toggle — the persona (with the constitution
-    injected) rides every implementer and fix-round dispatch. The judge gets
-    the north-star block only (it judges against the goal, not the persona)."""
-    doc = _issue_loop_doc()
-    assert "north-star block only" in doc.lower()
+    # The fix-round feedback re-splices the pack.
+    assert "re-splicing **the pack**" in doc
 
 
 # ---------------------------------------------------------------------------
@@ -2515,6 +2532,71 @@ def _command_doc_subsection(marker: str) -> str:
                 if lines[i].startswith("## ") or lines[i].startswith("### ")),
                len(lines))
     return "\n".join(lines[start:end])
+
+
+def test_implementer_and_gate_subagents_return_long_reports_by_file_path():
+    """funloops#47 (dec-72c80057): §1b (the implementer) and §1c (the judge and
+    simplify subagents) both say a report longer than a screen is written to a
+    file in the worktree and its path returned — inline returns were truncated."""
+    for marker in ("### 1b.", "### 1c."):
+        section = " ".join(_command_doc_subsection(marker).split())  # reflow-safe
+        assert "longer than a screen" in section, marker
+        assert "file in the worktree and its path returned" in section, marker
+
+
+def test_issue_loop_doc_1b_passes_the_tickets_decisions_to_the_decisions_leg():
+    """funloops#49 (dec-f5bdf9ea): §1b says the ticket's `## Decisions` ids go
+    to `--decisions`, merged with the ids the file walk finds, so the durable
+    why reaches the implementer through the pack."""
+    section = " ".join(_command_doc_subsection("### 1b.").split())  # reflow-safe
+    assert "`## Decisions`" in section
+    assert "merged with" in section
+    assert "`--decisions`" in section
+
+
+def test_loop_comments_end_at_the_gate_table():
+    """funloops#48 (dec-f7e7dd53): the loop's issue comment is the run id, the
+    tip sha and the gate table, with nothing after the table — no PR url, no
+    commit list, no explanation. Both templates: §1d ship and §1e slice."""
+    for marker in ("### 1d.", "### 1e."):
+        section = " ".join(_command_doc_subsection(marker).split())  # reflow-safe
+        bodies = re.findall(r'gh issue comment <N> --body "([^"]*)"', section)
+        assert bodies, marker
+        for body in bodies:
+            assert body.endswith("<gate table>"), (marker, body)
+            assert "<run-id>" in body and "<sha>" in body, (marker, body)
+
+
+def test_pr_body_names_findings_once_and_cites_issued_findings_by_number():
+    """funloops#48 (dec-f7e7dd53): the PR body carries each fact once. §1d's
+    list says findings appear once and a carried finding that became an issue
+    is its number; §1e's one-PR bullet says one sentence and one gate table per
+    issue."""
+    ship = " ".join(_command_doc_subsection("### 1d.").split())
+    assert "findings once" in ship
+    assert "by number" in ship
+    stacked = " ".join(_command_doc_subsection("### 1e.").split())
+    assert "one sentence per issue" in stacked
+    assert "one gate table per issue" in stacked
+
+
+def test_judge_brief_says_a_finding_is_one_sentence():
+    """funloops#48 (dec-f7e7dd53): the judge brief (§1c) says a finding is one
+    sentence naming the rule or the exercised path — the same finding used to
+    arrive as a paragraph and then appear three times."""
+    section = " ".join(_command_doc_subsection("### 1c.").split())
+    assert "A finding is one sentence" in section
+
+
+def test_persona_return_section_carries_the_three_sentence_rules():
+    """funloops#48 (dec-f7e7dd53): the output style never reaches subagents,
+    so the sentence rules ride the persona every implementer reads. Its return
+    section carries exactly the three: one idea per sentence, under twenty
+    words, active voice."""
+    persona = pack.body(cli.PACKAGE_PERSONA)
+    ret = persona[persona.index("Return:"):]
+    for rule in ("one idea per sentence", "under twenty words", "active voice"):
+        assert rule in ret.lower(), rule
 
 
 def test_stacked_ship_carries_stack_tip_simplify_before_pr_open():

@@ -8,10 +8,10 @@ package was designed and extracted before the carve-out into this workspace.
 Vocabulary: *module* = interface + implementation (scale-agnostic); *interface*
 = everything a caller must know (signatures, invariants, error modes, config);
 *seam* = where an interface lives; *deep* = much behavior behind a small
-interface. Terms per the codebase-design doctrine; goals per epic #88's
-north-star block (fewer POCs; deep but interpretable modules with boundaries at
-likely redesign points; conceptual fidelity; generic utils never beside key
-logic; no contract asserted in prose without an enforcing seam).
+interface. Terms per the codebase-design doctrine; goals per the packaged
+constitution (`constitution.md`: deep but interpretable modules with boundaries
+at likely redesign points — rule 1; generic utils never beside key logic — rule
+4; no contract asserted in prose without an enforcing seam — rule 7).
 
 ## 1. The two planes and the external seam
 
@@ -47,7 +47,7 @@ packages/devloop/
     cli.py             entry point: argparse, config resolution, dispatch
     dag.py             tracker-as-DAG math + the body-grammar it parses
     board.py           board hygiene: the grammar dag.py reads, as checks + sweep ops
-    pack.py            the dispatch pack: issue + persona/constitution + codegraph's CLI text
+    pack.py            the dispatch pack: issue + rules + persona + codegraph's CLI text
     gates.py           Gate protocol + deterministic executors
     triage.py          risk-lane classification of shipped PRs
     paths.py           leaf util: the three-form path matcher
@@ -133,13 +133,15 @@ retitle · add_blocker`). `doctor()` runs them all; `plan_sweep()` turns a
 report into the deduped, ordered op list `board sweep --apply` replays.
 Conventions text: `issue-loop.command.md` §Board hygiene.
 
-**`pack.py`** — the dispatch pack (funloops#28; dec-f12457eb, dec-fd12489d,
-dec-d2de831e): `Issue`, `Role`, `compose`, `FileRecord`, `Codegraph` (the
-tool object: `repo_map` · `sync` · `files` · `context` · `node`), and below them `responsibility`,
-`render_tree`, `named_files`, `body`, `splice`. Composes one dispatch in fixed
-order; codegraph is a CLI whose output is spliced (the catalog drawn from
-`files -j`), any failure degrades to a marked block, only the constitution
-fails closed. The order and the map's two tiers are the module docstring's.
+**`pack.py`** — the dispatch pack (funloops#28, #45, #46, #47; dec-f12457eb,
+dec-fd12489d, dec-d2de831e, dec-2f8c2322, dec-e6561edc, dec-72c80057): `Issue`, `Role`,
+`compose`, `LINE_BUDGET`, `FileRecord`, `Codegraph` (the tool object:
+`repo_map` · `sync` · `files` · `context` · `entry_points` · `node`),
+`Directory` (the map object: `tree` · `catalog` · `slice`, and the fold
+below them), and below those `responsibility`, `parts`, `named_files`,
+`body`. Composition, the map's two tiers and the line budget are the
+module docstring's and `LINE_BUDGET`'s comment; the dispatch shape is
+`issue-loop.command.md` §1b (dec-72c80057, dec-e6561edc).
 
 **`index_client.py`** — §5.
 
@@ -233,9 +235,11 @@ internal):
 - `build_prime_payload(issue_number, run_id, concepts, *, conn, limit,
   budget_chars, decisions, query) -> dict` — the claim-time payload.
   `concepts` (ontology terms) and `query` (the issue's text) are the two
-  retrieval legs; `decisions` are the file-anchored ids the orchestrator
-  resolved. It always serves what it finds — the sampled holdout was retired
-  by dec-cf8f0d33. (prime face)
+  retrieval legs; `decisions` are the decision ids the orchestrator passed
+  (the ticket's `## Decisions` ids merged with the file-walk ids), each
+  resolved to its title and first summary line for the block. It always
+  serves what it finds — the sampled holdout was retired by dec-cf8f0d33.
+  (prime face)
 - `append_served_event(buffer_path, run_id, issue_number, served, session_id)`
   + `LOOP_PRIME_TOOL` — the served-context write-through to the session
   buffer JSONL.
@@ -315,8 +319,10 @@ Interface (#94, completed by #100):
   carrying*: a vault with no `notes_fts` still primes on concepts, but a broken
   FTS with nothing else retrieved raises into the degrade guard — FTS is
   load-bearing, so its failure must not read as a clean empty match.
-- `note_bodies(conn, ids) -> dict[str, str]` — ids → body text, `type='note'`
-  only (a `builds_on` id may name a decision or session; those never serve).
+- `note_rows(conn, ids, note_type='note') -> dict[str, dict]` — ids →
+  `{title, body}` rows of one type: `'note'` for insight color (a `builds_on`
+  id may name a decision or session; those never serve as color),
+  `'decision'` for the decisions leg's titles and summary lines.
 
 The SQL-home invariant: every SQL string devloop issues lives here — the
 thinkweave index is the package's only database (codegraph is a CLI the pack
@@ -354,8 +360,8 @@ the schema pin can only live where a real index does:
 
 ## 6. Leaf-util doctrine
 
-The north-star bans generic utils beside key logic; the anti-goal bans
-speculative structure. The reconciling rule: **a leaf util exists only when
+Rule 4 bans generic utils beside key logic; rule 1 bans speculative
+structure. The reconciling rule: **a leaf util exists only when
 two modules need the same semantics** (one caller = hypothetical seam; two =
 real).
 

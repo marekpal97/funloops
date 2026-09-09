@@ -7,12 +7,12 @@ Seams under test — the two the issue names:
    ``docs/agents/constitution.md`` overlay *extends* the default (appended
    after it), never replaces it. Same upward walk as loop.toml, opposite
    merge posture.
-2. **Splice** — the persona is the single splice container (issue #41,
-   dec-d79e8e7b): ``pack.splice`` inserts the resolved constitution at the
-   persona's one marker line, and the assembled text — the REAL packaged
-   persona, the REAL packaged rules, this repo's REAL overlay, in that
-   order — is pinned to a golden. The command doc names exactly one splice
-   point, and the reading-the-ladder clause lives in the persona alone.
+2. **Rendering** — the resolved files render as the pack's ``## Rules``
+   section for both roles, packaged rules then overlay, numbered
+   continuously (funloops#45, dec-2f8c2322, superseding dec-d79e8e7b's
+   persona-as-splice-container); the persona is a sibling section for the
+   implementer only. The command doc names exactly one splice point, and
+   the reading-the-ladder clause lives in the persona alone.
 
 Sources of truth are the issue's acceptance criteria (≤ 40 lines, seven
 rules, no citation in any rule's text), dec-1746aec3's amendment convention
@@ -35,7 +35,6 @@ from devloop import cli, pack, paths
 DOCS = cli.REPO_ROOT / "docs" / "agents"
 COMMAND_DOC = DOCS / "issue-loop.command.md"
 FUNLOOPS_ROOT = cli.REPO_ROOT.parents[1]
-GOLDEN_SPLICE = Path(__file__).resolve().parent / "fixtures" / "pack" / "splice.md"
 
 # The former depth rider's most distinctive line — if it appears anywhere but
 # the persona, the reading-the-ladder clause survived as a second mechanism.
@@ -150,19 +149,17 @@ def test_seven_rules_and_no_citation_in_any_rule():
 
 
 # ---------------------------------------------------------------------------
-# Splice seam
+# Rendering seam
 
 
-def test_implementer_splice_is_golden():
-    """AC1 — seam: ``pack.splice``, the pure function the pack verb calls,
-    over the real packaged persona, the real packaged rules and this repo's
-    real overlay (resolved from the funloops root, packaged first). The
-    golden is authored from those files and compared byte-for-byte; the
-    overlay's rules continue the packaged numbering (8, 9) so the implementer
-    reads one list."""
-    spliced = pack.splice(pack.body(cli.PACKAGE_PERSONA),
-                          [pack.body(p) for p in cli.find_constitution(FUNLOOPS_ROOT)])
-    assert spliced == GOLDEN_SPLICE.read_text(encoding="utf-8")
+def test_overlay_rules_continue_the_packaged_numbering():
+    """The Rules section is the resolved files' bodies in order, and this
+    repo's real overlay continues the packaged numbering so a reader (and a
+    judge citing "rule 8") sees one list, never two starting at 1."""
+    numbers = [int(n) for p in cli.find_constitution(FUNLOOPS_ROOT)
+               for n in re.findall(r"^(\d+)\.\s", pack.body(p), re.MULTILINE)]
+    assert numbers == list(range(1, len(numbers) + 1))
+    assert len(numbers) > 7  # the overlay contributed
 
 
 def test_exactly_one_splice_point_in_the_command_doc():

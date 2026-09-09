@@ -25,7 +25,10 @@ ln -s ../../packages/devloop/docs/agents/issue-loop.command.md .claude/commands/
 
 **The rail** is the `devloop` console script (`python -m devloop` is the same
 entry point); command blocks below write `uv run devloop …`, this workspace's
-invocation. It searches upward from the working directory for
+invocation. Every rail call that targets a worktree is `uv run --directory
+<worktree> devloop …`: uv runs the rail from the worktree, so the branch's own
+`loop.toml` governs its gates (dec-232d2fa4) and `--cwd` defaults to the
+worktree. It searches upward from the working directory for
 `docs/agents/loop.toml`, stops at the repo root, and falls back to the packaged
 copy — the repo being worked on owns its gate pipeline; `devloop config` prints
 what resolved. Config: `loop.toml` beside this file (a new host repo starts from
@@ -67,17 +70,20 @@ merge?) and stop. Generate a run id: `loop-<YYYYMMDD>-<4 random hex>`.
 ## 0.5 Baseline probe (once per run)
 
 Create the first implementer worktree, and **before any edits** run the tests
-gate in it (pristine = origin/main state): `uv run devloop check --gate tests
---cwd <worktree>`.
+gate in it (pristine = origin/main state): `uv run --directory <worktree>
+devloop check --gate tests`. The verdict is the **baseline line** of every
+implementer dispatch (§1b): `green` or `red`, the probe's colour under
+`tdd.mode = auto`; `always` writes `green` and `never` writes `red`, whatever
+the probe said.
 
-- **Green** → proceed. With `tdd.mode = auto` (or `always`), TDD is
-  **enforced** in the implementer standing orders below.
+- **Green** → proceed. The pack's standing orders enforce TDD against a
+  `green` baseline line.
 - **Red** and `require_green_baseline = true` (default) → **stop before
   implementing anything.** Name the open issue that owns the failure ("baseline
   red — fix #N first"). Training mode: ask the user; headless: refuse.
 - **Red** and `require_green_baseline = false` → proceed degraded: the tests
-  gate is scoped to the implementer's declared test targets, TDD is encouraged
-  not enforced, and every PR body carries `⚠ degraded-baseline` naming the
+  gate is scoped to the implementer's declared test targets, the baseline line
+  reads `red` (TDD encouraged, not enforced), and every PR body carries `⚠ degraded-baseline` naming the
   pre-existing failures.
 
 ## 1. Per issue — claim, implement, gate, ship
@@ -114,13 +120,18 @@ dead-join diagnosis and the host overlay doc's location are in
 `devloop-boundaries.md` §4): map the issue to 2–3 terms via `weave_concepts`; a
 labels-only call with no `--query` stamps a warning in the payload's `note`.
 `--query` is the issue's own text (title, or title + body): the full-text leg
-that lands when the concept guess misses. `--decisions` are file-anchored ids:
-files named in the issue body → `weave_graph(file_path=…,
-filter='decisions_for_file')`; nothing named or found → the same walk for their
-module/dir; still nothing → let the fusion carry it.
+that lands when the concept guess misses. `--decisions` are the ticket's own
+ids merged with the file-anchored ids: read the `dec-*` ids under the issue
+body's `## Decisions` heading (the durable why the ticket's three-sentence Why
+points at, dec-f5bdf9ea), then walk the files named in the issue body →
+`weave_graph(file_path=…, filter='decisions_for_file')`; nothing named or found
+→ the same walk for their module/dir; pass the union. Still nothing → let the
+fusion carry it.
 
 The rail reads the derived index read-only, fuses both legs over `[loop-run]`
-notes with RRF, weights them by outcome, and emits JSON: `block` (markdown to
+notes with RRF, weights them by outcome, resolves each decision id to its
+title and first summary line (an id the index does not hold is listed as
+such), and emits JSON: `block` (markdown to
 splice), `primed`, `served` (the insight and decision ids surfaced). It always
 serves what it finds; there is no held-out run. **Write `block` to a file and pass it to
 the pack below as `--prime <file>`**, and add this
@@ -134,52 +145,36 @@ to `context_served(source='loop-prime')`; `--dry-run` suppresses that write.
 
 <!-- /host-extension -->
 
-**Dispatch blocks — every implementer and fix-round dispatch, no toggle.** Splice
-two blocks into the implementer prompt:
+**The pack — every implementer and fix-round dispatch, no toggle.** `uv run
+--directory <worktree> devloop pack <N> --role implementer [--trace FILE]`
+composes the dispatch context; splice its stdout **verbatim** into the
+implementer prompt. Its sections, in order: the issue — spliced once, here;
+never re-read into the prompt; `## Rules` — the packaged
+`constitution.md` beside this file, then the host's own
+`docs/agents/constitution.md`, one continuously numbered list (a repo overlay
+**extends** the default, **never replaces** it); `## Persona` —
+`ponytail-persona.md`, the implementer's write-time posture; the repo map;
+`## Standing orders` — the implementer's orders and the codegraph drill-down,
+owned by `pack.py` and pinned by its golden. The judge's
+copy is `--role judge`: the same issue, rules and map, no persona and no
+standing orders — the rules are the shape standard its findings cite (§1c),
+the persona is not its business. `{"error": …}` instead of
+a pack means the rules or the persona did not resolve: STOP and surface it —
+dispatching without the rules is the fail-open its own rule names. Amendments
+to either layer are a human's PR; `watched_paths` lands any `docs/agents/` diff
+in the skim lane. An issue names a file for the pack's tier-2 slice by
+backticking its repo-relative path.
 
-1. **The pack.** `uv run devloop pack <N> --role implementer --cwd <worktree>
-   [--trace FILE]` composes the dispatch context; splice its stdout **verbatim**
-   (the judge's copy is `--role judge`: issue and repo map, no persona). It
-   carries `ponytail-persona.md` beside this file with the packaged
-   `constitution.md` injected, then the host's own `docs/agents/constitution.md`:
-   a repo overlay **extends** the default, **never replaces** it. `{"error": …}`
-   instead of a pack means the constitution did not resolve: STOP and surface
-   it — dispatching without the rules is the fail-open its own rule names.
-   Amendments to either layer are a human's PR; `watched_paths` lands any
-   `docs/agents/` diff in the skim lane. An issue names a file for the pack's
-   tier-2 slice by backticking its repo-relative path.
-2. **The epic's north-star block, verbatim.** The epic is the `Epic: #N` field in
-   the issue's pipe header. When that epic's body carries a north-star block (a
-   `**Goal:**` / `**Anti-goals:**` pair), read it with `gh issue view <epic>` and
-   splice it **unedited** — it is the standard the judge scores against, so
-   paraphrasing moves the target. No epic or no block: splice nothing.
-
-Read the issue: `gh issue view <N> --comments`. Then dispatch an **implementer
-subagent** with worktree isolation (Agent tool, `isolation: "worktree"`) whose
-prompt contains, verbatim: the two dispatch blocks, the branch name
-(`<branch_prefix><N>`), and these standing orders:
-
-- Read the repo's architecture and design docs for the areas you touch before
-  editing them; a documented standard overrides your instinct.
-- TDD per the probe (§0.5): when enforced, for each acceptance criterion with a
-  code-testable seam write the failing test FIRST, watch it fail, then implement
-  to green. You may reshape internals behind the seams the criteria name; apply
-  your own cut (the persona's ladder) before returning, so the diff you hand
-  back is the shortest one you understand. `verify:` lines are the issue
-  author's — never add, edit, or satisfy one by changing what it checks. When
-  degraded, still add tests for your slice; the whole-suite guarantee is off.
-- **Test at seams.** Test only at the seams the issue names (its acceptance
-  criteria / named interfaces); if it names none, choose them and declare the
-  choice in your return so it lands in the PR body — never scatter tests across
-  internals. **No tautological tests.** Expected values come from an independent
-  source of truth (the issue's criteria, a hand-computed value, a fixture) —
-  never recomputed the same way the code under test computes them.
-- Commit in slice-sized increments on branch `<branch_prefix><N>`. Do NOT push,
-  do NOT open a PR, do NOT close or label anything — the orchestrator owns the
-  control plane.
-- Return: worktree path, branch, files touched, test commands run, any deviation
-  from the issue's declared shapes with its reason, and any acceptance criterion
-  you believe is NOT yet met (honesty over green-washing).
+**The dispatch is the pack plus two lines.** Dispatch a **fresh implementer
+agent** with worktree isolation (Agent tool, a fresh agent type with
+`isolation: "worktree"`; never the fork type — a fork inherits this
+orchestrator's whole conversation, including context the subagents must not
+see). Its prompt is, verbatim: the pack, the branch name
+(`<branch_prefix><N>`), and the baseline line (§0.5: `green` or `red`).
+Nothing else: every standing order is the pack's, so one text owns each rule,
+and the issue arrives once. A report longer than a screen is written to a
+file in the worktree and its path returned; an inline return that long gets
+truncated.
 
 ### 1c. Gate pipeline
 
@@ -188,15 +183,17 @@ Run the configured gates **in order**, inside the implementer's worktree.
 **The gate split — which plane runs which kind.** `command` and `diff` gates
 **execute in the rail**: Python runs the shell command / the diff arithmetic and
 returns the verdict. `judge` and `simplify` are never executed by the rail —
-*this* orchestrator dispatches a fresh subagent. The rail's `check` runs the two
+*this* orchestrator dispatches a fresh agent for each (§1b). A gate agent's
+report longer than a screen is written to a file in the
+worktree and its path returned; you read the file. The rail's `check` runs the two
 deterministic kinds and refuses every other kind — judgment kind or typo alike —
 with `gate kind '<k>' is LLM-judged — run it from the /issue-loop command, not
 the script`. Protocol detail (the two registries, the shared `GateResult` shape,
 execute-vs-validate): `devloop-boundaries.md` §3.
 
 ```bash
-uv run devloop check --gate <id> --cwd <worktree> --base-ref origin/main   # command | diff
-uv run devloop check --issue <N> --cwd <worktree>                          # the verify rail
+uv run --directory <worktree> devloop check --gate <id> --base-ref origin/main   # command | diff
+uv run --directory <worktree> devloop check --issue <N>                          # the verify rail
 ```
 
 `diff-guard` is a forbidden-paths check only; a breach is a fix round, never an overage to approve.
@@ -211,10 +208,10 @@ cycle is one red result naming it. Red = **deterministic not-met**: a fix round,
 rerun until green or `max_fix_rounds` is spent; a missing binary is red, named, never skipped.
 
 **The judge — the one LLM judgment stage.** `kind: judge` — dispatch a **fresh
-judge subagent** (no implementation context) with the issue's acceptance
-criteria and Interfaces block, `git diff origin/main...HEAD`, the test and
-verify-rail output, and the **north-star block only** (§1b; it judges against
-the goal, not the persona). Tell it, verbatim:
+judge subagent** (a fresh agent, no implementation context) with the judge
+pack (`uv run --directory <worktree> devloop pack <N> --role judge`, §1b),
+`git diff origin/main...HEAD`, and the test and verify-rail output. Tell it,
+verbatim:
 
 > The contract is the issue's acceptance criteria plus the Interfaces block's
 > intent. Judge the diff against that contract and nothing else. Return one
@@ -225,8 +222,12 @@ the goal, not the persona). Tell it, verbatim:
 > line ran it, run it yourself and cite the output. Everything else you notice
 > — a risk, a smell, a better design, an edge case outside the contract — is a
 > finding with a severity (`"critical"` / `"major"` / `"minor"` / `"nit"`):
-> list it, do not fail the contract over it. Do not search for problems the
-> contract does not name. Return exactly this object:
+> list it, do not fail the contract over it. A finding is one sentence naming
+> the rule in the Rules section it violates (by number) or the exercised path
+> it breaks (the documented verb and the normal state that reaches it); a
+> finding that names neither is dropped, not listed. Findings never block, whatever their
+> severity. Do not search for problems the contract does not name. Return
+> exactly this object:
 
 ```json
 {"criteria": [{"id": "AC1", "verdict": "met", "evidence": "<one line>"}],
@@ -280,7 +281,7 @@ after every required gate is green**, and is safe by construction: it can only
 **On a required-gate failure:** feed the evidence (gate id, summary, detail, the
 failed criteria with their evidence, the red verify lines) back to the
 implementer subagent (SendMessage to the same agent — it keeps its context) for
-a fix round, re-splicing **both dispatch blocks** (§1b). Re-run the pipeline
+a fix round, re-splicing **the pack** (§1b). Re-run the pipeline
 **from the first failed gate**; the re-judge covers **only the failed criteria**
 (the envelope then carries just those entries) — it does not re-open met ones
 and does not hunt. `max_fix_rounds` is the budget; you never extend it. After
@@ -308,12 +309,16 @@ comment the evidence + worktree path on the issue, report — do not push). Else
 ```bash
 git push -u origin <branch_prefix><N>
 gh pr create --draft --title "<issue title> (#<N>)" --body "<body>"
-gh issue comment <N> --body "🤖 issue-loop run <run-id>: PR <url> opened. <gate table>"
+gh issue comment <N> --body "🤖 issue-loop run <run-id>: shipped at <sha>. <gate table>"
 ```
 
-PR body must contain: `Closes #<N>`, a summary of the change, the gate evidence
-table (gate | verdict | summary), a *Findings* list (severity + finding, from
-the judge; "none" when empty), and the standard Claude Code attribution line.
+The comment is the run id, the tip sha and the gate table, nothing after the
+table: `Closes #<N>` links the PR to the issue natively, and the PR body owns
+the rest. PR body must contain: `Closes #<N>`, one sentence on the change, the
+gate evidence table (gate | verdict | summary), a *Findings* list (severity +
+finding, from the judge; "none" when empty) that names findings once — a
+finding carried from an earlier slice that became an issue is cited by number,
+never restated — and the standard Claude Code attribution line.
 Keep the `ready-for-agent` label and the assignee — the issue closes on merge;
 if the PR is rejected, a human unassigns to re-queue. **No stack-tip simplify
 here — a documented no-op:** a pr-per-issue branch holds one slice, so §1c's
@@ -362,7 +367,7 @@ One larger piece of work, no intermittent PRs. Requires a `--dag <N>` scope and
 is sequential (`max_parallel` is ignored). Differences from the flow above:
 
 - **One branch, one worktree.** `loop/dag-<N>`, created once from origin/main.
-  Each issue's implementer subagent is FRESH but works in this same worktree,
+  Each issue's implementer agent is FRESH (§1b) but works in this same worktree,
   stacking commits on the previous slices. Record the tip sha before each issue.
 - **Blockers advance in-branch, not by merge.** After an issue passes all gates,
   add it to the done-list and re-plan with `plan --dag <N> --assume-done
@@ -374,8 +379,9 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   see the per-issue diff (`git diff <tip-before>...HEAD`) — cross-slice trimming
   belongs to the stack-tip pass below.
 - **Tracker visibility without PRs.** After each issue passes: `gh issue comment
-  <N> --body "🤖 issue-loop run <id>: slice landed on loop/dag-<root> at <sha> —
-  PR at end of run. <gate table>"`. Do NOT close the issue; do NOT open a PR yet.
+  <N> --body "🤖 issue-loop run <run-id>: slice landed on loop/dag-<root> at
+  <sha>. <gate table>"` — §1d's three parts. Do NOT close the issue; do NOT
+  open a PR yet.
 - **Stack-tip simplify — whole-branch ponytail review before PR-open.** The
   per-slice gate cannot see cross-slice redundancy (a later slice re-rolling an
   earlier slice's helper). So once the stack is final — DAG exhausted, cap hit,
@@ -399,8 +405,9 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   <!-- /host-extension -->
 - **One PR at the end** (DAG exhausted, cap hit, or an issue routed to human):
   push the branch and open a single draft PR whose body carries `Closes #A`
-  lines for every completed issue, the per-issue gate tables and findings, and
-  — if some of the DAG remains — which issues are NOT included and why.
+  lines for every completed issue, one sentence per issue, one gate table per
+  issue, findings once per §1d's list, and — if some of the DAG remains —
+  which issues are NOT included and why.
   `training_mode` pauses once, here. Then remove the `loop/dag-<N>` worktree
   (same teardown rule as §1d).
 - **A failed issue doesn't poison the stack.** If an issue exhausts its fix
@@ -424,7 +431,7 @@ evidence. If nothing shipped, say what unblocks the DAG (usually: merge loop PRs
 on user approval. For each processed issue, assemble the deterministic half —
 
 ```bash
-uv run devloop trajectory <N> --cwd <worktree> \
+uv run --directory <worktree> devloop trajectory <N> \
   --gates-json <results-file> --skills-json <dispatch-log> [--skill-centric] \
   [--primed | --no-primed] [--served-json <served-ids-file>] \
   [--trace-json <trace-file>] \
