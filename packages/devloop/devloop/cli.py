@@ -69,18 +69,25 @@ PACKAGE_CONSTITUTION = REPO_ROOT / CONSTITUTION_REL
 PACKAGE_PERSONA = REPO_ROOT / "docs" / "agents" / "ponytail-persona.md"
 
 
-def _find_upward(rel: Path, start: Path | None = None) -> Path | None:
-    """The host repo's copy of ``rel``, walking up from the working directory —
-    the same convention every repo-scoped tool uses. Stops at the first
-    ``.git``: never silently inherit an ancestor directory's file."""
+def _walk_up(rel: Path, start: Path | None = None):
+    """Every copy of ``rel`` on the way up from the working directory, nearest
+    first — the same convention every repo-scoped tool uses. Stops at the
+    first ``.git``: never silently inherit an ancestor directory's file."""
     here = (start or Path.cwd()).resolve()
     for directory in (here, *here.parents):
         found = directory / rel
         if found.is_file():
-            return found
+            yield found
         if (directory / ".git").exists():   # repo root: stop, don't escape it
             break
-    return None
+
+
+def _is_packaged(constitution: Path) -> bool:
+    """The packaged constitution in ANY checkout of devloop: it sits beside the
+    ``devloop`` package, exactly as ``PACKAGE_CONSTITUTION`` sits beside this
+    one. Place, not bytes: a diverged copy in a worktree is still the default,
+    never an overlay."""
+    return (constitution.parents[2] / "devloop" / "__init__.py").is_file()
 
 
 def find_config(start: Path | None = None) -> Path:
@@ -95,7 +102,7 @@ def find_config(start: Path | None = None) -> Path:
     treats a missing file as "defaults only", which is honest: no gates
     configured, and every ``check`` says so by name.
     """
-    return _find_upward(CONFIG_REL, start) or PACKAGE_CONFIG
+    return next(_walk_up(CONFIG_REL, start), PACKAGE_CONFIG)
 
 
 def find_constitution(start: Path | None = None) -> list[Path]:
@@ -105,9 +112,10 @@ def find_constitution(start: Path | None = None) -> list[Path]:
     replace-on-find (the gate pipeline is the repo's), the constitution is
     extend-on-find — the packaged default always applies and a repo's
     ``docs/agents/constitution.md`` is appended after it, never substituted
-    (dec-1746aec3). The walk finding the packaged file itself — by path (this
-    checkout) or by identical bytes (another checkout/worktree of it) —
-    serves it once, keeping the splice single.
+    (dec-1746aec3). The walk does not stop at the packaged file when it
+    starts below it (inside packages/devloop, or a worktree of it): that copy
+    is known by its place beside the package, served once as the default,
+    and the walk goes on to the repo's overlay.
 
     A missing packaged default raises rather than resolving: an install that
     shipped no ``docs/`` (the wheel packages only ``devloop/``) must not hand
@@ -120,13 +128,8 @@ def find_constitution(start: Path | None = None) -> list[Path]:
         raise FileNotFoundError(
             f"packaged constitution missing: {PACKAGE_CONSTITUTION} — this "
             "install shipped no docs/; do not dispatch without the rules")
-    overlay = _find_upward(CONSTITUTION_REL, start)
-    # ponytail: byte-equality dedupes the reachable case (worktrees of the
-    # same commit); a DIVERGED copy of the packaged file in another checkout
-    # still serves twice. Upgrade path: anchor on repo-relative position.
-    if overlay is None or overlay.read_bytes() == PACKAGE_CONSTITUTION.read_bytes():
-        return [PACKAGE_CONSTITUTION]
-    return [PACKAGE_CONSTITUTION, overlay]
+    overlay = [p for p in _walk_up(CONSTITUTION_REL, start) if not _is_packaged(p)][:1]
+    return [PACKAGE_CONSTITUTION, *overlay]
 
 # Stamped on a prime payload built the pre-#100 way (labels as concepts, no
 # text leg) — the dead-by-vocabulary join; see issue-loop.command.md §1b.

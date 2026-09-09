@@ -86,22 +86,44 @@ def test_nested_repo_does_not_inherit_an_ancestor_overlay(tmp_path):
     assert cli.find_constitution(inner) == [cli.PACKAGE_CONSTITUTION]
 
 
-def test_the_package_checkout_serves_its_own_copy_once():
-    """Walking up from inside packages/devloop finds the packaged file itself;
-    it must not be served twice (once as default, once as 'overlay')."""
+def test_the_package_checkout_serves_the_default_once_then_the_root_overlay():
+    """The issue's pin (#50): started inside packages/devloop, the walk meets
+    the packaged file first. It is the default, already served, not an
+    overlay; the walk goes on to the repo root and serves funloops' own
+    rules after it."""
     assert cli.find_constitution(cli.REPO_ROOT / "devloop") == [
-        cli.PACKAGE_CONSTITUTION]
+        cli.PACKAGE_CONSTITUTION, FUNLOOPS_ROOT / "docs" / "agents" / "constitution.md"]
 
 
-def test_an_identical_copy_in_another_checkout_is_served_once(tmp_path):
+def _checkout(tmp_path: Path, overlay: str | None = None) -> Path:
+    """Another checkout (a worktree) of a repo that vendors devloop the way
+    funloops does: the package beside its docs/, a DIVERGED copy of the
+    packaged constitution there, and optionally a root overlay."""
+    repo = _repo(tmp_path, overlay)
+    pkg = repo / "packages" / "devloop"
+    (pkg / "devloop").mkdir(parents=True)
+    (pkg / "devloop" / "__init__.py").touch()
+    (pkg / "docs" / "agents").mkdir(parents=True)
+    (pkg / "docs" / "agents" / "constitution.md").write_text(
+        "1. a diverged packaged copy\n", encoding="utf-8")
+    return repo
+
+
+def test_the_packaged_copy_in_another_checkout_is_known_by_its_place(tmp_path):
     """The loop's own operating mode: devloop imported from one checkout, cwd
-    inside a git worktree of the same repo. The walk finds that worktree's
-    tracked copy of the packaged file — same bytes, different path — and the
-    rules must not be spliced twice."""
-    repo = _repo(
-        tmp_path,
-        overlay=cli.PACKAGE_CONSTITUTION.read_text(encoding="utf-8"))
-    assert cli.find_constitution(repo) == [cli.PACKAGE_CONSTITUTION]
+    inside a worktree of the repo. That worktree's tracked copy of the packaged
+    file is recognised by where it sits (beside the devloop package), not by
+    its bytes: even diverged it is never an overlay, and the walk goes on to
+    the worktree's root overlay."""
+    repo = _checkout(tmp_path, overlay="13. local rule\n")
+    assert cli.find_constitution(repo / "packages" / "devloop") == [
+        cli.PACKAGE_CONSTITUTION, repo / "docs" / "agents" / "constitution.md"]
+
+
+def test_a_checkout_without_a_root_overlay_serves_the_default_alone(tmp_path):
+    repo = _checkout(tmp_path)
+    assert cli.find_constitution(repo / "packages" / "devloop") == [
+        cli.PACKAGE_CONSTITUTION]
 
 
 def test_a_missing_packaged_default_is_loud(tmp_path, monkeypatch):
