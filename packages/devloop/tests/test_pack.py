@@ -24,7 +24,8 @@ goldens pin the pack's composition, not their prose; ``implementer.md`` /
 
 The map's third seam is ``pack.Directory`` (funloops#46, dec-e6561edc): a
 hand-built nested tree pins tier 1's directory lines, the fold order under a
-budget, and tier 2's expansion of a named directory.
+budget, tier 2's expansion of the directories the pointed files land in,
+and the fold of a directory wider than the budget (funloops#53).
 """
 
 from __future__ import annotations
@@ -199,25 +200,68 @@ def test_tier1_folds_the_largest_innermost_directory_first(nested, budget, lines
     assert pack.Directory.tree(files).catalog(root, budget=budget).splitlines()[2:] == lines
 
 
-def test_tier2_expands_named_directories_to_file_lines(nested):
-    """Each directory as its line over its files in today's file-line form;
-    over budget, the largest group folds to its line alone; a directory the
-    index does not hold is an empty line, never an error."""
+def test_tier2_expands_the_directories_of_the_pointed_files(nested):
+    """Each directory a pointed file lands in, as its line over its files in
+    today's file-line form; a directory the index does not hold is an empty
+    line, never an error."""
     root, files = nested
     tree = pack.Directory.tree(files)
-    assert tree.slice(["pkg/sub"], root, budget=99).splitlines() == [
+    assert tree.slice(["pkg/sub/deep.py"], root, budget=99).splitlines() == [
         "pkg/sub/ (2 files, 3 symbols) — Sub: the leaf package.",
         "├── __init__.py (python, 1 symbols) — Sub: the leaf package.",
         "└── deep.py (python, 2 symbols) — Deep: the leaf.",
     ]
-    assert tree.slice(["pkg/sub", "tools/a"], root, budget=4).splitlines() == [
-        "pkg/sub/ (2 files, 3 symbols) — Sub: the leaf package.",
-        "",
-        "tools/a/ (1 files, 5 symbols)",
-        "└── x.py (python, 5 symbols)",
-    ]
-    assert tree.slice(["nope"], root, budget=99) == "nope/ (0 files, 0 symbols)"
+    assert tree.slice(["nope/x.md"], root, budget=99) == "nope/ (0 files, 0 symbols)"
     assert tree.slice([], root, budget=99) == ""
+
+
+@pytest.fixture
+def wide(nested):
+    """``nested`` with a flat tests directory of twenty files — more than
+    any budget below — as thinkweave's is (funloops#53)."""
+    root, files = nested
+    more = [pack.FileRecord(f"tests/test_{i:02d}.py", "python", 1) for i in range(1, 20)]
+    return root, pack.Directory.tree([*files, *more])
+
+
+@pytest.mark.parametrize("budget", [6, 2])  # room for some of the rest; none even for the pointed
+def test_tier2_over_budget_shows_the_pointed_files_and_names_the_fold(wide, budget):
+    """Rule 6: a directory larger than the budget never renders as its line
+    alone. The pointed files show whatever the budget, the fold line names
+    the count not shown, and no unpointed file pads the group."""
+    root, tree = wide
+    assert tree.slice(["tests/test_a.py", "tests/test_19.py"], root, budget=budget).splitlines() == [
+        "tests/ (20 files, 22 symbols) — Tests: the suite",
+        "├── test_19.py (python, 1 symbols)",
+        "├── test_a.py (python, 3 symbols)",
+        "└── … 18 more files",
+    ]
+
+
+def test_tier2_over_budget_without_a_pointed_file_shows_the_first_files(wide):
+    """A pointed file the index does not hold (a README): the first files
+    fill what is left of the budget, so something still shows below."""
+    root, tree = wide
+    assert tree.slice(["tests/README.md"], root, budget=3).splitlines() == [
+        "tests/ (20 files, 22 symbols) — Tests: the suite",
+        "├── test_01.py (python, 1 symbols)",
+        "└── … 19 more files",
+    ]
+
+
+def test_tier2_fills_the_smallest_directory_first(wide):
+    """Two groups under one budget: the one with fewer files to add opens
+    whole, the wide one folds to its pointed file."""
+    root, tree = wide
+    assert tree.slice(["tests/test_a.py", "pkg/sub/deep.py"], root, budget=8).splitlines() == [
+        "pkg/sub/ (2 files, 3 symbols) — Sub: the leaf package.",
+        "├── __init__.py (python, 1 symbols) — Sub: the leaf package.",
+        "└── deep.py (python, 2 symbols) — Deep: the leaf.",
+        "",
+        "tests/ (20 files, 22 symbols) — Tests: the suite",
+        "├── test_a.py (python, 3 symbols)",
+        "└── … 19 more files",
+    ]
 
 
 def test_missing_codegraph_degrades_and_exits_zero(repo, monkeypatch, capsys):

@@ -4,8 +4,9 @@ In order: the issue; the rules — the packaged constitution, then the host
 overlay, one continuously numbered list (both roles: the judge cites them);
 the persona (implementer only); the repo map — tier 1 the whole-repo catalog
 at directory grain, tier 2 the slice for the issue: file lines for the
-directories its named files and the title's entry points land in, then
-codegraph's context and the named files' symbols, all from codegraph's CLI,
+directories its named files and the title's entry points land in (those
+files always, the rest to a line budget, a fold line naming what is cut),
+then codegraph's context and the named files' symbols, all from codegraph's CLI,
 any failure degrading to a marked block; the prime block and the run's trace
 where the host supplies them; the standing orders (implementer only).
 Composition is hardcoded; argparse carries the only knobs.
@@ -24,8 +25,9 @@ Role = Literal["implementer", "judge"]
 
 # Each tier renders at most this many lines of its own; over it, the largest
 # directories fold first (dec-e6561edc: a fixed backstop, no config key).
-# Sized by the thinkweave judge pack: 6,000 chars of issue and rules leave
-# under 2,000 for the map inside its 8,000-char ceiling.
+# Tier 2 always shows the files the issue points at, even past the budget
+# (funloops#53). Sized by the thinkweave judge pack: 6,000 chars of issue
+# and rules leave under 2,000 for the map inside its 8,000-char ceiling.
 LINE_BUDGET = 16
 
 
@@ -99,9 +101,8 @@ class Codegraph:
         self.sync()
         tree = Directory.tree(self.files())
         named = named_files(issue.body, self.root)
-        where = sorted({"/".join(parts(p)[:-1])  # the directory each file lands in
-                        for p in [*named, *self.entry_points(issue.title)]})
-        slices = [tree.slice(where, self.root, LINE_BUDGET), self.context(issue.title)]
+        pointed = [*named, *self.entry_points(issue.title)]
+        slices = [tree.slice(pointed, self.root, LINE_BUDGET), self.context(issue.title)]
         slices += [self.node(f) for f in named]
         return (f"## Repo map — tier 1: catalog\n\n{tree.catalog(self.root, LINE_BUDGET)}\n\n"
                 f"## Repo map — tier 2: issue slice\n\n"
@@ -203,17 +204,31 @@ class Directory:
         lines = [d.line(root, whole=d.folded) for d in self.lines()]
         return "\n".join([f"Project Structure ({self.count()[0]} files):", "", *lines])
 
-    def slice(self, dirs: list[str], root: Path, budget: int) -> str:
-        """Tier 2: each directory as its line over its files, groups a blank
-        line apart. Over ``budget`` lines, the largest group folds to its
-        line alone, largest first. A directory the index does not hold
-        renders as an empty line."""
-        groups = [self.find(d) for d in dirs]
-        opened = set(groups)
-        while sum(1 + len(g.files) for g in groups if g in opened) > budget and opened:
-            opened.remove(max(opened, key=lambda g: len(g.files)))
+    def slice(self, paths: list[str], root: Path, budget: int) -> str:
+        """Tier 2: the directory of each pointed file as its line over its
+        files, groups a blank line apart in path order. A group opens whole
+        while ``budget`` holds it, the group with the fewest files to add
+        first; past that it folds to the pointed files alone, budget or not,
+        or to the first files that still fit when the index holds none of
+        them, and ends in a fold line naming the count not shown (rule 6: a
+        fold reads as a fold). A directory the index does not hold renders
+        as an empty line."""
+        pointed: dict[str, set[str]] = {}
+        for p in paths:
+            *dirs, name = parts(p)
+            pointed.setdefault("/".join(dirs), set()).add(name)
+        groups = [self.find(d) for d in sorted(pointed)]
+        must = {g: sorted(pointed[g.path] & g.files.keys()) for g in groups}
+        rest = {g: sorted(g.files.keys() - pointed[g.path]) for g in groups}
+        left = budget - sum(1 + len(must[g]) for g in groups)
+        shown = {}
+        for g in sorted(rest, key=lambda g: len(rest[g])):
+            whole = len(rest[g]) <= max(left, 0)
+            shown[g] = len(rest[g]) if whole else 0 if must[g] else max(left - 1, 0)
+            left -= shown[g] + (shown[g] < len(rest[g]))  # a fold line costs one
         return "\n\n".join(
-            "\n".join([g.line(root), *(g.file_lines(root) if g in opened else [])])
+            "\n".join([g.line(root), *g.file_lines(root, must[g] + rest[g][:shown[g]],
+                                                   len(rest[g]) - shown[g])])
             for g in groups)
 
     def fold(self, budget: int) -> None:
@@ -270,17 +285,21 @@ class Directory:
             text += f" — {note}"
         return text
 
-    def file_lines(self, root: Path) -> list[str]:
-        """The files directly under it, name order, in the catalog's old
-        file-line form: ``name (language, N symbols) — responsibility``."""
+    def file_lines(self, root: Path, names: list[str], hidden: int = 0) -> list[str]:
+        """The named files directly under it, name order, in the catalog's
+        old file-line form ``name (language, N symbols) — responsibility``,
+        then the fold line ``… N more files`` when ``hidden`` files are not
+        shown."""
         lines = []
-        for i, name in enumerate(sorted(self.files)):
+        for name in sorted(names):
             f = self.files[name]
-            text = f"{'└── ' if i == len(self.files) - 1 else '├── '}{name} ({f.language}, {f.node_count} symbols)"
+            text = f"{name} ({f.language}, {f.node_count} symbols)"
             if note := responsibility(root.joinpath(*parts(f.path))):
                 text += f" — {note}"
             lines.append(text)
-        return lines
+        if hidden:
+            lines.append(f"… {hidden} more files")
+        return [("└── " if i == len(lines) - 1 else "├── ") + t for i, t in enumerate(lines)]
 
     def responsibility(self, root: Path) -> str:
         """The first docstring line of ``__init__.py``, else the first
@@ -375,7 +394,7 @@ node <symbol>` / `codegraph node -f <file>` (one symbol or file with its
 dependents), `codegraph impact <symbol>` and `codegraph callers` / `codegraph
 callees <symbol>` (who is affected by a change)."""
 
-# Provenance: funloops#28, #41, #45, #46, #47; dec-f12457eb, dec-fd12489d, dec-d2de831e,
+# Provenance: funloops#28, #41, #45, #46, #47, #53; dec-f12457eb, dec-fd12489d, dec-d2de831e,
 # dec-ba48dbe2, dec-2f8c2322 (supersedes dec-d79e8e7b's persona-as-splice-container),
 # dec-e6561edc (directory grain, the line budget), dec-72c80057 (the pack is the
 # whole dispatch: the standing orders live here, not in the command doc).
