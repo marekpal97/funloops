@@ -91,6 +91,12 @@ worktree). Nothing else instructs you; a rule stated here is stated once.
   returning, so the diff you hand back is the shortest one you understand.
   `verify:` lines are the issue author's — never add, edit, or satisfy one by
   changing what it checks.
+- Before returning, run the tests gate command and every `verify:` line from
+  the worktree root. Paste each result in your return.
+- Use the code you changed the way the issue describes. If it does not do
+  what the issue says, fix it or report the criterion as not met.
+- Test at seams governs the tests you commit, not what you may run. Run
+  whatever you need to convince yourself.
 - **Test at seams.** Test only at the seams the issue names (its acceptance
   criteria / named interfaces); if it names none, choose them and declare the
   choice in your return so it lands in the PR body — never scatter tests across
