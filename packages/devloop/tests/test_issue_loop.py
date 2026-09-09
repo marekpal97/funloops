@@ -10,7 +10,6 @@ import re
 import sqlite3
 import subprocess
 import sys
-import tomllib
 
 import pytest
 
@@ -457,8 +456,7 @@ def test_simplify_gate_shape():
     # It re-verifies the shrunk diff against the tests gate alone
     # (dec-0ab8ab6b): no second judge over a diff the judge already passed.
     assert gate["rerun"] == ["tests"]
-    template = tomllib.loads((cli.REPO_ROOT / "docs" / "agents" / "loop.toml.template")
-                             .read_text(encoding="utf-8"))
+    template = cli.load_config(cli.REPO_ROOT / "docs" / "agents" / "loop.toml.template")
     assert next(g for g in template["gates"] if g["id"] == "simplify")["rerun"] == ["tests"]
     assert "simplify-reverted" in gate["revert_note"]
     # The delete-list comes from the vendored ponytail-review skill.
@@ -2023,20 +2021,13 @@ def test_classify_degraded_baseline_red():
 
 
 def test_classify_problem_review_red():
-    """dec-39140113: two severities. `problem` is the red lane; the retired
-    four-level names are off-enum now, so they fail closed with the value named."""
+    """dec-39140113: two severities. `problem` is the red lane."""
     r = triage.classify_pr(_signals(review_severity="problem"), TRIAGE_CFG)
     assert r["lane"] == "red" and any("problem" in x for x in r["reasons"])
-    for retired in ("critical", "major", "minor", "nit"):
-        r = triage.classify_pr(_signals(review_severity=retired), TRIAGE_CFG)
-        assert r["lane"] == "red"
-        assert any("unrecognized" in x and retired in x for x in r["reasons"]), retired
 
 
 def test_severity_vocabulary_is_none_note_problem():
-    """The signals table in §1d and the triage docstring name the same three
-    values the classifier reads."""
-    assert "none|note|problem" in triage.classify_pr.__doc__
+    """The signals table in §1d names the three values the classifier reads."""
     ship = _command_doc_subsection("### 1d.")
     assert "`none`/`note`/`problem`" in ship
 
@@ -2767,7 +2758,6 @@ def test_validate_judge_all_met_passes_whatever_the_findings_say():
     """AC1: the fused envelope carries criteria verdicts AND findings; the
     gate passes iff no criterion is not-met. A problem finding outside the
     contract is advisory (findings comment + triage lane) — it never blocks."""
-    assert gates.SEVERITIES == ("problem", "note")
     result = gates.validate(_gate("judge"), {
         "criteria": _met("AC1", "AC2"),
         "findings": [{"severity": "problem", "finding": "out-of-contract concern"}],

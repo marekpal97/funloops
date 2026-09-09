@@ -259,8 +259,6 @@ A second rejection is a failed gate: route to human with the reasons.
 **The simplify stage (`kind: simplify`, after the judge).** Runs **last, only
 after every required gate is green**, and is safe by construction: it can only
 *shrink* the verified diff. `required = false` — its "failure" mode is a revert.
-It runs once per branch: here in pr-per-issue delivery, and at the stack tip in
-stacked delivery (§1e) — never per slice (dec-0ab8ab6b).
 
 1. **Snapshot the tip.** `pre=$(git -C <worktree> rev-parse HEAD)`.
 2. **Get the delete-list.** Dispatch a **fresh subagent** with the text of the
@@ -413,7 +411,7 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   or the revert.
   <!-- host-extension: memory feed — needs a Thinkweave vault. -->
   Record the result in the final completed issue's §3 trace under
-  `stack_simplify`; no slice's trace carries a `simplify` key in stacked mode.
+  `stack_simplify`.
   <!-- /host-extension -->
 - **One PR at the end** (DAG exhausted, cap hit, or an issue routed to human):
   push the branch and open a single draft PR whose body carries `Closes #A`
