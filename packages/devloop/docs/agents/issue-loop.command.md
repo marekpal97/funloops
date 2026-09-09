@@ -214,7 +214,7 @@ verbatim:
 > verdict per criterion, `"met"` or `"not-met"`, each with one line of
 > evidence. A criterion is not met when the code does not do what it says.
 > Where a criterion is prose and no verify line ran it, run it yourself and
-> cite the output; the output is its evidence.
+> cite the output.
 > Code the diff changes that no longer works as the issue intends is `not-met`
 > too, even when no criterion names the case: return it as one more criterion
 > under the reserved id `intent`, and only when you have the failure in hand.
@@ -284,8 +284,7 @@ after every required gate is green**, and is safe by construction: it can only
 failed criteria with their evidence, the red verify lines) back to the
 implementer subagent (SendMessage to the same agent — it keeps its context) for
 a fix round, re-splicing **the pack** (§1b). An `intent` entry rides that round
-like any other criterion: the implementer gets its evidence, the command or
-test the judge ran and its output. Re-run the pipeline
+like any other criterion. Re-run the pipeline
 **from the first failed gate**; the re-judge covers **only the failed criteria**
 (the envelope then carries just those entries) — it does not re-open met ones
 and does not hunt. `max_fix_rounds` is the budget; you never extend it. After
