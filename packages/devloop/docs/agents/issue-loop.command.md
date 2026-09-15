@@ -83,8 +83,8 @@ the probe said.
   red — fix #N first"). Training mode: ask the user; headless: refuse.
 - **Red** and `require_green_baseline = false` → proceed degraded: the tests
   gate is scoped to the implementer's declared test targets, the baseline line
-  reads `red` (TDD encouraged, not enforced), and every PR body carries `⚠ degraded-baseline` naming the
-  pre-existing failures.
+  reads `red` (TDD encouraged, not enforced), and the tests cell of every PR's
+  gate table carries `⚠ degraded-baseline` naming the pre-existing failures.
 
 ## 1. Per issue — claim, implement, gate, ship
 
@@ -227,7 +227,8 @@ verbatim:
 > fail the contract over it. A finding is one sentence naming
 > the rule in the Rules section it violates (by number) or the exercised path
 > it breaks (the documented verb and the normal state that reaches it); a
-> finding that names neither is dropped, not listed. Findings never block, whatever their
+> finding that names neither is dropped, not listed. The observation first;
+> no clause that withdraws it. Findings never block, whatever their
 > severity. Do not search for problems the contract does not name. Return
 > exactly this object:
 
@@ -270,15 +271,15 @@ after every required gate is green**, and is safe by construction: it can only
    origin/main...HEAD`. Condense its delete-list and `net: -<N> lines possible` tally into
    `{"outcome": "applied", "lines_delta": -<N>, "cuts": [{"what": …, "why":
    …}], "kept": [{…}]}` and `validate` it. `outcome` is `"lean"` when the
-   subagent said `Lean already. Ship.` (skip the rest, note "simplify: lean
-   already" in the PR body); `"applied"` when you apply the delete-list;
+   subagent said `Lean already. Ship.` (skip the rest; the PR body's simplify
+   line reads `simplify: lean`); `"applied"` when you apply the delete-list;
    `"reverted"` is step 4's terminal value after a red re-verify.
 3. **Apply** the delete-list as a single commit on the branch.
 4. **Re-verify and keep or revert.** Re-run the gate's `rerun` list — the
-   `tests` gate via the rail, nothing else — on the shrunk diff. Green → keep,
-   noting `simplify: -<N> lines, tests green` in the PR body. Red → `git -C
-   <worktree> reset --hard $pre`, ship the **pre-simplify** diff, and add the
-   gate's `revert_note` (`⚠ simplify-reverted`) to the PR body.
+   `tests` gate via the rail, nothing else — on the shrunk diff. Green → keep;
+   the PR body's simplify line reads `simplify: -<N> lines`. Red → `git -C
+   <worktree> reset --hard $pre`, ship the **pre-simplify** diff; the simplify
+   line is the gate's `revert_note` (`⚠ simplify-reverted`).
 
 **On a required-gate failure:** feed the evidence (gate id, summary, detail, the
 failed criteria with their evidence, the red verify lines) back to the
@@ -293,8 +294,13 @@ it is exhausted:
 ```bash
 uv run devloop release <N>
 gh issue edit <N> --remove-label ready-for-agent --add-label <on_gate_failure>
-gh issue comment <N> --body "<gate evidence table + what was attempted>"
+gh issue comment <N> --body "🤖 issue-loop run <run-id>: routed to human at <sha>. <gate evidence table>"
 ```
+
+This is the one issue comment that carries a gate table: no PR exists, so the
+issue is the evidence's only home. The table is §1d's; a failed row carries
+the failed criteria with their evidence or the red verify lines, and one
+sentence under the table says what the fix rounds attempted.
 
 Then continue with the next frontier issue — one stuck issue must not stall the
 loop. **Three exits, no others:** **ship** (every criterion met, no findings);
@@ -311,26 +317,44 @@ comment the evidence + worktree path on the issue, report — do not push). Else
 
 ```bash
 git push -u origin <branch_prefix><N>
-gh pr create --draft --title "<issue title> (#<N>)" --body "<body>"
+gh pr create --draft --title "<issue title>" --body "<body>"
 gh pr comment <pr-url> --body "<findings comment>"
-gh issue comment <N> --body "🤖 issue-loop run <run-id>: shipped at <sha>. <gate table>"
+gh issue comment <N> --body "🤖 issue-loop run <run-id>: shipped at <sha>, PR <pr-url>"
 ```
 
-The issue comment is the run id, the tip sha and the gate table, nothing after
-the table: `Closes #<N>` links the PR to the issue natively, and the PR body
-owns the rest. PR body must contain: `Closes #<N>`, one sentence on the change,
-the gate evidence table (gate | verdict | summary), a *Findings* line that says
-the findings are the PR's findings comment (the PR body no longer lists them),
-and the standard Claude Code attribution line.
+The issue comment is that one line: run id, tip sha, PR link. Issue comments
+carry no gate table — the claim comment stays as the rail writes it, and gate
+evidence lives in the PR and nowhere else. The one exception is §1c's
+route-to-human comment, because no PR exists. The PR title is the issue
+title.
+
+**The PR body carries each fact once, and nothing else:** `Closes #<N>`; one
+sentence that says what the code now does (not the issue title); the gate
+table; the simplify line; the findings line; the attribution block.
+
+- The gate table is one table, columns gate | verdict | summary, one row per
+  gate. A summary cell carries only what varies: `133 lines`, `274 passed`,
+  `5/5`, `8/8`, or the failure named. Never `no forbidden paths`, never
+  `exited 0`, never the command text; a pass with nothing to report is the
+  number alone.
+- The simplify line is one line under the table: `simplify: -<N> lines`,
+  `simplify: lean`, or the gate's `revert_note`.
+- The findings line is `Findings: see comment` or `Findings: none`.
+- No summary bullets, no run parameters, no line-count deltas of documents,
+  no notes addressed to the orchestrator.
 
 **The findings comment — one per PR, posted right after `gh pr create`.** It
-names findings once (dec-f7e7dd53): a `###` heading per severity, a bullet per
-finding, the judge's sentence verbatim. A heading with no findings is omitted;
-a PR with no findings gets the comment `Findings: none`.
+names findings once (dec-f7e7dd53): one `###` heading per severity present,
+one bullet per finding, the judge's sentence verbatim. A finding is one
+sentence: the observation first, then the rule number or the exercised path in
+a trailing clause. No hedge and no self-retraction: a finding that would end
+"so no action is needed" or "cosmetic only" is dropped, not softened. A
+finding already filed as an issue is the issue number alone. A PR with no
+findings gets no comment; its body line reads `Findings: none`.
 
 ```markdown
 ### problem
-- <one sentence, the rule number or the exercised path it names>
+- <the observation, then the rule number or the exercised path>
 
 ### note
 - <one sentence>
@@ -395,10 +419,10 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   that IS the stacking guarantee). The judge sees the per-issue diff (`git diff
   <tip-before>...HEAD`). **Simplify does not run per slice** (dec-0ab8ab6b):
   the one pass is the stack-tip pass below, where cross-slice trimming lives.
-- **Tracker visibility without PRs.** After each issue passes: `gh issue comment
-  <N> --body "🤖 issue-loop run <run-id>: slice landed on loop/dag-<root> at
-  <sha>. <gate table>"` — §1d's three parts. Do NOT close the issue; do NOT
-  open a PR yet.
+- **Tracker visibility without PRs.** After each issue passes, one line: `gh
+  issue comment <N> --body "🤖 issue-loop run <run-id>: slice landed on
+  loop/dag-<root> at <sha> — PR at end of run"`. No gate table: the evidence
+  waits for the PR. Do NOT close the issue; do NOT open a PR yet.
 - **Stack-tip simplify — the stack's one pass, whole-branch, before PR-open.**
   Once the stack is final — DAG exhausted, cap hit, or an issue routed to human
   — run the §1c simplify flow ONCE over the whole branch, before pushing
@@ -408,19 +432,31 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   (`git diff --name-only origin/main...HEAD`, then read each) so it can see a
   later slice re-rolling an earlier slice's helper. Keep-or-revert is §1c's
   steps 1, 3 and 4 on the whole branch (the gate's `rerun` list, `reset --hard
-  $pre` on red), the `revert_note` suffixed `(stack-tip)`. Note the win
-  (`stack-tip simplify: -<N> lines, tests green`) or the revert.
+  $pre` on red), the `revert_note` suffixed `(stack-tip)`. This pass's result
+  is the PR body's simplify line.
   <!-- host-extension: memory feed — needs a Thinkweave vault. -->
   Record the result in the final completed issue's §3 trace under
   `stack_simplify`.
   <!-- /host-extension -->
 - **One PR at the end** (DAG exhausted, cap hit, or an issue routed to human):
-  push the branch and open a single draft PR whose body carries `Closes #A`
-  lines for every completed issue, one sentence per issue, one gate table per
-  issue, and — if some of the DAG remains — which issues are NOT included and
-  why; then §1d's one findings comment, covering every completed issue.
-  `training_mode` pauses once, here. Then remove the `loop/dag-<N>` worktree
-  (same teardown rule as §1d).
+  push the branch and open a single draft PR. Its title is the epic title or
+  the DAG root's title, then the issue numbers in parentheses; never clauses
+  joined by semicolons. Its body carries each fact once, and nothing else:
+  the `Closes #A` lines for every completed issue; one sentence per issue,
+  issue number first, saying what its slice does (not its title, no heading,
+  no paragraph); one gate table for the stack, one row per issue and one
+  column per gate (diff, tests, verify, judge), each cell the varying number
+  only (`133 lines`, `274 passed`, `5/5`, `8/8`) and a failed cell naming the
+  failure — no per-issue tables; the simplify line (the stack-tip pass);
+  `Findings: see comment` or `Findings: none`; a `Not included` line only
+  when part of the DAG remains, naming the issues and why; the attribution
+  block. No summary bullets, no `###` per issue, no orchestrator notes, no
+  run parameters, no line-count deltas of documents. Then §1d's one findings
+  comment, covering every completed issue; a stack-tip finding that restates
+  a slice finding is dropped. Then one more line per issue: `gh issue comment
+  <N> --body "🤖 issue-loop run <run-id>: PR <pr-url>"`. `training_mode`
+  pauses once, here. Then remove the `loop/dag-<N>` worktree (same teardown
+  rule as §1d).
 - **A failed issue doesn't poison the stack.** If an issue exhausts its fix
   rounds, reset the branch to the last good tip (`git reset --hard
   <tip-before-this-issue>`), route it to human as usual, and stop extending this

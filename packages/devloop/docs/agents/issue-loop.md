@@ -125,7 +125,7 @@ Design rules baked in:
   `ready-for-agent` if its acceptance criteria are checkable, and the judge
   scores exactly those criteria, not a generic "looks good". Nothing outside
   the contract can fail a PR; what the judge sees beyond it is a finding for
-  the PR body and the triage lane.
+  the PR's findings comment and the triage lane.
 - **Fresh context for judgment.** Reviewing in the implementer's session
   happens in the dumb zone; the judge sees only the issue, the diff, and the
   evidence.

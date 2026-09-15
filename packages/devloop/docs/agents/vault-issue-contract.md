@@ -20,15 +20,17 @@ of the record — **no field is written by two owners.**
 
 | Surface | Owns |
 |---|---|
-| tracker comments | run history, claims, gate evidence |
-| PR body | diff summary, gate table, smell report |
+| tracker comments | run history, claims, the PR link |
+| PR body | one sentence per issue, gate table, simplify line; findings in its one comment |
 | trajectory note | how it went |
 | session note (`/wrap`) | cross-issue synthesis, decisions, insights |
 
 - **Tracker comments** own the *run history*: which run claimed the issue,
-  when, and the gate evidence (pass/fail detail) — GitHub owns their state.
-- **PR body** owns the *diff summary*, the gate table, and the smell report —
-  the code-review view of the change.
+  when, and the PR it shipped in — GitHub owns their state. Gate evidence
+  lands on the issue only when no PR exists (route to human).
+- **PR body** owns the *diff summary* (one sentence per issue), the gate
+  table and the simplify line; the PR's one findings comment owns the
+  findings — the code-review view of the change.
 - **Trajectory note** (`type: note`, tag `loop-run`; assembled by
   `devloop trajectory`, payload shape in
   [`devloop-boundaries.md`](devloop-boundaries.md) §4) owns **how the work went** —
