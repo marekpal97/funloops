@@ -1,18 +1,11 @@
-"""Board hygiene: the conventions ``dag.py`` depends on, as checks.
+"""Board hygiene: the board grammar ``dag.py`` reads, as checks.
 
-The loop reads one board grammar — sub-issue = epic membership, native
-blocked-by = ordering, ``[labels]`` = triage rungs (funloops#9). Nothing
-enforced that grammar, so every mint route invented its own (three epic
-conventions, four title-ordering prefixes, per-repo label drift). This module
-is the enforcing seam: pure checks over a board snapshot (shape owned by
-``devloop.github.fetch_board``), each producing a finding and — when the fix
-is mechanical, not a judgment — an op the sweep can replay through ``gh``.
-
-Findings carry ``severity``: ``error`` (breaks ``plan`` or the grammar),
-``warn`` (a human should look), ``info`` (worth knowing, nothing to do).
-Ops are the whole vocabulary ``sweep --apply`` knows; anything needing a
-human verdict (which rung, which track, is this epic really done) is a
-finding with no op, by design.
+Sub-issue is epic membership, native blocked-by is ordering, ``[labels]``
+are the triage rungs. Each check is pure over a board snapshot (shape owned
+by ``devloop.github.fetch_board``) and yields findings; a finding carries an
+op only when the fix is mechanical. Severity is ``error`` (breaks ``plan``
+or the grammar), ``warn`` (a human should look), or ``info``. Anything that
+needs a human verdict is a finding with no op.
 """
 
 from __future__ import annotations
@@ -25,11 +18,11 @@ RUNG_ROLES = ("needs-triage", "needs-info", "ready-for-agent", "ready-for-human"
               "wontfix", "arch-proposal")
 # GitHub seeds every repo with these; none carries meaning on a loop board.
 BOILERPLATE_LABELS = ("good first issue", "help wanted", "invalid", "question", "duplicate")
-# W1a: / A3: / S2-pre: / QW: — the title-ordering grammars the boards grew.
+# Title-ordering prefixes such as W1a: / A3: / S2-pre: / QW:.
 ORDER_PREFIX_RE = re.compile(r"^\s*\[?([A-Z]{1,2}\d*[a-z]?(-\w+)?)\]?\s*:\s+")
-# EPIC: / PRD: — the third and fourth epic conventions; the `epic` label is the one.
+# EPIC: / PRD: title prefixes; the `epic` label is the one epic convention.
 EPIC_PREFIX_RE = re.compile(r"^\s*\[?(EPIC|PRD)\]?\s*:\s+", re.IGNORECASE)
-# `Blocked-by: #12, #13` body headers (pre-#95 grammar) — only native edges gate.
+# `Blocked-by: #12, #13` body headers; only native edges gate.
 TEXT_BLOCKER_RE = re.compile(r"Blocked-by:\s*([^\n|]*)", re.IGNORECASE)
 IDLE_DAYS = 14
 
@@ -77,8 +70,8 @@ def _epics(issues: list[dict]) -> set[int]:
 
 
 def _check_labels(board: dict, cfg: dict, now: datetime) -> list[dict]:
-    """The repo's label set must carry the whole triage table + epic + claimed,
-    and none of GitHub's boilerplate five (unused noise on a loop board)."""
+    """The repo's label set carries the triage table, epic and claimed, and
+    none of GitHub's unused boilerplate labels."""
     repo, have = board["repo"], set(board["labels"])
     used = {l for i in board["issues"] for l in _labels(i)}
     want = dict(REQUIRED_LABELS)
@@ -102,9 +95,8 @@ def _check_labels(board: dict, cfg: dict, now: datetime) -> list[dict]:
 
 
 def _check_epics(board: dict, cfg: dict, now: datetime) -> list[dict]:
-    """Epic grammar: has sub-issues ⇒ labelled ``epic``; never runnable; anchored
-    (blocked-by every open child so ``plan --dag <epic>`` scopes to the whole
-    tree and the epic closes last); flagged when every child is closed."""
+    """An epic is labelled ``epic``, is never runnable, is blocked-by every
+    open child, and is flagged when every child is closed."""
     repo, runnable = board["repo"], cfg["labels"]["runnable"]
     epics = _epics(board["issues"])
     out = []
@@ -137,9 +129,9 @@ def _check_epics(board: dict, cfg: dict, now: datetime) -> list[dict]:
 
 
 def _check_rungs(board: dict, cfg: dict, now: datetime) -> list[dict]:
-    """Exactly one triage rung per open non-epic issue; a ``track:`` lane
-    wherever the repo uses lanes at all. Which rung / which lane is a human
-    call — the only op is ``needs-triage`` on a rung-less issue."""
+    """Exactly one triage rung per open non-epic issue, and a ``track:`` lane
+    wherever the repo uses lanes. The only op is ``needs-triage`` on a
+    rung-less issue."""
     repo = board["repo"]
     rungs = set(RUNG_ROLES) | {cfg["labels"]["runnable"], cfg["labels"]["on_gate_failure"]}
     has_tracks = any(l.startswith("track:") for l in board["labels"])
@@ -154,8 +146,6 @@ def _check_rungs(board: dict, cfg: dict, now: datetime) -> list[dict]:
             out.append(_finding("rung-contradictory", "error", repo, n,
                                 f"#{n} carries {len(on)} triage rungs: {', '.join(on)}"))
         elif not on and n not in epics:
-            # The one rung that asserts nothing but "no verdict yet" — honest
-            # to apply mechanically, and it puts the issue in /triage's queue.
             out.append(_finding("rung-missing", "warn", repo, n,
                                 f"#{n} has no triage rung — invisible to the loop and to /triage",
                                 {"op": "add_label", "number": n, "name": "needs-triage"}))
@@ -165,19 +155,16 @@ def _check_rungs(board: dict, cfg: dict, now: datetime) -> list[dict]:
 
 
 def _check_edges(board: dict, cfg: dict, now: datetime) -> list[dict]:
-    """Ordering grammar: titles don't re-encode what native edges already say;
-    body ``Blocked-by:`` headers must have a native twin; cross-repo edges are
-    legal but invisible to a single-repo ``plan``; runnable-and-unblocked
-    issues that sit idle past IDLE_DAYS deserve a look."""
+    """Titles do not re-encode native edges; body ``Blocked-by:`` headers have
+    a native twin; cross-repo edges are reported; runnable unblocked issues
+    idle past IDLE_DAYS are reported."""
     repo, runnable = board["repo"], cfg["labels"]["runnable"]
     out = []
     epics = _epics(board["issues"])
     for i in board["issues"]:
         n = i["number"]
         blockers, parent = i.get("blockers", []), i.get("parent")
-        # A prefix is redundant once the order lives elsewhere: a native edge
-        # (open issue), the epic label, or closure — a finished issue has no
-        # order left to encode, and the board shows closed titles too.
+        # A closed issue has no order left to encode, so its prefix is redundant too.
         has_edge = bool(blockers) or parent is not None or bool(i.get("children"))
         redundant = has_edge or not _is_open(i)
         m = ORDER_PREFIX_RE.match(i.get("title", ""))
@@ -191,14 +178,12 @@ def _check_edges(board: dict, cfg: dict, now: datetime) -> list[dict]:
                                 {"op": "retitle", "number": n, "title": clean}))
         if not _is_open(i):
             continue
-        # Numbers, not (repo, number): a body header can't say which repo it
-        # means, and a transferred issue's header points at its old home.
+        # Numbers, not (repo, number): a body header cannot say which repo it means.
         native = {b["number"] for b in blockers}
         for ref in sorted(_text_blockers(i.get("body", "")) - native):
             if parent is not None and ref == parent["number"]:
-                # Stale pre-#92 grammar: "blocked by my epic". The anchor
-                # runs the other way (epic blocked-by child); never re-create
-                # the inverted root — flag it for a body edit instead.
+                # The anchor runs epic blocked-by child; never re-create the
+                # inverted edge, flag it for a body edit instead.
                 out.append(_finding("text-only-blocker", "warn", repo, n,
                                     f"#{n} body says Blocked-by #{ref}, its own parent — stale header"))
                 continue
@@ -225,8 +210,7 @@ _CHECKS = (_check_labels, _check_epics, _check_rungs, _check_edges)
 
 
 def doctor(boards: list[dict], cfg: dict, now: datetime | None = None) -> dict:
-    """Run every check over every board. ``ok`` is false on any error.
-    ``now`` is injectable so the idle-age rule is testable."""
+    """Run every check over every board. ``ok`` is false on any error."""
     now = now or datetime.now(UTC)
     findings = [f for board in boards for check in _CHECKS for f in check(board, cfg, now)]
     counts = {s: sum(1 for f in findings if f["severity"] == s) for s in ("error", "warn", "info")}
@@ -235,8 +219,7 @@ def doctor(boards: list[dict], cfg: dict, now: datetime | None = None) -> dict:
 
 
 def plan_sweep(report: dict) -> list[dict]:
-    """The mechanical edits implied by a doctor report — every finding's op,
-    deduped, in a stable order (label creation first so later ops can use them)."""
+    """Every finding's op from a doctor report, deduped, label creation first."""
     order = {"create_label": 0, "add_label": 1, "remove_label": 1, "add_blocker": 2,
              "retitle": 3, "delete_label": 4}
     seen, ops = set(), []

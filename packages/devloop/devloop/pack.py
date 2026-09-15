@@ -1,15 +1,9 @@
 """The dispatch pack: one dispatch's context, printed by ``devloop pack``.
 
-In order: the issue; the rules — the packaged constitution, then the host
-overlay, one continuously numbered list (both roles: the judge cites them);
-the persona (implementer only); the repo map — tier 1 the whole-repo catalog
-at directory grain, tier 2 the slice for the issue: file lines for the
-directories its named files and the title's entry points land in (those
-files always, the rest to a line budget, a fold line naming what is cut),
-then codegraph's context and the named files' symbols, all from codegraph's CLI,
-any failure degrading to a marked block; the prime block and the run's trace
-where the host supplies them; the standing orders (implementer only).
-Composition is hardcoded; argparse carries the only knobs.
+In order: the issue; the rules; the persona (implementer only); the repo
+map from codegraph's CLI, a catalog tier and an issue-slice tier, any
+failure degrading to a marked block; the prime block and the run's trace
+when the host supplies them; the standing orders (implementer only).
 """
 
 from __future__ import annotations
@@ -23,10 +17,8 @@ from typing import Literal, NamedTuple
 
 Role = Literal["implementer", "judge"]
 
-# Each tier renders at most this many lines of its own; over it, the largest
-# directories fold first (dec-e6561edc: a fixed backstop, no config key).
-# Sized by the thinkweave judge pack: 6,000 chars of issue and rules leave
-# under 2,000 for the map inside its 8,000-char ceiling.
+# Each tier renders at most this many lines; over it, the largest directories
+# fold first. Sized so the map fits under 2,000 chars of an 8,000-char pack.
 LINE_BUDGET = 16
 
 
@@ -39,12 +31,8 @@ class Issue(NamedTuple):
 
 def compose(number: int, issue: Issue, role: Role, rules: list[str], persona: str,
             codegraph: Codegraph, prime: str = "", trace: str = "") -> str:
-    """The pack text. ``rules`` are the resolved constitution bodies in order
-    and ride every role; the persona and the standing orders are the
-    implementer's — the one role check in the pack. Resolving the files is
-    the caller's; an empty ``rules`` is refused (a pack without the rules is
-    the fail-open rule 6 names). The map is codegraph's, or the degraded
-    block on any failure — never an exception."""
+    """The pack text for one dispatch. An empty ``rules`` is refused; a
+    codegraph failure renders the degraded block, never an exception."""
     if not rules:
         raise ValueError("a pack carries the rules; none were resolved")
     try:
@@ -72,8 +60,7 @@ class CodegraphUnavailable(Exception):
 
 
 class FileRecord(NamedTuple):
-    """One entry of ``codegraph files -j`` as the pack reads it: the three
-    fields the catalog draws. Declared here so a shape mismatch degrades."""
+    """One entry of ``codegraph files -j``: the three fields the catalog draws."""
 
     path: str
     language: str
@@ -81,22 +68,16 @@ class FileRecord(NamedTuple):
 
 
 class Codegraph:
-    """codegraph as a tool the pack invokes: a CLI whose output is spliced,
-    never a database it reads (no sqlite, no version pin). The pack depends
-    on the record fields of ``files -j``; that dependency is checked where
-    the JSON is parsed into ``FileRecord``, and a shape mismatch degrades.
-    The index under ``root/.codegraph`` is machine-local and self-provisioned
-    by ``sync()``, so a fresh worktree maps too."""
+    """codegraph as a CLI the pack invokes; its index is never read directly.
+    The index under ``root/.codegraph`` is self-provisioned by ``sync()``."""
 
     def __init__(self, binary: str, root: Path):
         self.binary, self.root = binary, root
 
     def repo_map(self, issue: Issue) -> str:
-        """Both tiers for one issue: the catalog at directory grain, then the
-        slice — file lines for the directories the issue's named files and
-        the title's entry points land in, the context for the title, the
-        symbols of each named file. Raises ``CodegraphUnavailable`` on any
-        failure — the caller decides what a missing map means."""
+        """Both map tiers for one issue: the catalog, then the slice around
+        its named files and entry points. Raises ``CodegraphUnavailable`` on
+        any failure."""
         self.sync()
         tree = Directory.tree(self.files())
         named = named_files(issue.body, self.root)
@@ -115,8 +96,8 @@ class Codegraph:
             self._run("init", "-y", ".")
 
     def files(self) -> list[FileRecord]:
-        """``files -j``, parsed into records. An empty list, a non-list, or an
-        entry missing a field is no catalog."""
+        """``files -j`` parsed into records; an empty list, a non-list, or a
+        short entry raises ``CodegraphUnavailable``."""
         try:
             entries = json.loads(self._run("files", "-j", "-p", "."))
         except json.JSONDecodeError as e:
@@ -137,9 +118,8 @@ class Codegraph:
         return self._run("context", "-p", ".", "--no-code", title)
 
     def entry_points(self, title: str) -> list[str]:
-        """The files of the same query's entry points, from its ``-f json``
-        form, in codegraph's order. Output off the declared shape (no
-        ``entryPoints`` list of ``filePath`` records) is no slice."""
+        """The entry-point files of ``context -f json`` for the title, in
+        codegraph's order; output off the declared shape raises."""
         try:
             doc = json.loads(self._run("context", "-p", ".", "-f", "json", "--no-code", title))
             return [str(e["filePath"]) for e in doc["entryPoints"]]
@@ -151,10 +131,9 @@ class Codegraph:
         return self._run("node", "-p", ".", "-f", path, "--symbols-only")
 
     def _run(self, *args: str) -> str:
-        """One verb's stdout, colorless; any failure names the verb. A read
-        verb that prints nothing is not a map — it is a wrapper, a wrong binary,
-        or a version writing elsewhere; spliced, it would read as a clean empty
-        catalog (rule 6). init/sync legitimately say nothing."""
+        """One verb's stdout, colorless; any failure raises naming the verb.
+        A read verb that prints nothing raises too: spliced, it would read as
+        a clean empty catalog. init/sync say nothing."""
         try:
             proc = subprocess.run([self.binary, "--no-color", *args], cwd=self.root,
                                   capture_output=True, text=True, check=False,
@@ -170,19 +149,18 @@ class Codegraph:
 
 
 class Directory:
-    """One directory of the map: the records indexed directly under it and
-    its subdirectories. Tier 1 is a cut of this tree — every indexed file
-    counts on exactly one line, its own directory's or the nearest folded
-    ancestor's — and tier 2 opens chosen directories to their files. Only
-    the lines rendered read a docstring or a README."""
+    """One directory of the map: the records directly under it and its
+    subdirectories. Tier 1 is a cut of this tree where every indexed file
+    counts on exactly one line; tier 2 opens chosen directories to their
+    files."""
 
     def __init__(self, path: str):
         self.path, self.files, self.children, self.folded = path, {}, {}, False
 
     @classmethod
     def tree(cls, files: list[FileRecord]) -> Directory:
-        """The root over ``files -j``'s records (either separator). A path
-        that is both a file and a directory, or listed twice, is no map."""
+        """The root over ``files -j``'s records. A path that is both a file
+        and a directory, or listed twice, raises."""
         root = cls("")
         for f in files:
             *dirs, name = parts(f.path)
@@ -204,13 +182,11 @@ class Directory:
         return "\n".join([f"Project Structure ({self.count()[0]} files):", "", *lines])
 
     def slice(self, paths: list[str], root: Path, budget: int) -> str:
-        """Tier 2: the directory of each pointed file as its line over its
-        files, groups a blank line apart in path order. A group opens whole
-        while ``budget`` holds it; past that it folds to the pointed files
-        alone, budget or not, or to the first files that still fit when the
-        index holds none of them, and ends in a fold line naming the count
-        not shown (rule 6: a fold reads as a fold). A directory the index
-        does not hold renders as an empty line."""
+        """Tier 2: each pointed file's directory as its line over its files,
+        in path order. A group opens whole while ``budget`` holds it; past
+        that it folds to the pointed files, and a fold line names the count
+        not shown. A directory the index does not hold renders as an empty
+        line."""
         pointed: dict[str, set[str]] = {}
         for p in paths:
             *dirs, name = parts(p)
@@ -227,10 +203,8 @@ class Directory:
         return "\n\n".join(blocks)
 
     def fold(self, budget: int) -> None:
-        """While the cut exceeds ``budget`` lines and something can fold: the
-        largest (most files) of the innermost foldable directories collapses
-        to one line. The root never folds, so the floor is the top-level
-        split."""
+        """Collapse the largest innermost foldable directory to one line until
+        the cut fits ``budget``. The root never folds."""
         while len(self.lines()) > budget and (foldable := self.foldable()):
             max(foldable, key=lambda d: d.count()[0]).folded = True
 
@@ -281,10 +255,8 @@ class Directory:
         return text
 
     def file_lines(self, root: Path, names: list[str], hidden: int) -> list[str]:
-        """The named files directly under it, name order, in the catalog's
-        old file-line form ``name (language, N symbols) — responsibility``,
-        then the fold line ``… N more files`` when ``hidden`` files are not
-        shown."""
+        """The named files as ``name (language, N symbols) — responsibility``
+        lines in name order, then ``… N more files`` when ``hidden`` is set."""
         lines = []
         for name in sorted(names):
             f = self.files[name]
@@ -326,17 +298,17 @@ def parts(path: str) -> tuple[str, ...]:
 
 
 def named_files(body: str, root: Path) -> list[str]:
-    """The files an issue names: every backticked token that resolves to an
-    existing file inside ``root`` (symlinks followed, so a link out of the
-    repo does not count), first mention first, deduped."""
+    """Every backticked token in ``body`` that resolves to a file inside
+    ``root``, first mention first, deduped. Symlinks are followed, so a link
+    out of the repo does not count."""
     found = [tok for tok in re.findall(r"`([^`\n]+)`", body)
              if (root / tok).resolve().is_relative_to(root) and (root / tok).is_file()]
     return list(dict.fromkeys(found))
 
 
 def body(path: Path) -> str:
-    """Everything below a doc's LEADING provenance header (``<!-- … -->``);
-    a doc that opens with prose is served whole, whatever it contains."""
+    """A doc's text below its leading ``<!-- … -->`` header; a doc that opens
+    with prose is served whole."""
     text = path.read_text(encoding="utf-8")
     if text.lstrip().startswith("<!--"):
         text = text.partition("-->")[2]
@@ -398,9 +370,3 @@ spliced; do not re-derive them. Before writing, look at what exists:
 node <symbol>` / `codegraph node -f <file>` (one symbol or file with its
 dependents), `codegraph impact <symbol>` and `codegraph callers` / `codegraph
 callees <symbol>` (who is affected by a change)."""
-
-# Provenance: funloops#28, #41, #45, #46, #47, #53, #54, #57; dec-f12457eb, dec-fd12489d, dec-d2de831e,
-# dec-ba48dbe2, dec-2f8c2322 (supersedes dec-d79e8e7b's persona-as-splice-container),
-# dec-e6561edc (directory grain, the line budget), dec-72c80057 (the pack is the
-# whole dispatch: the standing orders live here, not in the command doc),
-# dec-39140113 (the implementer verifies before it returns).

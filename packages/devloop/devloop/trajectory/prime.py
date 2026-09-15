@@ -1,14 +1,9 @@
 """The trajectory note's read face: claim-time prior-trajectory context.
 
-Two interface-level invariants (boundary spec §4):
-
-- **Prime never crashes the loop.** Any index problem (missing db, corrupt
-  file, schema drift) degrades to ``primed=false`` with a ``note``.
-- **Prime writes nothing to the index.** Its only side effect is the
-  served-event append to the session buffer JSONL.
-
-All SQL lives in ``devloop.index_client`` (#100 completed that seam); this
-file is composition, rendering and policy only.
+Prime never crashes the loop: any index problem degrades to ``primed=false``
+with a ``note``. Prime writes nothing to the index; its only side effect is
+the served-event append to the session buffer. All SQL lives in
+``devloop.index_client``.
 """
 
 from __future__ import annotations
@@ -21,12 +16,8 @@ from devloop.index_client import Connection, Error, note_rows, trajectory_candid
 
 
 def _coerce_builds_on(raw: object) -> list[str]:
-    """Normalize a trajectory's ``builds_on`` frontmatter to a list of note ids.
-
-    Accepts the plain ``["n-xxxxxx", …]`` form weave_create writes, and tolerates
-    path-based wikilinks (``[[path|n-xxxxxx]]``) by taking the trailing id. Any
-    non-list / non-string element is dropped — a bad link never crashes prime.
-    """
+    """Normalize a ``builds_on`` value to a list of note ids, taking the
+    trailing id of a ``[[path|id]]`` wikilink; a bad element is dropped."""
     if not isinstance(raw, list):
         return []
     out: list[str] = []
@@ -45,25 +36,16 @@ def _coerce_builds_on(raw: object) -> list[str]:
 
 
 def resolve_insights(conn: Connection, ids: list[str]) -> list[dict]:
-    """The bodies of the insight notes a trajectory builds on.
-
-    Returns ``[{id, body}]`` in ``builds_on`` order, skipping ids that don't
-    resolve to a note or resolve to an empty body. The index already holds these
-    notes (they are ordinary notes minted at ship time).
-    """
+    """``[{id, body}]`` of the insight notes in ``ids`` order, skipping ids
+    that do not resolve or have an empty body."""
     by_id = note_rows(conn, ids)
     return [{"id": i, "body": by_id[i]["body"]} for i in ids if by_id.get(i, {}).get("body")]
 
 
 def resolve_decisions(conn: Connection, ids: list[str]) -> list[dict]:
-    """The decisions leg's records: ``[{id, title, summary}]`` in ``ids`` order.
-
-    ``summary`` is the first prose line of the decision body — the ``## Context``
-    rationale weave_extract writes first, i.e. the why. An id the index does
-    not hold keeps its place with an empty title and summary, so the renderer
-    can say so rather than drop the pointer (a ticket citing a decision the
-    index has not caught up with must not lose it silently).
-    """
+    """``[{id, title, summary}]`` in ``ids`` order; ``summary`` is the first
+    prose line of the decision body. An id the index does not hold keeps its
+    place with empty fields, so the renderer can say so."""
     by_id = note_rows(conn, ids, "decision")
     return [{"id": i, "title": by_id.get(i, {}).get("title", ""),
              "summary": _first_prose_line(by_id.get(i, {}).get("body", ""))}
@@ -75,10 +57,8 @@ def _first_prose_line(body: str) -> str:
                  if ln.strip() and not ln.lstrip().startswith("#")), "")
 
 
-# Outcome-weighting rank for prime ordering (issue #85). merged-clean/stable
-# float to the top, reworked/closed/reverted sink; unlabeled and unknown stay
-# neutral (rank 1) so an all-unlabeled match set keeps pure recency order — the
-# byte-stable v1 behavior. Python's stable sort preserves recency within a rank.
+# Unlabeled and unknown outcomes stay at rank 1, so an all-unlabeled match
+# set keeps the fused order.
 _OUTCOME_RANK = {
     "merged-clean": 0, "stable": 0,
     "reworked": 2, "reworked-post-merge": 2,
@@ -94,22 +74,10 @@ def query_trajectories(
     conn: Connection, concepts: list[str], limit: int, scan_cap: int = 40,
     query: str = "",
 ) -> list[dict]:
-    """``[loop-run]`` notes matching this issue that carry reusable color — a
-    linked insight note (``builds_on``).
-
-    Retrieval is the seam's fused concept+FTS candidate list
-    (:func:`devloop.index_client.trajectory_candidates`): ``concepts`` are
-    ontology terms, ``query`` is the issue's own text. Either may be empty (one
-    leg then carries the retrieval); both empty matches nothing.
-
-    Returns ``{id, title, issue, outcome, outcome_label, insights}`` dicts, at
-    most ``limit``. ``insights`` is the resolved list of linked insight-note
-    bodies (``[{id, body}]``); a trajectory whose links resolve to nothing is
-    skipped. Up to ``scan_cap`` candidates per leg are scanned; the survivors
-    take the outcome-weighting sort (:data:`_OUTCOME_RANK`) — stable, so the
-    fused rank order is preserved within an outcome rank and an all-unlabeled
-    set keeps the fused order untouched — before truncating to ``limit``.
-    """
+    """``[{id, title, issue, outcome, outcome_label, insights}]`` for the
+    ``[loop-run]`` notes matching ``concepts`` or ``query`` whose ``builds_on``
+    links resolve to insight bodies, sorted by outcome rank (stable), at most
+    ``limit``."""
     out: list[dict] = []
     for r in trajectory_candidates(conn, concepts, query, scan_cap):
         try:
@@ -118,7 +86,7 @@ def query_trajectories(
             fm = {}
         insights = resolve_insights(conn, _coerce_builds_on(fm.get("builds_on")))
         if not insights:
-            continue  # No reusable color — the builds_on links resolved nothing.
+            continue
         out.append({
             "id": r["id"],
             "title": r["title"] or "",
@@ -135,19 +103,10 @@ def render_prime_block(
     trajectories: list[dict], decisions: list[dict] | None = None,
     budget_chars: int = 1200,
 ) -> tuple[str, list[str]]:
-    """Render the primed-context markdown + the flat served-id list.
-
-    Each trajectory renders its reusable color first (each capped-in as a whole
-    piece until the char budget is spent — at least one always lands if any
-    exist). A trajectory serves the BODIES of the insight notes it builds on,
-    and ``served`` records the insight ids — that is what the run received.
-    ``decisions`` (:func:`resolve_decisions` records) close the block as a
-    section of one bullet each: id, title, then the summary line; an id the
-    index does not hold says so. The section sits outside the char budget:
-    the caller's ``limit`` already caps it, and the ticket's decisions are the
-    why that must arrive (dec-f5bdf9ea). ``served`` carries every id actually
-    rendered. Empty input → ``('', [])`` so the caller skips cleanly.
-    """
+    """Render the prime block and the list of ids it served. Each trajectory's
+    insight bodies land as a whole piece until ``budget_chars`` is spent; at
+    least one lands if any exist. ``decisions`` close the block outside the
+    budget. Empty input gives ``('', [])``."""
     decisions = decisions or []
     if not trajectories and not decisions:
         return "", []
@@ -178,32 +137,21 @@ def build_prime_payload(
     limit: int = 3, budget_chars: int = 1200, decisions: list[str] | None = None,
     query: str = "",
 ) -> dict:
-    """Assemble the claim-time prime payload the orchestrator splices verbatim.
-
-    ``concepts`` (ontology terms) and ``query`` (the issue's text) are the two
-    retrieval legs; ``decisions`` are the decision note ids the orchestrator
-    passed at claim time — the ticket's ``## Decisions`` ids merged with the
-    file-walk ids — resolved here to title + summary line. Prime always serves
-    what it finds (dec-cf8f0d33 retired the sampled holdout).
-
-    Output keys: ``primed`` (received prime context this run), ``served`` (note
-    ids served — trajectory + decisions, capped ``limit`` per kind), ``block``
-    (markdown to splice; ``''`` when unprimed), ``note`` (why unprimed, when it
-    is). An empty-match run returns ``primed=False`` with no served ids and an
-    empty block, so the loop runs unchanged.
-    """
+    """Assemble the claim-time prime payload: ``primed``, ``served`` (note ids,
+    capped ``limit`` per kind), ``block`` (markdown, ``''`` when unprimed) and
+    ``note`` (why unprimed). ``concepts`` and ``query`` are the two retrieval
+    legs; ``decisions`` are decision ids resolved to title and summary. Prime
+    always serves what it finds."""
     payload = {
         "issue": issue_number, "run_id": run_id, "concepts": list(concepts),
         "query": query, "primed": False, "served": [], "block": "", "note": "",
     }
-    # The query — not the connect — is where a foreign/corrupt file
-    # (DatabaseError) or an older index missing note_tags/note_concepts
-    # (OperationalError) raises. Guard here so a bad index degrades to unprimed
-    # rather than crashing the loop (this module's never-crash invariant).
+    # A corrupt file or an older schema raises at the query, not the connect,
+    # so the guard sits here: a bad index degrades to unprimed.
     index_error = False
     trajectories: list[dict] = []
-    ids = list(dict.fromkeys(decisions or []))[:limit]  # merged legs may repeat an id
-    resolved = [{"id": i, "title": "", "summary": ""} for i in ids]  # no index: bare
+    ids = list(dict.fromkeys(decisions or []))[:limit]
+    resolved = [{"id": i, "title": "", "summary": ""} for i in ids]
     if conn is not None:
         try:
             trajectories = query_trajectories(conn, concepts, limit, query=query)
@@ -222,11 +170,7 @@ def build_prime_payload(
     return payload
 
 
-# Sentinel tool name stamped on the served-context buffer event. The indexer's
-# context_served projection keys off this to assign source='loop-prime' — the
-# exact mechanism prompt-time retrieval uses (its PROMPT_TIME_TOOL sentinel →
-# source='prompttime'), so context_served stays a pure projection of the
-# per-session retrieval_log.jsonl event log.
+# The indexer keys off this sentinel to assign source='loop-prime'.
 LOOP_PRIME_TOOL = "loop_prime"
 
 
@@ -234,14 +178,8 @@ def append_served_event(
     buffer_path: str, run_id: str, issue_number: int,
     served: list[str], session_id: str = "",
 ) -> None:
-    """Append one loop-prime served-context event to the session buffer JSONL.
-
-    Mirrors the prompt-time serving surface: a ``retrieval``-typed event tagged
-    with the ``loop_prime`` sentinel tool. ``archive_buffer`` folds it into the
-    session's ``retrieval_log.jsonl`` (append-only) at Stop, and the indexer
-    projects it to ``context_served(source='loop-prime')`` — recoverable per run
-    from the index, derived and rebuildable from the markdown-adjacent log.
-    """
+    """Append one ``retrieval`` event tagged ``loop_prime`` to the session
+    buffer JSONL."""
     event = {
         "ts": datetime.datetime.now(datetime.UTC).isoformat(),
         "type": "retrieval",

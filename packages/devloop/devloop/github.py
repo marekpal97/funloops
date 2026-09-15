@@ -1,10 +1,8 @@
 """The one subprocess seam to ``gh``, plus the issue-snapshot dicts it makes.
 
 This module owns the snapshot shape ``{number, title, state, labels,
-assignees, body, native_blocked_count, native_blockers?}`` — the
-``github``↔``dag`` contract. ``dag`` never sees raw gh output.
-Tracker *mutations* (claim/release) stay in ``cli``, composed from ``run``:
-the assign-vs-label convention is loop policy, not gh plumbing.
+assignees, body, native_blocked_count, native_blockers?}``; ``dag`` never
+sees raw gh output. Tracker mutations (claim/release) stay in ``cli``.
 """
 
 from __future__ import annotations
@@ -21,17 +19,11 @@ def run(args: list[str], cwd: Path | None = None) -> str:
 
 
 def fetch_issues() -> list[dict]:
-    """Snapshot all issues with native-dependency enrichment.
-
-    Uses the REST issues endpoint (not `gh issue list --json`) because it
-    carries ``issue_dependencies_summary`` — GitHub's own count of OPEN
-    blockers, maintained natively since /to-tickets and /wayfinder publish
-    blocking as issue dependencies. For open issues with a nonzero count,
-    the actual blocker numbers are fetched (one extra call each) so plans
-    can name them and components can include the edges.
-    """
-    # --jq '.[]' flattens each page to NDJSON — works on gh versions
-    # predating --slurp, and never confuses body text for page boundaries.
+    """Snapshot all issues with their native blocker count, and the blocker
+    numbers for open issues with a nonzero count. The REST endpoint is used
+    because only it carries ``issue_dependencies_summary``."""
+    # --jq '.[]' flattens each page to NDJSON; it works on gh versions
+    # predating --slurp and never confuses body text for page boundaries.
     out = run(["api", "--paginate", "--jq", ".[]",
                "repos/{owner}/{repo}/issues?state=all&per_page=100"])
     issues = []
@@ -56,14 +48,14 @@ def fetch_issues() -> list[dict]:
                             "--jq", "[.[].number]"])
                 issue["native_blockers"] = json.loads(refs)
             except subprocess.CalledProcessError:
-                issue["native_blockers"] = []  # count still gates; list is enrichment
+                issue["native_blockers"] = []  # the count still gates
         issues.append(issue)
     return issues
 
 
 def fetch_labels(number: int) -> list[str]:
-    """Issue label names via gh (network). Empty list on any failure — a prime
-    with no concepts serves an empty block, never crashes the loop."""
+    """Issue label names via gh; an empty list on any failure so prime never
+    crashes the loop."""
     try:
         out = run(["issue", "view", str(number), "--json", "labels",
                    "--jq", "[.labels[].name]"])
@@ -94,12 +86,9 @@ def _refs(endpoint: str) -> list[dict]:
 
 
 def fetch_board(repo: str) -> dict:
-    """Everything the board checks need, for one repo: the label set plus
-    every issue with its native relationships resolved to ``{repo, number,
-    state}`` refs (blockers, parent, children). Open issues only get the
-    per-issue calls; closed ones are kept as bare rows so closure checks see
-    them. Cross-repo refs survive — GitHub allows them, ``plan`` can't see
-    them, and the doctor says so."""
+    """One repo's board snapshot: the label set plus every issue with its
+    blockers, parent and children as ``{repo, number, state}`` refs. Only
+    open issues get the per-issue calls; cross-repo refs survive."""
     out = run(["api", "--paginate", "--jq", ".[]",
                f"repos/{repo}/issues?state=all&per_page=100"])
     issues = []
@@ -138,8 +127,7 @@ def fetch_board(repo: str) -> dict:
 
 
 def apply_op(op: dict) -> None:
-    """Replay one sweep op through ``gh``. The op vocabulary is
-    ``devloop.board``'s; this is the only place it meets the network."""
+    """Replay one ``devloop.board`` sweep op through ``gh``."""
     repo, kind = op["repo"], op["op"]
     if kind == "create_label":
         run(["label", "create", op["name"], "-R", repo, "--force",

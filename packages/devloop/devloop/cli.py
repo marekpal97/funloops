@@ -1,15 +1,10 @@
 """Deterministic rail for the /issue-loop dev workflow.
 
-The issue tracker IS the DAG: blocking edges live as GitHub-native issue
-dependencies (what /to-tickets and /wayfinder publish since Pocock skills
-v1.1.0) and nowhere else. The graph advances through GitHub's own state machine —
-a merged PR closes its issue via ``Closes #N``, which unblocks dependents on
-the next run. This script never stores state; it re-reads the tracker and
-computes the current frontier, plus the weakly-connected components that
-tell the orchestrator which open issues belong to one DAG (chase
-sequentially, ``run_mode=exhaust``) vs unrelated work (parallel-safe across
-components). LLM judgment stays in the /issue-loop command (implementer,
-judge); everything schedulable is plain graph math here.
+The issue tracker is the DAG: blocking edges live as GitHub-native issue
+dependencies and nowhere else. This script stores no state; it re-reads
+the tracker and computes the current frontier and its components. LLM
+judgment stays in the /issue-loop command; everything schedulable is
+graph math here.
 
 Subcommands:
   plan     — snapshot issues via `gh`, compute frontier + components (JSON)
@@ -71,58 +66,38 @@ PACKAGE_PERSONA = REPO_ROOT / "docs" / "agents" / "ponytail-persona.md"
 
 def _walk_up(rel: Path, start: Path | None = None):
     """Every copy of ``rel`` on the way up from the working directory, nearest
-    first — the same convention every repo-scoped tool uses. Stops at the
-    first ``.git``: never silently inherit an ancestor directory's file."""
+    first. Stops at the first ``.git`` so an ancestor repo's file is never
+    inherited."""
     here = (start or Path.cwd()).resolve()
     for directory in (here, *here.parents):
         found = directory / rel
         if found.is_file():
             yield found
-        if (directory / ".git").exists():   # repo root: stop, don't escape it
+        if (directory / ".git").exists():
             break
 
 
 def _is_packaged(constitution: Path) -> bool:
-    """The packaged constitution in ANY checkout of devloop: it sits beside the
-    ``devloop`` package, exactly as ``PACKAGE_CONSTITUTION`` sits beside this
-    one. Place, not bytes: a diverged copy in a worktree is still the default,
-    never an overlay."""
+    """Whether this constitution is the packaged one: it sits beside a
+    ``devloop`` package. Place, not bytes, so a diverged copy in a worktree
+    is still the default and never an overlay."""
     return (constitution.parents[2] / "devloop" / "__init__.py").is_file()
 
 
 def find_config(start: Path | None = None) -> Path:
     """The host repo's ``docs/agents/loop.toml``, else the package's own copy.
-
-    The gate pipeline belongs to the repo being worked on, not to the installed
-    rail, so the host's file *replaces* the packaged one when found.
-
-    The fallback is what the funloops workspace itself resolves (it keeps its
-    loop.toml with the package, not at the workspace root), and it may not
-    exist at all in a wheel install that shipped no ``docs/`` — ``load_config``
-    treats a missing file as "defaults only", which is honest: no gates
-    configured, and every ``check`` says so by name.
-    """
+    The host's file replaces the packaged one; ``load_config`` treats a
+    missing file as defaults only."""
     return next(_walk_up(CONFIG_REL, start), PACKAGE_CONFIG)
 
 
 def find_constitution(start: Path | None = None) -> list[Path]:
-    """The packaged constitution, plus the host repo's overlay when it has one.
+    """The packaged constitution, then the host repo's overlay when it has one.
 
-    Same upward walk as ``find_config``, opposite merge posture: loop.toml is
-    replace-on-find (the gate pipeline is the repo's), the constitution is
-    extend-on-find — the packaged default always applies and a repo's
-    ``docs/agents/constitution.md`` is appended after it, never substituted
-    (dec-1746aec3). The walk does not stop at the packaged file when it
-    starts below it (inside packages/devloop, or a worktree of it): that copy
-    is known by its place beside the package, served once as the default,
-    and the walk goes on to the repo's overlay.
-
-    A missing packaged default raises rather than resolving: an install that
-    shipped no ``docs/`` (the wheel packages only ``devloop/``) must not hand
-    the orchestrator a path that splices as silence — a dispatch that loses
-    every rule unannounced is the fail-open the constitution's own
-    rule 6 names. loop.toml's missing-file degrade is honest because defaults
-    exist in code; the constitution has no in-code fallback.
+    The overlay extends the default and never replaces it. A walk that starts
+    below the packaged file serves it once and goes on to the repo's overlay.
+    A missing packaged default raises: a dispatch must never lose every rule
+    unannounced.
     """
     if not PACKAGE_CONSTITUTION.is_file():
         raise FileNotFoundError(
@@ -131,8 +106,7 @@ def find_constitution(start: Path | None = None) -> list[Path]:
     overlay = [p for p in _walk_up(CONSTITUTION_REL, start) if not _is_packaged(p)][:1]
     return [PACKAGE_CONSTITUTION, *overlay]
 
-# Stamped on a prime payload built the pre-#100 way (labels as concepts, no
-# text leg) — the dead-by-vocabulary join; see issue-loop.command.md §1b.
+# Stamped on a prime payload built from labels alone, with no text leg.
 DEAD_VOCAB_NOTE = (
     "called with GH labels as concepts and no --query — prime v3 retrieval is "
     "likely dead by vocabulary; pass ontology --concepts and/or --query "
@@ -182,17 +156,16 @@ SECTIONS = ("loop", "labels", "tdd", "triage")
 
 
 def _known_key(section: str, key: str) -> None:
-    """One check for both config paths: a key DEFAULT_CONFIG does not carry is
-    unknown — a typo and a knob the subtractive pass deleted (dec-cf8f0d33)
-    are refused the same way, naming the key, never silently dropped."""
+    """Refuse by name a key DEFAULT_CONFIG does not carry; a typo and a
+    deleted knob fail the same way, never silently dropped."""
     if key not in DEFAULT_CONFIG[section]:
         known = ", ".join(sorted(DEFAULT_CONFIG[section]))
         raise ValueError(f"unknown key '{section}.{key}' (known: {known})")
 
 
 def _checked_gates(gates: list[dict]) -> list[dict]:
-    """A gate entry names a known kind and carries only the keys that kind's
-    verb reads; a stale kind (`review`) or a missing one is refused by name."""
+    """Refuse by name a gate entry with an unknown kind or a key its kind's
+    verb does not read."""
     for i, gate in enumerate(gates):
         kind = gate.get("kind")
         if kind not in GATE_KEYS:
@@ -206,12 +179,8 @@ def _checked_gates(gates: list[dict]) -> list[dict]:
 
 
 def load_config(path: Path | None = None) -> dict:
-    """Defaults merged with loop.toml. Gates come only from the file.
-
-    ``path`` defaults to whatever ``find_config`` resolves for the working
-    directory, so the host repo's file wins over the packaged one. A section
-    or key the defaults do not carry raises ``ValueError`` naming it.
-    """
+    """Defaults merged with loop.toml; gates come only from the file. A
+    section or key the defaults do not carry raises ``ValueError`` naming it."""
     path = path if path is not None else find_config()
     cfg: dict = {section: dict(DEFAULT_CONFIG[section]) for section in SECTIONS}
     cfg["gates"] = []
@@ -231,13 +200,8 @@ def load_config(path: Path | None = None) -> dict:
 
 
 def parse_override(spec: str) -> tuple[str, str, object]:
-    """Parse one ``--set [section.]key=value`` spec.
-
-    The section defaults to ``loop`` (the common case: ``--set
-    delivery=stacked``). The value is parsed as a TOML scalar so the
-    override language is exactly loop.toml's (``6`` → int, ``true`` → bool,
-    quoted or bare words → str).
-    """
+    """Parse one ``--set [section.]key=value`` spec. The section defaults to
+    ``loop``; the value is parsed as a TOML scalar, a bare word as a string."""
     head, sep, raw = spec.partition("=")
     if not sep or not head.strip() or not raw.strip():
         raise ValueError(f"malformed --set '{spec}' (expected [section.]key=value)")
@@ -252,12 +216,8 @@ def parse_override(spec: str) -> tuple[str, str, object]:
 
 
 def apply_overrides(cfg: dict, specs: list[str]) -> dict:
-    """Per-run config overrides, applied after loop.toml.
-
-    Only existing scalar knobs may be overridden — an unknown section or key
-    is a hard error (typo protection), and gates are file-only by design
-    (the gate pipeline is a trust boundary, not a run-time posture).
-    """
+    """Apply per-run ``--set`` overrides after loop.toml. Only existing scalar
+    knobs may be overridden; gates are file-only."""
     for spec in specs:
         section, key, value = parse_override(spec)
         if section not in SECTIONS:
@@ -277,8 +237,7 @@ def _split_csv(value: str | None) -> list[str]:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    """Construct the CLI parser (factory so the argparse contract is testable
-    without going through main → gh → git)."""
+    """Construct the CLI parser."""
     parser = argparse.ArgumentParser(description=__doc__)
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
@@ -380,16 +339,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_traj.add_argument("--primed", action=argparse.BooleanOptionalAction, default=None,
                         help="mirror the claim-time prime verdict: --primed (received "
                              "prior-trajectory context) / --no-primed (nothing served). "
-                             "Omit to leave both prime keys out (pre-#57 shape).")
+                             "Omit to leave both prime keys out.")
     p_traj.add_argument("--served-json", default=None,
                         help="file with the served note ids (prime output's `served`) to "
                              "mirror into the trajectory note frontmatter")
     p_traj.add_argument("--trace-json", default=None,
-                        help="file with the semantic execution trace (issue #85): a JSON "
+                        help="file with the semantic execution trace: a JSON "
                              "object {rounds[], criteria[], simplify, stack_simplify, "
                              "edge_cases[], tdd} "
                              "the orchestrator condenses from the gate agents' own reports. "
-                             "Omit to leave the trace key out (pre-#85 shape).")
+                             "Omit to leave the trace key out.")
     p_traj.add_argument("--fix-rounds", type=int, default=0)
     p_traj.add_argument("--outcome", required=True,
                         choices=["shipped", "routed-to-human", "awaiting-approval"])
@@ -435,8 +394,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.cmd == "config":
-        # The orchestrator's half of the constitution contract: splice the
-        # listed files in order; an "error" entry means STOP and surface it.
+        # An "error" entry tells the orchestrator to stop, not to splice nothing.
         try:
             cfg["constitution"] = [str(p) for p in find_constitution()]
         except FileNotFoundError as exc:
@@ -458,9 +416,7 @@ def main(argv: list[str] | None = None) -> int:
         result = dag.compute_frontier(issues, cfg, limit=limit)
         print(json.dumps(result, indent=2))
     elif args.cmd == "claim":
-        # wayfinder convention: the assignee IS the claim — renders natively
-        # in the tracker UI, no label vocabulary consumed (dec-cf8f0d33
-        # retired the label mode; labels.claimed stays readable for `plan`).
+        # The assignee is the claim; labels.claimed stays readable for `plan`.
         github.run(["issue", "edit", str(args.number), "--add-assignee", "@me"])
         github.run(["issue", "comment", str(args.number), "--body",
                     f"🤖 issue-loop: claimed by run `{args.run_id}`."])
@@ -474,8 +430,7 @@ def main(argv: list[str] | None = None) -> int:
             body = json.loads(github.run(["issue", "view", str(args.issue),
                                           "--json", "body"], cwd=cwd))["body"]
         except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError) as e:
-            # the error rung, like every other `check` failure to even start:
-            # exit 1 would read as "a verify line is red"
+            # Exit 2, not 1: exit 1 would read as "a verify line is red".
             detail = (e.stderr or "").strip() if hasattr(e, "stderr") else str(e)
             print(json.dumps({"error": f"cannot read issue #{args.issue}: {detail}"}))
             return 2
@@ -502,15 +457,13 @@ def main(argv: list[str] | None = None) -> int:
         try:
             raw = json.loads(Path(args.return_json).read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
-            # A return that is not even JSON is the first thing worth re-asking
-            # for, so it takes the same rejection path as a schema violation.
+            # Non-JSON takes the rejection path, so the orchestrator re-asks.
             result = reject(gate, [f"payload: not valid JSON ({e})"])
         else:
             result = validate(gate, raw)
         print(json.dumps(result, indent=2))
         return 2 if result["reasons"] else (0 if result["passed"] else 1)
     elif args.cmd == "prime":
-        # Label fallback (pre-#100 convention); gh fetch only when neither flag given.
         concepts = (_split_csv(args.concepts) if args.concepts is not None
                     else _split_csv(args.labels) if args.labels is not None
                     else github.fetch_labels(args.number))
@@ -604,10 +557,9 @@ def main(argv: list[str] | None = None) -> int:
         root = Path(args.cwd).resolve()
         issue = pack.Issue(**json.loads(github.run(
             ["issue", "view", str(args.number), "--json", "title,body"], cwd=root)))
-        try:  # resolution is the CLI's; composition is pack's
-            # The rules and the persona fail closed (find_constitution
-            # raises; so does a persona missing from a docs-less wheel): an
-            # error marker, never a pack that dispatches without them.
+        try:
+            # A missing rules file or persona is an error marker, never a
+            # pack that dispatches without them.
             rules = [pack.body(p) for p in find_constitution(root)]
             persona = pack.body(PACKAGE_PERSONA) if args.role == "implementer" else ""
         except FileNotFoundError as exc:

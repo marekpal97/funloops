@@ -1,15 +1,12 @@
 """The Gate protocol: deterministic executors and judgment validators.
 
-Every gate kind has exactly one verb, and which verb it has states which
-plane runs it (boundary spec §3): a DETERMINISTIC kind is *executed* here
-(``execute(gate_cfg, cwd, base_ref) -> GateResult``); a JUDGMENT kind is
-never executed by the rail — the /issue-loop orchestrator dispatches a
-subagent and the rail *validates* its return
-(``validate(gate_cfg, raw) -> GateResult``), rejecting a schema-violating
-return so the orchestrator re-asks. ``GateResult`` is a plain dict —
-``{id, kind, passed, summary, detail}`` — shared by both verbs so downstream
-consumers never care which produced it; judgment results add ``reasons``,
-the rejection's per-field detail (empty on a real verdict).
+Every gate kind has exactly one verb. A DETERMINISTIC kind is executed
+here (``execute(gate_cfg, cwd, base_ref) -> GateResult``). A JUDGMENT kind
+is never executed by the rail; the orchestrator dispatches a subagent and
+the rail validates its return (``validate(gate_cfg, raw) -> GateResult``),
+rejecting a schema violation so the orchestrator re-asks. ``GateResult`` is
+``{id, kind, passed, summary, detail}``; judgment results add ``reasons``,
+empty on a real verdict.
 """
 
 from __future__ import annotations
@@ -26,14 +23,9 @@ _NOT_FOUND = (127, 9009)
 
 
 def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict:
-    """``base_ref`` is unused — it is in the signature so both deterministic
-    executors share the registry's one calling convention.
-
-    ``expect`` (set only by the verify rail, never a loop.toml key) is a
-    substring stdout must carry for the gate to pass. A command the shell
-    cannot find fails with the shell's own "not found" line in the summary, so
-    a missing binary is named, never read as a plain non-zero exit.
-    """
+    """Run one command gate. ``base_ref`` is unused and keeps the executors'
+    shared signature. ``expect`` is a substring stdout must carry to pass; a
+    command the shell cannot find is named in the summary."""
     timeout_sec = gate.get("timeout_sec", 900)
     try:
         proc = subprocess.run(
@@ -43,11 +35,10 @@ def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict
             capture_output=True,
             text=True,
             timeout=timeout_sec,
-            check=False,  # a failing command IS the gate result, not an exception
+            check=False,
         )
     except subprocess.TimeoutExpired:
-        # a timeout is a gate RESULT too — the orchestrator consumes JSON,
-        # never tracebacks
+        # A timeout is a gate result; the orchestrator consumes JSON, never tracebacks.
         return {
             "id": gate["id"],
             "kind": "command",
@@ -73,25 +64,21 @@ def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict
 
 
 # ---------------------------------------------------------------------------
-# The verify rail (dec-2f5bf66a): an issue's own `verify:` lines, run as
-# ad-hoc command gates. Strictness justification (dec-034ee0f7): the result
-# is the rail's, so the orchestrator cannot soften a red line into prose.
+# The verify rail: an issue's own `verify:` lines, run as command gates. The
+# result is the rail's, so the orchestrator cannot soften a red line into prose.
 
 _VERIFY_LINE = re.compile(r"^\s*(?:[-*]\s+(?:\[[ xX]\]\s+)?)?verify:\s*(.+?)\s*$")
-# The `--issue N` token a verify line may carry, however spelled (`=`, quotes,
-# extra spaces); the number is anchored so `--issue 400` never reads as 40.
+# The number is anchored so `--issue 400` never reads as 40.
 _ISSUE_TOKEN = re.compile(r"""--issue\s*=?\s*["']?(\d+)\b""")
-# The chain of issues whose lines are running, outermost first (comma-joined
-# in the environment so child processes see it): the fixed-point guard.
+# The chain of issues whose lines are running, comma-joined so child
+# processes see it: the fixed-point guard.
 VERIFY_ENV = "DEVLOOP_VERIFY_ISSUE"
 
 
 def parse_verify_lines(body: str) -> list[tuple[str, str]]:
-    """``[(command, expected_stdout_substring)]`` in body order; ``""`` when
-    the line carries no ``=>``. Prose that merely mentions ``verify:`` does
-    not start a line with it, and a line inside a ``` fence is an example,
-    so neither parses. The LAST `` => `` always splits: a command that needs
-    a literal `` => `` must end with an expected-text clause of its own."""
+    """``[(command, expected_stdout_substring)]`` in body order, ``""`` when
+    a line carries no ``=>``. A line inside a ``` fence does not parse. The
+    last `` => `` splits."""
     lines, fenced = [], False
     for line in body.splitlines():
         if line.lstrip().startswith("```"):
@@ -106,16 +93,10 @@ def parse_verify_lines(body: str) -> list[tuple[str, str]]:
 
 
 def run_verify_lines(number: int, body: str, cwd: Path) -> dict:
-    """``check --issue``'s result: ``{issue, results: [GateResult…], summary}``
-    — one command GateResult per line (``id: verify:<k>``, k = the line's
-    position in the body; the tests gate's runner and default timeout);
-    ``summary`` reads ``no verify lines`` for a body without any (a pass).
-
-    A line re-running ``check --issue`` on an issue already in the chain
-    (``VERIFY_ENV``) is a fixed point: excluded, counted in the summary. The
-    backstop for a spelling the token match cannot see is the chain itself:
-    an issue entered a second time over is ONE red result naming the cycle.
-    """
+    """Run an issue's verify lines: ``{issue, results: [GateResult…], summary}``,
+    one result per line as ``verify:<k>``. A line that re-enters an issue
+    already in ``VERIFY_ENV`` is excluded and counted; an issue entered twice
+    over is one red result naming the cycle."""
     chain = [int(n) for n in os.environ.get(VERIFY_ENV, "").split(",") if n.strip()]
     if chain.count(number) >= 2:
         cycle = " → ".join(str(n) for n in [*chain, number])
@@ -146,13 +127,9 @@ def run_verify_lines(number: int, body: str, cwd: Path) -> dict:
 
 
 def evaluate_diff_gate(gate: dict, numstat: str) -> dict:
-    """Pure evaluation of `git diff --numstat` output: a forbidden-paths check
-    only (dec-cf8f0d33 dropped the line cap — size is a triage signal, never a
-    block). The changed-line count is reported for the PR body.
-
-    ``forbidden_paths`` patterns use :func:`devloop.paths.match`'s three forms;
-    every shipped entry is the trailing-``/`` prefix case (the old ``startswith``).
-    """
+    """Evaluate ``git diff --numstat`` output against ``forbidden_paths``
+    (:func:`devloop.paths.match` forms). Size never blocks; the changed-line
+    count is reported for the PR body."""
     forbidden = gate.get("forbidden_paths", [])
     touched_forbidden, total = [], 0
     for line in numstat.strip().splitlines():
@@ -185,9 +162,8 @@ def run_diff_gate(gate: dict, cwd: Path, base_ref: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Judgment kinds — validated here, executed by the orchestrator. Nothing is
-# coerced: an invented enum or a blank evidence line is rejected naming its
-# field path, because coercing it would put the judge's mistake in the
+# Judgment kinds: validated here, executed by the orchestrator. Nothing is
+# coerced, because a coerced value would put the judge's mistake in the
 # trajectory as fact.
 
 VERDICTS = ("met", "not-met")
@@ -244,19 +220,12 @@ def _enum(entry: dict, where: str, key: str, allowed: tuple[str, ...],
 
 
 def validate_judge(gate: dict, raw: dict) -> dict:
-    """The one judgment stage (dec-611cbd8a, dec-2d4bc03d):
-    ``{criteria: [{id, verdict: met|not-met, evidence}],
-    findings: [{severity: problem|note, finding}]}``.
+    """Validate a judge return: ``{criteria: [{id, verdict: met|not-met,
+    evidence}], findings: [{severity: problem|note, finding}]}``.
 
-    ``criteria`` is one entry per acceptance criterion and carries the whole
-    authority: the gate passes per the gate's ``threshold`` — ``majority``
-    needs strictly more than half met, anything else is read as ``all`` (gates
-    are file-only config, a trusted input — unlike the subagent return here).
-    ``findings`` is everything the judge saw outside the contract: schema-
-    checked so it can travel to the PR's findings comment and the triage lane
-    as data, but never a verdict — a ``problem`` blocks nothing here; it is the
-    red lane's signal (dec-39140113). The list may be empty; it may not be
-    missing, so silence never reads as a clean review.
+    The gate passes per ``threshold``: ``majority`` needs more than half met,
+    anything else reads as ``all``. ``findings`` never decides the verdict;
+    it may be empty but not missing, so silence never reads as a clean review.
     """
     reasons: list[str] = []
     verdicts = []
@@ -280,11 +249,9 @@ def validate_judge(gate: dict, raw: dict) -> dict:
 
 
 def validate_simplify(gate: dict, raw: dict) -> dict:
-    """``{outcome: applied|reverted|lean, lines_delta, cuts[], kept[]}`` — the
-    same envelope the trajectory trace stores, so a validated return carries
-    into the note unchanged. Never fails the pipeline (``required = false``):
-    a schema-valid return always passes, its "failure" mode being the revert.
-    """
+    """Validate a simplify return: ``{outcome: applied|reverted|lean,
+    lines_delta, cuts[], kept[]}``. A schema-valid return always passes; its
+    failure mode is the revert."""
     reasons: list[str] = []
     outcome = _enum(raw, "payload", "outcome", SIMPLIFY_OUTCOMES, reasons)
     delta = raw.get("lines_delta")
@@ -297,18 +264,12 @@ def validate_simplify(gate: dict, raw: dict) -> dict:
     return _verdict(gate, reasons, passed=True, summary=f"{outcome}: {delta} lines")
 
 
-# The two registries the protocol's structural claim reduces to: every kind has
-# exactly one verb, and which verb it has states which plane runs it. `check`
-# dispatches ONLY through DETERMINISTIC — any other kind, judgment-side or typo,
-# gets the LLM-judged error; `validate` dispatches ONLY through JUDGMENT.
+# `check` dispatches only through DETERMINISTIC; `validate` only through JUDGMENT.
 DETERMINISTIC = {"command": run_command_gate, "diff": run_diff_gate}
 JUDGMENT = {"judge": validate_judge, "simplify": validate_simplify}
 
-# The keys each kind's verb reads (beyond the shared id/kind/required). The
-# config loader rejects a gate entry carrying any other key, naming it — so a
-# knob the subtractive pass deleted (block_on, max_changed_lines,
-# smells_baseline) is refused rather than silently inert, the same posture
-# `--set` has always taken on an unknown scalar knob.
+# The keys each kind's verb reads beyond id/kind/required; the config loader
+# refuses any other key by name, so a deleted knob is never silently inert.
 GATE_KEYS = {
     "command": {"cmd", "timeout_sec"},
     "diff": {"forbidden_paths"},
@@ -319,13 +280,8 @@ COMMON_GATE_KEYS = {"id", "kind", "required"}
 
 
 def validate(gate: dict, raw: object) -> dict:
-    """Validate one judgment gate's subagent return (the JUDGMENT dispatch).
-
-    Every schema starts from a JSON object, so that guard lives here once;
-    per-kind validators take it from there. Raises ``KeyError`` for a
-    deterministic or unknown kind — callers check membership first, exactly
-    as ``check`` does against ``DETERMINISTIC``.
-    """
+    """Validate one judgment gate's subagent return. A non-object is rejected
+    here; raises ``KeyError`` for a deterministic or unknown kind."""
     if not isinstance(raw, dict):
         return reject(gate, [f"payload: expected a JSON object, got {type(raw).__name__}"])
     return JUDGMENT[gate["kind"]](gate, raw)
