@@ -183,16 +183,16 @@ implementer worktree — a deterministic baseline probe of origin/main.
   or a Routine once training mode has been retired. Per-run caps
   (`max_issues_per_run`) bound token burn regardless of trigger.
 
-## v1.1.0 alignment
+## Pocock skills
 
-Updated for Pocock skills v1.1.0 (2026-07-08): native blocking edges +
-sub-issues read unioned with body text; claim by assignment; seam-scoped tests
-and the tautological-test anti-pattern in implementer standing orders.
-Wayfinder needs no integration: its implementation tickets speak the same
-wire protocol (native edges, assignee claims), so they land on the same
-frontier unaided. The 2026-09 revisit (dec-611cbd8a, dec-cf8f0d33) fused
-acceptance and review into one judge and made the acceptance criteria the
-definition of done.
+The mint side is Matt Pocock's skills; the loop reads only what they publish.
+Native blocking edges and sub-issues have been the wire protocol since v1.1.0
+(2026-07-08), the assignee is the claim, and Wayfinder tickets land on the same
+frontier unaided. The owner's fork of ten skills, which adds the ticket shape,
+the verify grammar and vault routing the loop consumes, is described in the
+workspace README under "Pocock skills". The 2026-09 revisit fused acceptance
+and review into one judge and made the acceptance criteria the definition of
+done.
 
 ## Origin
 

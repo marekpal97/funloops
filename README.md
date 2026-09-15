@@ -62,6 +62,52 @@ The memory feed is an **optional host extension**, not a dangling stub: a loop
 runs fully without one, and `prime` degrades to `primed=false` rather than
 failing when no index resolves.
 
+## Pocock skills: the mint side, and the fork that serves the loop
+
+devloop ships no planning skill. Tickets are minted by Matt Pocock's agent
+skills (`mattpocock-skills` 1.2.3 in `claude-plugins-official`, MIT, Copyright
+(c) 2026 Matt Pocock). The loop reads what they publish and nothing more.
+
+**The fork.** On the owner's machine ten of those skills are forked in a
+separate git repo outside this workspace (`~/.agents/skills`, symlinked into
+`~/.claude/skills` so the bare names shadow the plugin). Its first commit is
+the pristine upstream; every later commit is the delta. The fork is not part of
+funloops, is not needed to run the loop, and is never edited from this repo. It
+changes the skills in five ways, each one something the loop consumes:
+
+1. **Context goes through the thinkweave vault.** The glossary is the concept
+   ontology and an ADR is a vault decision; no `CONTEXT.md`, `docs/adr/` or
+   `.out-of-scope/` is written. `grilling` mints a decision at each real fork;
+   `to-spec` cites decisions and never mints. The loop's prime step resolves the
+   cited ids into the dispatch pack.
+2. **One ticket shape.** `## What` (at most five sentences), `## Why` (at most
+   three), `## Acceptance criteria`, `## Interfaces`, `## Blocked by`,
+   `## Decisions`. `to-tickets` defines the verify grammar the rail runs:
+   `verify: <command>` passes on exit 0, and ` => <substring>` also requires
+   that text in stdout. A criterion is a verify line wherever a command can
+   check it, and an observable the judge can cite where none can. A backticked
+   repo-relative path under Interfaces is what puts that file in the pack's map.
+3. **The board grammar.** Blocking edges are native issue dependencies, tickets
+   are native sub-issues of their spec, and a spec carries the `epic` label,
+   never a runnable rung. `devloop board doctor` enforces the same grammar.
+4. **Briefs in the same shape.** `triage` writes its agent brief into the issue
+   body, in the ticket shape above, because the loop reads the body and never
+   the comments. `tdd` names the loop's simplify stage and lets the acceptance
+   criteria name the seams.
+5. **Model-invocable.** The upstream `disable-model-invocation` flag is removed
+   so the skills can be called from inside a larger prompt.
+
+**Without the fork** the upstream skills still feed the loop: native edges
+have been published since v1.1.0, prose criteria are scored by the judge, an
+issue with no verify lines passes that rail, and an issue with no decision ids
+dispatches unprimed. The fork adds enforcement, not compatibility.
+
+**Maintenance.** On a plugin upgrade, diff the two plugin cache versions and
+three-way merge onto the fork. The `/issue-loop` command doc stays free of any
+vault or skill dependency; a test pins that. The ponytail persona and review
+skill are a separate vendored dependency with their own provenance headers
+under `packages/devloop/docs/agents/`.
+
 ## License
 
 MIT.
