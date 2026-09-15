@@ -159,6 +159,14 @@ def test_frontier_wave_ordering_and_limit():
     assert [e["number"] for e in limited["frontier"]] == [6, 8]
 
 
+def test_plan_reports_the_whole_frontier_not_the_run_cap(monkeypatch, capsys):
+    monkeypatch.setattr(github, "fetch_issues", lambda: [_issue(n) for n in range(1, 6)])
+    assert cli.main(["plan", "--set", "max_issues_per_run=3"]) == 0
+    assert [e["number"] for e in json.loads(capsys.readouterr().out)["frontier"]] == [1, 2, 3, 4, 5]
+    assert cli.main(["plan", "--limit", "2"]) == 0
+    assert [e["number"] for e in json.loads(capsys.readouterr().out)["frontier"]] == [1, 2]
+
+
 def test_frontier_native_blocker_missing_from_snapshot_blocks_and_warns():
     """A native edge can point outside this repo's snapshot (cross-repo, or a
     deleted issue). GitHub counted it as blocking, so the rail must too —

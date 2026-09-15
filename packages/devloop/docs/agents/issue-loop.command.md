@@ -58,7 +58,9 @@ same effective config. Never edit `loop.toml` on the user's behalf. Gates are
 file-only (a trust boundary, not a run-time posture); the rail rejects unknown
 keys by name on both paths, and `--stacked` without `--dag` is an error per §1e.
 Then `uv run devloop config <set-flags>` (resolved knobs + gates) and `uv run
-devloop plan <set-flags>` (frontier / blocked / claimed).
+devloop plan <set-flags>` (frontier / blocked / claimed). `plan` reports the
+whole frontier; the orchestrator takes the first `max_issues_per_run` of the
+reported frontier, in the order reported, and the rest wait for the next run.
 
 If the user passed an issue number, the frontier is just that issue (still
 verify via `plan` that it is unblocked and unclaimed — if not, say so and stop).

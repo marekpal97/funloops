@@ -402,7 +402,6 @@ def main(argv: list[str] | None = None) -> int:
         # Compact, like `gh --json`: a verify line matches ` => ` as a raw substring, so lists stay on one line.
         print(json.dumps(cfg))
     elif args.cmd == "plan":
-        limit = args.limit if args.limit is not None else cfg["loop"]["max_issues_per_run"]
         issues = github.fetch_issues()
         if args.dag is not None:
             try:
@@ -413,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.assume_done:
             done = {int(n) for n in args.assume_done.split(",") if n.strip()}
             issues = dag.apply_assume_done(issues, done)
-        result = dag.compute_frontier(issues, cfg, limit=limit)
+        result = dag.compute_frontier(issues, cfg, limit=args.limit)
         print(json.dumps(result, indent=2))
     elif args.cmd == "claim":
         # The assignee is the claim; labels.claimed stays readable for `plan`.
