@@ -2562,25 +2562,67 @@ def test_issue_loop_doc_1b_passes_the_tickets_decisions_to_the_decisions_leg():
     assert "`--decisions`" in section
 
 
-def test_loop_comments_end_at_the_gate_table():
-    """funloops#48 (dec-f7e7dd53): the loop's issue comment is the run id, the
-    tip sha and the gate table, with nothing after the table — no PR url, no
-    commit list, no explanation. Both templates: §1d ship and §1e slice."""
+def test_issue_comments_carry_no_gate_table():
+    """Gate evidence lives in the PR and nowhere else: every issue comment
+    template in §1d (ship) and §1e (slice, PR link) is one line — run id plus
+    a tip sha or a PR link — and none carries a gate table. The one exception
+    is §1c's route-to-human comment, where no PR exists."""
     for marker in ("### 1d.", "### 1e."):
         section = " ".join(_command_doc_subsection(marker).split())  # reflow-safe
         bodies = re.findall(r'gh issue comment <N> --body "([^"]*)"', section)
         assert bodies, marker
         for body in bodies:
-            assert body.endswith("<gate table>"), (marker, body)
-            assert "<run-id>" in body and "<sha>" in body, (marker, body)
+            assert "table" not in body, (marker, body)
+            assert "<run-id>" in body, (marker, body)
+            assert "<sha>" in body or "<pr-url>" in body, (marker, body)
+    ship = " ".join(_command_doc_subsection("### 1d.").split())
+    assert 'shipped at <sha>, PR <pr-url>"' in ship
+    assert "Issue comments carry no gate table" in ship
+    stacked = " ".join(_command_doc_subsection("### 1e.").split())
+    assert "PR at end of run" in stacked
+    assert 'run <run-id>: PR <pr-url>"' in stacked
+    routed = " ".join(_command_doc_subsection("### 1c.").split())
+    assert 'routed to human at <sha>. <gate evidence table>"' in routed
+    assert "the one issue comment that carries a gate table" in routed
+
+
+def test_pr_body_carries_each_fact_once():
+    """The PR body is a fixed shape and nothing else. pr-per-issue (§1d):
+    `Closes`, one sentence on what the code now does, one gate table (gate |
+    verdict | summary) whose summary cells carry only what varies, the
+    simplify line, the findings line, the attribution. Stacked (§1e): one
+    table for the stack, one row per issue and one column per gate, no
+    per-issue tables, one sentence per issue with no heading."""
+    ship = " ".join(_command_doc_subsection("### 1d.").split())
+    assert "The PR body carries each fact once, and nothing else" in ship
+    assert "not the issue title" in ship
+    assert "gate | verdict | summary" in ship
+    assert "A summary cell carries only what varies" in ship
+    assert "Never `no forbidden paths`, never `exited 0`, never the command text" in ship
+    assert "`simplify: -<N> lines`, `simplify: lean`, or the gate's `revert_note`" in ship
+    assert "`Findings: see comment` or `Findings: none`" in ship
+    assert "no notes addressed to the orchestrator" in ship
+    stacked = " ".join(_command_doc_subsection("### 1e.").split())
+    assert "each fact once, and nothing else" in stacked
+    assert "one sentence per issue" in stacked
+    assert "not its title, no heading, no paragraph" in stacked
+    assert "one gate table for the stack, one row per issue and one column per gate" in stacked
+    assert "no per-issue tables" in stacked
+    assert "`Findings: see comment` or `Findings: none`" in stacked
+    assert "`Not included` line only when part of the DAG remains" in stacked
+    assert "no `###` per issue, no orchestrator notes" in stacked
+    # Titles: the issue title, or the epic/root title plus the issue numbers.
+    assert '--title "<issue title>"' in ship
+    assert "the issue numbers in parentheses" in stacked
+    assert "never clauses joined by semicolons" in stacked
 
 
 def test_findings_are_one_pr_comment_after_pr_open():
     """funloops#55 (dec-39140113, dec-f7e7dd53): findings have one home. §1d
-    posts them as one `gh pr comment` after `gh pr create`, a heading per
-    severity and a bullet per finding, `Findings: none` when empty; the PR
-    body's list says they live in that comment. §1e's one-PR bullet says one
-    sentence and one gate table per issue."""
+    posts them as one `gh pr comment` after `gh pr create`, one heading per
+    severity present and one bullet per finding; a hedged finding is dropped,
+    a filed one is its issue number, and no findings means no comment. §1e
+    drops a stack-tip finding that restates a slice finding."""
     raw = _command_doc_subsection("### 1d.")
     assert raw.index("gh pr create") < raw.index("gh pr comment")
     assert "### problem" in raw and "### note" in raw
@@ -2588,18 +2630,24 @@ def test_findings_are_one_pr_comment_after_pr_open():
     ship = " ".join(raw.split())
     assert "findings once" in ship
     assert "`none`/`note`/`problem`" in ship  # the signals table's severity values
-    assert "PR body" in ship and "no longer lists" in ship
+    assert "the observation first, then the rule number or the exercised path" in ship
+    assert "No hedge and no self-retraction" in ship
+    assert "is dropped, not softened" in ship
+    assert "already filed as an issue is the issue number alone" in ship
+    assert "A PR with no findings gets no comment" in ship
     stacked = " ".join(_command_doc_subsection("### 1e.").split())
-    assert "one sentence per issue" in stacked
-    assert "one gate table per issue" in stacked
+    assert "stack-tip finding that restates a slice finding is dropped" in stacked
 
 
 def test_judge_brief_says_a_finding_is_one_sentence():
     """funloops#48 (dec-f7e7dd53): the judge brief (§1c) says a finding is one
     sentence naming the rule or the exercised path — the same finding used to
-    arrive as a paragraph and then appear three times."""
-    section = " ".join(_command_doc_subsection("### 1c.").split())
+    arrive as a paragraph and then appear three times — and the observation
+    comes first, with no clause that withdraws it."""
+    raw = _command_doc_subsection("### 1c.").replace("\n> ", " ")  # the brief is a blockquote
+    section = " ".join(raw.split())
     assert "A finding is one sentence" in section
+    assert "The observation first; no clause that withdraws it." in section
 
 
 def test_persona_return_section_carries_the_three_sentence_rules():
