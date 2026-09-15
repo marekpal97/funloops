@@ -117,7 +117,7 @@ threshold) touches no code.
 | `diff` | rail (deterministic) | forbidden paths (no line cap) |
 | `command` | rail (deterministic) | any shell command; pass = exit 0 — the tests gate, and the issue's own `verify:` lines |
 | `judge` | fresh LLM judge | the one judgment stage: per-criterion verdicts against the issue's acceptance criteria (`threshold = all\|majority`) plus advisory findings that never block (dec-611cbd8a) |
-| `simplify` | fresh subagent (vendored ponytail-review) | over-engineering trim — the one **applying** gate. Runs last; `required = false`; shrinks the verified diff, re-runs `rerun` gates, reverts to the pre-simplify tip if either goes red |
+| `simplify` | fresh subagent (vendored ponytail-review) | over-engineering trim — the one **applying** gate. Runs last; `required = false`; shrinks the verified diff, re-runs the `rerun` gates (the tests gate), reverts to the pre-simplify tip if one goes red; stacked delivery runs it once, at the stack tip |
 
 Design rules baked in:
 
@@ -140,7 +140,7 @@ Design rules baked in:
   earned trust; the guardrail gates (`diff`, caps) stay.
 - **Simplify is safe by construction.** The one *applying* gate runs last,
   after verification, and can only shrink an already-green diff. It re-runs
-  the `rerun` gates on the trim and reverts to the pre-simplify tip if either
+  the `rerun` gates on the trim and reverts to the pre-simplify tip if one
   goes red — so it never blocks shipping and never regresses behavior. Its
   delete-list comes from the **vendored** `ponytail-review.command.md` beside
   this file; ponytail's own plugin/hook installer is **never** run — its

@@ -16,13 +16,13 @@ from devloop import paths
 # rung. Labels are APPLIED by the orchestrator (via gh); the rail only decides.
 # There is no green (auto-merge) lane: dec-cf8f0d33 deleted it unused.
 
-# Recognized enum values. "none"/"minor" findings stay yellow; "met" is the
-# only clean judge verdict. A value OUTSIDE these sets is not benign —
-# LLM-assembled signals make enum drift ("high", "partial", "blocker")
-# realistic, so an unrecognized value fails closed to red rather than
-# slipping through as a skim.
-_VALID_REVIEW = {"none", "minor", "major", "critical"}
-_RED_REVIEW = {"major", "critical"}
+# Recognized enum values. "none"/"note" findings stay yellow, any "problem"
+# is red (dec-39140113); "met" is the only clean judge verdict. A value
+# OUTSIDE these sets is not benign — LLM-assembled signals make enum drift
+# ("high", "partial", the retired "major") realistic, so an unrecognized
+# value fails closed to red rather than slipping through as a skim.
+_VALID_REVIEW = {"none", "note", "problem"}
+_RED_REVIEW = {"problem"}
 _VALID_ACCEPTANCE = {"met", "uncertain", "not-met"}
 _RED_ACCEPTANCE = {"uncertain", "not-met"}
 
@@ -54,7 +54,7 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
       - ``diff_lines`` int — total changed lines in the PR's diff [opt, →0]
       - ``files_touched`` list[str] — repo-relative paths changed [opt, →[]]
       - ``tests_touched`` bool — the change carries test coverage [opt, →False]
-      - ``review_severity`` str — worst judge finding: none|minor|major|critical [REQUIRED]
+      - ``review_severity`` str — worst judge finding: none|note|problem [REQUIRED]
       - ``baseline_green`` bool — tests gate green on the pristine worktree [REQUIRED]
       - ``acceptance`` str — judge criteria verdict: met|uncertain|not-met [REQUIRED]
     """

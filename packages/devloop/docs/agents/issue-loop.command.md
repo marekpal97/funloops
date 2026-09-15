@@ -134,11 +134,7 @@ title and first summary line (an id the index does not hold is listed as
 such), and emits JSON: `block` (markdown to
 splice), `primed`, `served` (the insight and decision ids surfaced). It always
 serves what it finds; there is no held-out run. **Write `block` to a file and pass it to
-the pack below as `--prime <file>`**, and add this
-standing order: *Check prior decisions for every file you touch
-(`weave_graph(file_path=…, filter='decisions_for_file')`; fall back to `weave
-decisions --file <path>` if MCP is absent). Do not re-litigate a settled
-decision — surface conflicts instead.* Empty `block`: splice nothing. Record
+the pack below as `--prime <file>`.** Empty `block`: splice nothing. Record
 `primed` and `served` for §3. With `--buffer` (the loop session's buffer JSONL)
 the rail also logs the served ids as a `loop_prime` event the indexer projects
 to `context_served(source='loop-prime')`; `--dry-run` suppresses that write.
@@ -216,13 +212,19 @@ verbatim:
 > The contract is the issue's acceptance criteria plus the Interfaces block's
 > intent. Judge the diff against that contract and nothing else. Return one
 > verdict per criterion, `"met"` or `"not-met"`, each with one line of
-> evidence. A `not-met` must cite the criterion and the observable — a
-> command's output, a test, a diff line; if you cannot cite one, it is not a
-> `not-met`. Where a criterion is prose for an executable outcome and no verify
-> line ran it, run it yourself and cite the output. Everything else you notice
+> evidence. A criterion is not met when the code does not do what it says.
+> Where a criterion is prose and no verify line ran it, run it yourself and
+> cite the output.
+> Code the diff changes that no longer works as the issue intends is `not-met`
+> too, even when no criterion names the case: return it as one more criterion
+> under the reserved id `intent`, and only when you have the failure in hand.
+> Every `not-met` names a command, a test, or output; without one it is not a
+> `not-met`, it is a finding. Everything else you notice
 > — a risk, a smell, a better design, an edge case outside the contract — is a
-> finding with a severity (`"critical"` / `"major"` / `"minor"` / `"nit"`):
-> list it, do not fail the contract over it. A finding is one sentence naming
+> finding with one of two severities: `"problem"` (the code is wrong or
+> fragile in a way you can describe but did not demonstrate; a human reads it
+> before merge) or `"note"` (style, naming, a cleaner shape). List it, do not
+> fail the contract over it. A finding is one sentence naming
 > the rule in the Rules section it violates (by number) or the exercised path
 > it breaks (the documented verb and the normal state that reaches it); a
 > finding that names neither is dropped, not listed. Findings never block, whatever their
@@ -230,14 +232,17 @@ verbatim:
 > exactly this object:
 
 ```json
-{"criteria": [{"id": "AC1", "verdict": "met", "evidence": "<one line>"}],
- "findings": [{"severity": "minor", "finding": "<prose>"}]}
+{"criteria": [{"id": "AC1", "verdict": "met", "evidence": "<one line>"},
+              {"id": "intent", "verdict": "not-met",
+               "evidence": "<the command or test you ran and its output>"}],
+ "findings": [{"severity": "note", "finding": "<prose>"}]}
 ```
 
 `evidence` and `finding` are never blank; `findings` may be empty, not absent.
-**Only a criterion `not-met` blocks.** Findings never do, whatever their
-severity: they go to the PR body under *Findings*, the triage lane (§1d) and
-the follow-up path — never a fix round.
+The rail accepts `intent` as it accepts any criterion id.
+**Only a criterion `not-met` blocks.** Findings
+never do, whatever their severity: they go to the PR's findings comment and
+the triage lane (§1d) — never a fix round, never an issue.
 
 **Every judgment return is schema-checked before it becomes a verdict.** (For
 `simplify` the **vendored** skill owns its output format, a prose delete-list;
@@ -258,30 +263,28 @@ A second rejection is a failed gate: route to human with the reasons.
 after every required gate is green**, and is safe by construction: it can only
 *shrink* the verified diff. `required = false` — its "failure" mode is a revert.
 
-1. **Snapshot the tip.** `pre=$(git -C <worktree> rev-parse HEAD)` (per-slice in
-   stacked mode, so a revert only unwinds the trim, never prior slices).
+1. **Snapshot the tip.** `pre=$(git -C <worktree> rev-parse HEAD)`.
 2. **Get the delete-list.** Dispatch a **fresh subagent** with the text of the
    **vendored** `ponytail-review.command.md` skill beside this file (host
-   `/simplify` is the fallback) and the slice diff — `git diff
-   origin/main...HEAD`; in stacked mode `git diff <tip-before-this-issue>...HEAD`
-   per §1e. Condense its delete-list and `net: -<N> lines possible` tally into
+   `/simplify` is the fallback) and the branch diff `git diff
+   origin/main...HEAD`. Condense its delete-list and `net: -<N> lines possible` tally into
    `{"outcome": "applied", "lines_delta": -<N>, "cuts": [{"what": …, "why":
    …}], "kept": [{…}]}` and `validate` it. `outcome` is `"lean"` when the
    subagent said `Lean already. Ship.` (skip the rest, note "simplify: lean
    already" in the PR body); `"applied"` when you apply the delete-list;
    `"reverted"` is step 4's terminal value after a red re-verify.
 3. **Apply** the delete-list as a single commit on the branch.
-4. **Re-verify and keep or revert.** Re-run the gate's `rerun` list (`tests`
-   via the rail, then `judge` via a fresh judge subagent) on the shrunk diff.
-   Both green → keep, noting `simplify: -<N> lines, tests+judge green` in the PR
-   body. Either red → `git -C <worktree> reset --hard $pre`, ship the
-   **pre-simplify** diff, and add the gate's `revert_note`
-   (`⚠ simplify-reverted`) to the PR body naming the failing gate.
+4. **Re-verify and keep or revert.** Re-run the gate's `rerun` list — the
+   `tests` gate via the rail, nothing else — on the shrunk diff. Green → keep,
+   noting `simplify: -<N> lines, tests green` in the PR body. Red → `git -C
+   <worktree> reset --hard $pre`, ship the **pre-simplify** diff, and add the
+   gate's `revert_note` (`⚠ simplify-reverted`) to the PR body.
 
 **On a required-gate failure:** feed the evidence (gate id, summary, detail, the
 failed criteria with their evidence, the red verify lines) back to the
 implementer subagent (SendMessage to the same agent — it keeps its context) for
-a fix round, re-splicing **the pack** (§1b). Re-run the pipeline
+a fix round, re-splicing **the pack** (§1b). An `intent` entry rides that round
+like any other criterion. Re-run the pipeline
 **from the first failed gate**; the re-judge covers **only the failed criteria**
 (the envelope then carries just those entries) — it does not re-open met ones
 and does not hunt. `max_fix_rounds` is the budget; you never extend it. After
@@ -295,7 +298,7 @@ gh issue comment <N> --body "<gate evidence table + what was attempted>"
 
 Then continue with the next frontier issue — one stuck issue must not stall the
 loop. **Three exits, no others:** **ship** (every criterion met, no findings);
-**ship with findings** (criteria met, findings listed in the PR body); **route
+**ship with findings** (criteria met, findings in the PR's findings comment); **route
 to human** (a criterion stays `not-met` past `max_fix_rounds`, or a judge return
 stays schema-rejected after a re-ask).
 
@@ -309,16 +312,30 @@ comment the evidence + worktree path on the issue, report — do not push). Else
 ```bash
 git push -u origin <branch_prefix><N>
 gh pr create --draft --title "<issue title> (#<N>)" --body "<body>"
+gh pr comment <pr-url> --body "<findings comment>"
 gh issue comment <N> --body "🤖 issue-loop run <run-id>: shipped at <sha>. <gate table>"
 ```
 
-The comment is the run id, the tip sha and the gate table, nothing after the
-table: `Closes #<N>` links the PR to the issue natively, and the PR body owns
-the rest. PR body must contain: `Closes #<N>`, one sentence on the change, the
-gate evidence table (gate | verdict | summary), a *Findings* list (severity +
-finding, from the judge; "none" when empty) that names findings once — a
-finding carried from an earlier slice that became an issue is cited by number,
-never restated — and the standard Claude Code attribution line.
+The issue comment is the run id, the tip sha and the gate table, nothing after
+the table: `Closes #<N>` links the PR to the issue natively, and the PR body
+owns the rest. PR body must contain: `Closes #<N>`, one sentence on the change,
+the gate evidence table (gate | verdict | summary), a *Findings* line that says
+the findings are the PR's findings comment (the PR body no longer lists them),
+and the standard Claude Code attribution line.
+
+**The findings comment — one per PR, posted right after `gh pr create`.** It
+names findings once (dec-f7e7dd53): a `###` heading per severity, a bullet per
+finding, the judge's sentence verbatim. A heading with no findings is omitted;
+a PR with no findings gets the comment `Findings: none`.
+
+```markdown
+### problem
+- <one sentence, the rule number or the exercised path it names>
+
+### note
+- <one sentence>
+```
+
 Keep the `ready-for-agent` label and the assignee — the issue closes on merge;
 if the PR is rejected, a human unassigns to re-queue. **No stack-tip simplify
 here — a documented no-op:** a pr-per-issue branch holds one slice, so §1c's
@@ -333,7 +350,7 @@ because you assemble these signals and enum drift is realistic:
 
 | key               | type      | required | meaning                                             |
 | ----------------- | --------- | -------- | --------------------------------------------------- |
-| `review_severity` | str       | **yes**  | worst judge finding: `none`/`minor`/`major`/`critical` |
+| `review_severity` | str       | **yes**  | worst judge finding: `none`/`note`/`problem`        |
 | `baseline_green`  | bool      | **yes**  | the tests gate was green on the pristine worktree   |
 | `acceptance`      | str       | **yes**  | judge criteria verdict: `met`/`uncertain`/`not-met` |
 | `fix_rounds`      | int       | no (→0)  | implement→gate→fix iterations (0 = first try)       |
@@ -347,7 +364,7 @@ every triggered rule. **You** apply the label via gh (`gh issue edit <N>
 default lane: a human skims, the reasons (fix rounds, a watched path, no
 coverage signal) telling them where to look; there is no auto-merge lane.
 **red** (`ready-for-human`): sensitive path (always), big diff, degraded
-baseline, `major`/`critical` finding, or uncertain/not-met judge verdict — the
+baseline, any `problem` finding, or uncertain/not-met judge verdict — the
 `on_gate_failure` label reused deliberately, the same "human, please look" rung
 as a gate failure. Thresholds and the sensitive-path list are `[triage]` knobs
 in `loop.toml`, per-host, never hardcoded.
@@ -375,39 +392,33 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
 - **Per-issue gates, scoped diffs.** Run `check --gate diff-guard --base-ref
   <tip-before-this-issue>` so the forbidden-paths check applies per slice; the
   tests gate always runs on the whole branch (earlier slices must stay green —
-  that IS the stacking guarantee). The judge and the per-slice simplify subagent
-  see the per-issue diff (`git diff <tip-before>...HEAD`) — cross-slice trimming
-  belongs to the stack-tip pass below.
+  that IS the stacking guarantee). The judge sees the per-issue diff (`git diff
+  <tip-before>...HEAD`). **Simplify does not run per slice** (dec-0ab8ab6b):
+  the one pass is the stack-tip pass below, where cross-slice trimming lives.
 - **Tracker visibility without PRs.** After each issue passes: `gh issue comment
   <N> --body "🤖 issue-loop run <run-id>: slice landed on loop/dag-<root> at
   <sha>. <gate table>"` — §1d's three parts. Do NOT close the issue; do NOT
   open a PR yet.
-- **Stack-tip simplify — whole-branch ponytail review before PR-open.** The
-  per-slice gate cannot see cross-slice redundancy (a later slice re-rolling an
-  earlier slice's helper). So once the stack is final — DAG exhausted, cap hit,
-  or an issue routed to human — run the §1c simplify flow ONCE more over the
-  whole branch, before pushing anything. Same gate entry, same steps, differing
-  in two inputs: the diff is the **cumulative merge-base diff** `git diff
-  origin/main...HEAD`, and the subagent also receives the **whole-file** contents
-  of every touched file (`git diff --name-only origin/main...HEAD`, then read
-  each) so it can judge duplication across slices. Keep-or-revert reuses the
-  gate config: snapshot `pre=$(git rev-parse HEAD)`, apply the delete-list as
-  one commit, re-run the gate's `rerun` list — `tests` on the whole branch via
-  the rail, `judge` as one fresh judge over EVERY completed issue's criteria
-  against the cumulative diff, per the gate's `threshold` — and on any red `git
-  reset --hard $pre` and add the gate's `revert_note` (`⚠ simplify-reverted`,
-  suffixed `(stack-tip)`) to the PR body. Slices that **individually passed**
-  simplify can still receive cuts here — that is the point. Note the win
-  (`stack-tip simplify: -<N> lines, tests+judge green`) or the revert.
+- **Stack-tip simplify — the stack's one pass, whole-branch, before PR-open.**
+  Once the stack is final — DAG exhausted, cap hit, or an issue routed to human
+  — run the §1c simplify flow ONCE over the whole branch, before pushing
+  anything. Same gate entry, same steps, one extra input: the diff is the
+  **cumulative merge-base diff** `git diff origin/main...HEAD`, and the
+  subagent also receives the **whole-file** contents of every touched file
+  (`git diff --name-only origin/main...HEAD`, then read each) so it can see a
+  later slice re-rolling an earlier slice's helper. Keep-or-revert is §1c's
+  steps 1, 3 and 4 on the whole branch (the gate's `rerun` list, `reset --hard
+  $pre` on red), the `revert_note` suffixed `(stack-tip)`. Note the win
+  (`stack-tip simplify: -<N> lines, tests green`) or the revert.
   <!-- host-extension: memory feed — needs a Thinkweave vault. -->
   Record the result in the final completed issue's §3 trace under
-  `stack_simplify` (same envelope as the per-slice `simplify` key).
+  `stack_simplify`.
   <!-- /host-extension -->
 - **One PR at the end** (DAG exhausted, cap hit, or an issue routed to human):
   push the branch and open a single draft PR whose body carries `Closes #A`
   lines for every completed issue, one sentence per issue, one gate table per
-  issue, findings once per §1d's list, and — if some of the DAG remains —
-  which issues are NOT included and why.
+  issue, and — if some of the DAG remains — which issues are NOT included and
+  why; then §1d's one findings comment, covering every completed issue.
   `training_mode` pauses once, here. Then remove the `loop/dag-<N>` worktree
   (same teardown rule as §1d).
 - **A failed issue doesn't poison the stack.** If an issue exhausts its fix
@@ -455,7 +466,7 @@ verdict flips, the simplify gate's cut/keep rationale, the TDD red-confirmation
 — the envelopes §1c already validated, condensed into
 
 ```json
-{"rounds": [{"gate": "judge", "finding": "<prose>", "severity": "minor",
+{"rounds": [{"gate": "judge", "finding": "<prose>", "severity": "note",
              "disposition": "accepted", "fixed_by": "<prose>"}],
  "criteria": [{"id": "AC1", "verdict": "met", "flipped_by_round": 1}],
  "simplify": {"outcome": "applied", "lines_delta": -12,
@@ -465,9 +476,11 @@ verdict flips, the simplify gate's cut/keep rationale, the TDD red-confirmation
 ```
 
 The rail only accepts and shapes it (unknown keys dropped; a non-dict trace is
-rejected). `stack_simplify` records the §1e stack-tip pass, at most once per
-stacked run, on the **final completed issue's** trajectory — which issue is
-final is orchestrator knowledge the rail never holds. It lands under the single
+rejected). `severity` is `problem` or `note`, the judge envelope's own values.
+`simplify` records the pr-per-issue branch's one pass and is absent per slice
+in stacked mode; `stack_simplify` records the §1e stack-tip pass, the one
+pass of a stacked run, on the **final completed issue's** trajectory — which
+issue is final is orchestrator knowledge the rail never holds. It lands under the single
 `trace` frontmatter key — the machine-readable half of the tracker's gate
 evidence, not a second prose owner. Omit `--trace-json` and the key is absent.
 
@@ -533,7 +546,7 @@ mechanical (a sweep op) or a human verdict (finding only):
 | Runnable, unblocked, unassigned and untouched for 14 days — re-verify it | `runnable-idle` | info |
 
 **Mint-time rule** (the other half of the contract): any route that mints a DAG
-— `/to-tickets`, `/wayfinder`, an interactive session, the §1d follow-up path —
+— `/to-tickets`, `/wayfinder`, an interactive session —
 publishes native edges + the runnable label at creation; `doctor` catches a
 route that forgot.
 
