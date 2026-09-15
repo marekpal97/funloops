@@ -14,7 +14,7 @@ Seams under test — the two the issue names:
    implementer only. The command doc names exactly one splice point, and
    the reading-the-ladder clause lives in the persona alone.
 
-Sources of truth are the issue's acceptance criteria (≤ 40 lines, seven
+Sources of truth are the issue's acceptance criteria (≤ 40 lines, eight
 rules, no citation in any rule's text), dec-1746aec3's amendment convention
 (watched_paths covers both layers), and the filesystem — never the code
 under test.
@@ -159,13 +159,13 @@ def test_constitution_is_one_screen():
     assert len(lines) <= 40, f"{len(lines)} lines — the criterion is ≤ 40"
 
 
-def test_seven_rules_and_no_citation_in_any_rule():
+def test_eight_rules_and_no_citation_in_any_rule():
     """dec-d79e8e7b's durability test: a packaged rule names the failure it
     prevents in general terms; provenance is a decision id in the PR that
     adds the rule, never in the text an installing repo cannot resolve."""
     rules = re.findall(r"^\d+\.\s.*$", pack.body(cli.PACKAGE_CONSTITUTION),
                        re.MULTILINE)
-    assert len(rules) == 7, f"{len(rules)} rules — the settled set is seven"
+    assert len(rules) == 8, f"{len(rules)} rules — the settled set is eight"
     for rule in rules:
         assert not CITATION.search(rule), f"rule cites an incident: {rule}"
 
@@ -177,11 +177,11 @@ def test_seven_rules_and_no_citation_in_any_rule():
 def test_overlay_rules_continue_the_packaged_numbering():
     """The Rules section is the resolved files' bodies in order, and this
     repo's real overlay continues the packaged numbering so a reader (and a
-    judge citing "rule 8") sees one list, never two starting at 1."""
+    judge citing "rule 9") sees one list, never two starting at 1."""
     numbers = [int(n) for p in cli.find_constitution(FUNLOOPS_ROOT)
                for n in re.findall(r"^(\d+)\.\s", pack.body(p), re.MULTILINE)]
     assert numbers == list(range(1, len(numbers) + 1))
-    assert len(numbers) > 7  # the overlay contributed
+    assert len(numbers) > 8  # the overlay contributed
 
 
 def test_exactly_one_splice_point_in_the_command_doc():
