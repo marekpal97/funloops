@@ -1,53 +1,33 @@
-"""Risk-lane classification of shipped PRs — pure over (signals, cfg).
+"""Risk-lane classification of shipped PRs, pure over (signals, cfg).
 
-Fail-closed on the three safety-critical signals (``baseline_green``,
+Fail-closed on the three required signals (``baseline_green``,
 ``acceptance``, ``review_severity``): a missing key or an off-enum value
-goes RED rather than green-eligible. That posture is part of the interface.
+goes red. There is no green lane; labels are applied by the orchestrator.
 """
 
 from __future__ import annotations
 
 from devloop import paths
 
-# The rail already computes every triage signal (gate results incl. the worst
-# judge finding, diff size, files touched, fix_rounds, degraded baseline). This
-# classifies each shipped PR into yellow/red so a human reviews only what
-# matters — escalation-not-gates, matching the loop's existing ready-for-human
-# rung. Labels are APPLIED by the orchestrator (via gh); the rail only decides.
-# There is no green (auto-merge) lane: dec-cf8f0d33 deleted it unused.
-
-# Recognized enum values. "none"/"note" findings stay yellow, any "problem"
-# is red (dec-39140113); "met" is the only clean judge verdict. A value
-# OUTSIDE these sets is not benign — LLM-assembled signals make enum drift
-# ("high", "partial", the retired "major") realistic, so an unrecognized
-# value fails closed to red rather than slipping through as a skim.
+# LLM-assembled signals drift ("high", "partial"), so a value outside these
+# sets fails closed to red rather than slipping through as a skim.
 _VALID_REVIEW = {"none", "note", "problem"}
 _RED_REVIEW = {"problem"}
 _VALID_ACCEPTANCE = {"met", "uncertain", "not-met"}
 _RED_ACCEPTANCE = {"uncertain", "not-met"}
 
-# The yellow label is loop-internal vocabulary. The red label is NOT here — it
-# is sourced from labels.on_gate_failure (classify_pr's red_label arg) so
-# triage-red and gate-failure share one label with no duplicate literal.
+# The red label is not here: it comes from labels.on_gate_failure so
+# triage-red and gate-failure share one label.
 TRIAGE_LABELS = {"yellow": "review-light"}
 
 
 def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
-    """Classify one shipped PR into a risk lane. Pure over (signals, cfg).
+    """Classify one shipped PR into a risk lane: ``{lane, label, reasons}``.
 
-    ``cfg`` is the resolved ``[triage]`` config section. ``red_label`` is the
-    tracker label for the red lane — sourced from ``labels.on_gate_failure`` by
-    the caller (default keeps the canonical ``ready-for-human``) so triage-red
-    and gate-failure stay one label. Red wins over yellow, and every triggered
-    rule is listed in ``reasons`` (short-circuit reasons: report all of them,
-    not just the first); a yellow with no reasons is the cleanest PR the loop
-    ships. Returns ``{lane, label, reasons}``.
-
-    **Fail-closed.** The three safety-critical signals — ``baseline_green``,
-    ``acceptance``, ``review_severity`` — are REQUIRED: an absent key or an
-    unrecognized enum value goes RED (naming the key/value), never a skim,
-    because LLM-assembled signals make that drift realistic. The rest default
-    benignly (absence is not a safety hole).
+    ``cfg`` is the resolved ``[triage]`` section; ``red_label`` is the red
+    lane's tracker label. Red wins over yellow and ``reasons`` lists every
+    triggered rule. The three required signals fail closed to red when absent
+    or off-enum; the rest default benignly.
 
     Signals schema:
       - ``fix_rounds`` int — implement→gate→fix iterations (0 = first try) [opt, →0]
@@ -59,9 +39,7 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
       - ``acceptance`` str — judge criteria verdict: met|uncertain|not-met [REQUIRED]
     """
     if red_label is None:
-        # Imported lazily: cli owns DEFAULT_CONFIG and imports this module,
-        # so a module-level import would be a cycle. The CLI always passes
-        # labels.on_gate_failure explicitly; this is the direct-caller default.
+        # Imported lazily: cli imports this module, so a top-level import is a cycle.
         from devloop.cli import DEFAULT_CONFIG
 
         red_label = DEFAULT_CONFIG["labels"]["on_gate_failure"]
@@ -70,7 +48,6 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
     files = signals.get("files_touched") or []
     tests_touched = bool(signals.get("tests_touched", False))
 
-    # --- red: any hard-escalation rule. List them all. -----------------------
     red: list[str] = []
     sensitive = paths.hits(files, cfg.get("sensitive_paths", []))
     if sensitive:
@@ -78,8 +55,7 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
     if diff_lines >= cfg["red_min_diff_lines"]:
         red.append(f"large diff: {diff_lines} lines >= {cfg['red_min_diff_lines']}")
 
-    # baseline_green — required; missing, non-bool (a truthy "false" string must
-    # not pass), or False → red.
+    # A truthy "false" string must not pass, so the type is checked too.
     if "baseline_green" not in signals:
         red.append("baseline_green signal missing (fail-closed)")
     elif not isinstance(signals["baseline_green"], bool):
@@ -87,7 +63,6 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
     elif not signals["baseline_green"]:
         red.append("degraded baseline (tests not green on the pristine worktree)")
 
-    # review_severity — required; missing or off-enum → red.
     if "review_severity" not in signals:
         red.append("review_severity signal missing (fail-closed)")
     else:
@@ -97,7 +72,6 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
         elif review in _RED_REVIEW:
             red.append(f"review severity {review}")
 
-    # acceptance — required; missing or off-enum → red.
     if "acceptance" not in signals:
         red.append("acceptance signal missing (fail-closed)")
     else:
@@ -110,7 +84,6 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
     if red:
         return {"lane": "red", "label": red_label, "reasons": red}
 
-    # --- yellow: a human skims. List what should draw the eye. ---------------
     yellow: list[str] = []
     if fix_rounds > 0:
         yellow.append(f"{fix_rounds} fix round(s)")

@@ -29,3 +29,5 @@
 6. **Never fail open.** A degraded path announces itself. An error swallowed into a clean, empty result is a bug, not a fallback.
 
 7. **Contracts are declared, not narrated.** A convention stated in prose gets a schema, a declaration, or a test. Data another stage consumes travels as a declared shape, never as prose the next stage re-parses. Siblings share one signature; a special case at the call site is a defect. Docstrings say what; decisions say why.
+
+8. **Code documents itself.** A docstring says what a thing does, in one or two sentences. A comment is rare and says only a why the code cannot show. Never cite an issue, pull request, decision id, review round, run, or session in code. That history lives in git and in the vault, not in the module.

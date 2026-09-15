@@ -1,8 +1,4 @@
-"""The three-form path matcher — the package's one leaf util.
-
-Two callers need these exact semantics (leaf-util doctrine, boundary spec
-§6): triage's sensitive/watched paths and the diff gate's forbidden_paths.
-"""
+"""The three-form path matcher shared by triage and the diff gate."""
 
 from __future__ import annotations
 
@@ -10,18 +6,14 @@ import fnmatch
 
 
 def match(path: str, pattern: str) -> bool:
-    """Match one repo-relative path against one sensitive/watched pattern.
+    """Match one repo-relative path against one pattern, by the pattern's shape.
 
-    Three forms, dispatched by shape (issue #59):
-      - dir prefix — trailing ``/`` (``hooks/``, ``src/thinkweave/surfaces/``):
-        the path is under that directory (``startswith``, same convention as
-        the diff-guard gate's ``forbidden_paths``).
+      - dir prefix — trailing ``/`` (``hooks/``): the path starts with it.
       - glob — contains ``*``/``?``/``[`` (``*schema*``): fnmatched
-        case-insensitively against the basename (or the whole path when the
-        glob itself spans directories), so ``docs/SCHEMA.md`` is caught too.
-      - bare filename — anything else (``ontology.yaml``): the path's basename
-        equals it, so the file matches at any depth (a different basename that
-        merely shares the stem as a prefix does not).
+        case-insensitively against the basename, or the whole path when the
+        glob spans directories.
+      - bare filename — anything else (``ontology.yaml``): the basename
+        equals it, at any depth.
     """
     if pattern.endswith("/"):
         return path.startswith(pattern)
@@ -33,7 +25,7 @@ def match(path: str, pattern: str) -> bool:
 
 def hits(files: list[str], patterns: list[str]) -> list[str]:
     """``"<path> (matches <pattern>)"`` for each file that hits any pattern,
-    deduped and sorted — the human-readable reason fragments."""
+    deduped and sorted."""
     found = set()
     for path in files:
         for pat in patterns:
