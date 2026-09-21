@@ -498,6 +498,29 @@ implementer subagent, the judge — `kind: judge` gate — and any future stage)
 `--fix-rounds`). Omit it for `skills: []`; add `--skill-centric` when the
 record is primarily about a skill invocation.
 
+Each entry may also carry the **dispatch join keys** — the facts that later
+answer which harness and model ran the stage and how it went. The rail passes
+them through verbatim and rejects a wrong type with the field path in
+`reasons` (`skills[0].tokens: expected int, got 'many'`). Fill them from what
+you know at dispatch and return time, never from a guess:
+
+- `transport` — how you started the stage: `agent-tool` (the Agent tool),
+  `herdr` (a herdr session), `headless-argv` (a harness CLI you ran as a
+  subprocess).
+- `harness` — the harness that executed it (`claude-code`, `codex`, …); the
+  Agent tool is always the harness you are running in.
+- `model` and `effort` — the model id and effort level the dispatch asked for,
+  as you passed them (the Agent tool's `model` argument, the CLI's model flag).
+- `session_ref` — the harness's own session id when the transport exposes one
+  (herdr's session id, a headless run's session id).
+- `duration_sec` — whole seconds from dispatch to the stage's return.
+- `tokens` — the total tokens the harness reported for the stage, when it
+  reports one.
+
+Omit `tokens` and `session_ref` when unknown — never zeroed or blanked: an
+absent key means "not recorded", a `0` or `""` would read as a measurement.
+The same applies to the other five: a key you cannot fill stays absent.
+
 `--trace-json` points at a JSON file **you compose from the gate agents' own
 reports** — no new model call: the judge's per-criterion evidence, findings and
 verdict flips, the simplify gate's cut/keep rationale, the TDD red-confirmation

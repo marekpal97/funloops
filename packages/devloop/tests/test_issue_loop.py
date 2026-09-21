@@ -756,6 +756,97 @@ def test_build_trajectory_skills_shape():
     assert payload["tags"] == ["loop-run", "skill-invocation"]
 
 
+DISPATCH_KEYS = {
+    "transport": "agent-tool", "harness": "claude-code", "model": "claude-opus-5",
+    "effort": "high", "session_ref": "sess-01ABC", "duration_sec": 412, "tokens": 183_000,
+}
+
+
+def _trajectory_with_skills(skills):
+    return mint.build_trajectory(
+        {"number": 14, "title": "join keys", "labels": []},
+        branch="loop/issue-14", commits=["a"], numstat="",
+        gates=[], fix_rounds=0, outcome="shipped", skills=skills,
+    )
+
+
+def test_skill_record_carries_the_dispatch_join_keys_verbatim():
+    """A stage record with all seven dispatch join keys lands in frontmatter
+    with every value unchanged; the four contracted fields stay beside them."""
+    payload = _trajectory_with_skills([
+        {"id": "implementer", "role": "implementer", "outcome": "shipped",
+         "fix_rounds_attributed": 1, **DISPATCH_KEYS},
+    ])
+    assert payload["frontmatter"]["skills"] == [
+        {"id": "implementer", "role": "implementer", "outcome": "shipped",
+         "fix_rounds_attributed": 1, **DISPATCH_KEYS},
+    ]
+
+
+def test_skill_record_without_join_keys_is_unchanged():
+    """An entry with none of the seven fields builds exactly today's four-field
+    record — no zeroed, blanked, or null join keys appear."""
+    payload = _trajectory_with_skills([
+        {"id": "judge", "role": "judge", "outcome": "passed"},
+    ])
+    assert payload["frontmatter"]["skills"] == [
+        {"id": "judge", "role": "judge", "outcome": "passed", "fix_rounds_attributed": 0},
+    ]
+
+
+@pytest.mark.parametrize("bad, path, shown", [
+    ({"tokens": "many"}, "skills[0].tokens", "'many'"),
+    ({"duration_sec": True}, "skills[0].duration_sec", "True"),
+    ({"transport": "carrier-pigeon"}, "skills[0].transport", "'carrier-pigeon'"),
+    ({"model": 5}, "skills[0].model", "5"),
+])
+def test_wrong_typed_join_key_is_rejected_with_its_field_path(bad, path, shown):
+    """A wrong-typed join key raises, and each reason names the offending field
+    path and the value it saw, in the validate verb's style."""
+    with pytest.raises(ValueError) as exc:
+        _trajectory_with_skills([
+            {"id": "implementer", "role": "implementer", "outcome": "shipped", **bad},
+        ])
+    reasons = list(exc.value.args)
+    assert len(reasons) == 1
+    assert reasons[0].startswith(path + ":")
+    assert shown in reasons[0]
+
+
+def test_trajectory_verb_prints_join_key_reasons(tmp_path, monkeypatch, capsys):
+    """The rail surfaces a rejected skills-json as `{error, reasons}` and exits
+    2, so the orchestrator sees each field path, not one joined string."""
+    monkeypatch.setattr(github, "run", lambda args, cwd=None: json.dumps(
+        {"number": 14, "title": "join keys", "labels": []}))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a, 0, stdout="", stderr=""))
+    (tmp_path / "g.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "s.json").write_text(json.dumps([
+        {"id": "implementer", "role": "implementer", "outcome": "shipped",
+         "tokens": "many", "duration_sec": True},
+    ]), encoding="utf-8")
+    rc = cli.main(["trajectory", "14", "--cwd", str(tmp_path),
+                   "--gates-json", str(tmp_path / "g.json"),
+                   "--skills-json", str(tmp_path / "s.json"), "--outcome", "shipped"])
+    assert rc == 2
+    out = json.loads(capsys.readouterr().out)
+    assert [r.split(":")[0] for r in out["reasons"]] == [
+        "skills[0].duration_sec", "skills[0].tokens"]
+
+
+def test_command_doc_section3_says_how_each_join_key_is_filled():
+    """§3 tells the orchestrator how to fill each of the seven join keys, and
+    that tokens and session_ref are omitted when unknown, never zeroed or
+    blanked."""
+    sec = _command_doc_subsection("## 3.")
+    for key in DISPATCH_KEYS:
+        assert f"`{key}`" in sec, key
+    for transport in ("agent-tool", "herdr", "headless-argv"):
+        assert transport in sec
+    low = " ".join(sec.split()).lower()
+    assert "omit" in low and "never zeroed or blanked" in low
+
+
 def test_trajectory_argparse_contract():
     """The trajectory subcommand exposes --skills-json (optional, default
     None) and --skill-centric (store_true, default False), so the
@@ -3041,7 +3132,7 @@ def test_skills_scope_is_settled_as_stage_dispatch_with_an_unpark_trigger():
     assert "stage" in mint._normalize_skill.__doc__
     # And it still projects exactly the four contracted fields — the parking
     # decision changes the prose, never the shipped shape.
-    assert set(mint._normalize_skill({"id": "x", "extra": 1})) == {
+    assert set(mint._normalize_skill({"id": "x", "extra": 1}, "skills[0]", [])) == {
         "id", "role", "outcome", "fix_rounds_attributed"}
 
 

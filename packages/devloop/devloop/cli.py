@@ -342,9 +342,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_traj.add_argument("--gates-json", required=True, help="file with the gate results list")
     p_traj.add_argument("--skills-json", default=None,
                         help="file with the stage-dispatch log: a list of "
-                             "{id, role, outcome, fix_rounds_attributed} — the "
-                             "skills the loop dispatched (implementer, acceptance "
-                             "judge, reviewer, ...). Omit for an empty skills[].")
+                             "{id, role, outcome, fix_rounds_attributed} plus the "
+                             "optional dispatch join keys (transport, harness, "
+                             "model, effort, session_ref, duration_sec, tokens) — "
+                             "the skills the loop dispatched (implementer, judge, "
+                             "...). Omit for an empty skills[].")
     p_traj.add_argument("--skill-centric", action="store_true",
                         help="mark this record skill-centric (adds the "
                              "skill-invocation tag alongside loop-run)")
@@ -539,7 +541,7 @@ def main(argv: list[str] | None = None) -> int:
                 primed=args.primed, served=served, trace=trace,
             )
         except ValueError as e:
-            print(json.dumps({"error": str(e)}))
+            print(json.dumps({"error": "; ".join(e.args), "reasons": list(e.args)}))
             return 2
         print(json.dumps(payload, indent=2))
     elif args.cmd == "board":
