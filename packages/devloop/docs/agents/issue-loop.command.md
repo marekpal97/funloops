@@ -266,6 +266,14 @@ A second rejection is a failed gate: route to human with the reasons.
 after every required gate is green**, and is safe by construction: it can only
 *shrink* the verified diff. `required = false` — its "failure" mode is a revert.
 
+0. **Size gate.** Compare the diff-guard result's `changed_lines` field (the
+   count `check --gate diff-guard` printed for this branch) with the gate's
+   `min_diff_lines` (absent loads as 0, so the stage never skips unless the
+   host sets it). `changed_lines < min_diff_lines` → skip steps 1–4 entirely,
+   no subagent and no re-verify: the §3 trace envelope is
+   `{"outcome": "skipped-small"}` and the PR body's simplify line reads
+   `simplify: skipped (<changed_lines> lines < min_diff_lines)`. Otherwise
+   continue.
 1. **Snapshot the tip.** `pre=$(git -C <worktree> rev-parse HEAD)`.
 2. **Get the delete-list.** Dispatch a **fresh subagent** with the text of the
    **vendored** `ponytail-review.command.md` skill beside this file (host
@@ -340,7 +348,8 @@ table; the simplify line; the findings line; the attribution block.
   `exited 0`, never the command text; a pass with nothing to report is the
   number alone.
 - The simplify line is one line under the table: `simplify: -<N> lines`,
-  `simplify: lean`, or the gate's `revert_note`.
+  `simplify: lean`, `simplify: skipped (<n> lines < min_diff_lines)`, or the
+  gate's `revert_note`.
 - The findings line is `Findings: see comment` or `Findings: none`.
 - No summary bullets, no run parameters, no line-count deltas of documents,
   no notes addressed to the orchestrator.
@@ -429,7 +438,12 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   Once the stack is final — DAG exhausted, cap hit, or an issue routed to human
   — run the §1c simplify flow ONCE over the whole branch, before pushing
   anything. Same gate entry, same steps, one extra input: the diff is the
-  **cumulative merge-base diff** `git diff origin/main...HEAD`, and the
+  **cumulative merge-base diff** `git diff origin/main...HEAD`. §1c's size
+  gate (step 0) holds the cumulative diff to the same `min_diff_lines`: run
+  `check --gate diff-guard --base-ref origin/main` once over the whole branch
+  and compare its `changed_lines`; a skip records `skipped-small` under
+  `stack_simplify` and the PR body's simplify line reads
+  `simplify: skipped (<changed_lines> lines < min_diff_lines)`. The
   subagent also receives the **whole-file** contents of every touched file
   (`git diff --name-only origin/main...HEAD`, then read each) so it can see a
   later slice re-rolling an earlier slice's helper. Keep-or-revert is §1c's
@@ -516,9 +530,11 @@ verdict flips, the simplify gate's cut/keep rationale, the TDD red-confirmation
 The rail only accepts and shapes it (unknown keys dropped; a non-dict trace is
 rejected). `severity` is `problem` or `note`, the judge envelope's own values.
 `simplify` records the pr-per-issue branch's one pass and is absent per slice
-in stacked mode; `stack_simplify` records the §1e stack-tip pass, the one
-pass of a stacked run, on the **final completed issue's** trajectory — which
-issue is final is orchestrator knowledge the rail never holds. It lands under the single
+in stacked mode; a §1c size-gate skip records `{"outcome": "skipped-small"}`
+alone, and the rail fills the rest of the envelope with its empty values.
+`stack_simplify` records the §1e stack-tip pass, the one pass of a stacked
+run, on the **final completed issue's** trajectory — which issue is final is
+orchestrator knowledge the rail never holds. It lands under the single
 `trace` frontmatter key — the machine-readable half of the tracker's gate
 evidence, not a second prose owner. Omit `--trace-json` and the key is absent.
 

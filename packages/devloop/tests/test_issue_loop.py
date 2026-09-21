@@ -2607,7 +2607,8 @@ def test_pr_body_carries_each_fact_once():
     assert "gate | verdict | summary" in ship
     assert "A summary cell carries only what varies" in ship
     assert "Never `no forbidden paths`, never `exited 0`, never the command text" in ship
-    assert "`simplify: -<N> lines`, `simplify: lean`, or the gate's `revert_note`" in ship
+    assert ("`simplify: -<N> lines`, `simplify: lean`, `simplify: skipped (<n> lines < "
+            "min_diff_lines)`, or the gate's `revert_note`") in " ".join(ship.split())
     assert "`Findings: see comment` or `Findings: none`" in ship
     assert "no notes addressed to the orchestrator" in ship
     stacked = " ".join(_command_doc_subsection("### 1e.").split())
@@ -2924,6 +2925,83 @@ def test_validate_simplify_rejects_bad_fields():
     assert any("outcome" in r and "shrunk" in r for r in result["reasons"])
     assert any("lines_delta" in r for r in result["reasons"])
     assert any("cuts[0].why" in r for r in result["reasons"])
+
+
+# --- the simplify size gate: min_diff_lines ---------------------------------
+
+
+@pytest.mark.parametrize("value", ["-1", '"40"', "true", "2.5"])
+def test_load_config_rejects_a_bad_min_diff_lines_naming_it(tmp_path, value):
+    """`min_diff_lines` on the simplify gate is a non-negative int; anything
+    else is refused by position and name, like every other gate key."""
+    p = tmp_path / "loop.toml"
+    p.write_text(f'[[gates]]\nid = "s"\nkind = "simplify"\nmin_diff_lines = {value}\n',
+                 encoding="utf-8")
+    with pytest.raises(ValueError, match=r"gates\[0\]\.min_diff_lines"):
+        cli.load_config(p)
+
+
+def test_min_diff_lines_is_simplify_only_and_absent_means_never_skip(tmp_path):
+    """Absent loads as 0 — no count is below 0, so the stage never skips; a set
+    value survives the load; the key belongs to the simplify kind alone."""
+    p = tmp_path / "loop.toml"
+    p.write_text('[[gates]]\nid = "s"\nkind = "simplify"\n', encoding="utf-8")
+    assert cli.load_config(p)["gates"][0]["min_diff_lines"] == 0
+    p.write_text('[[gates]]\nid = "s"\nkind = "simplify"\nmin_diff_lines = 40\n',
+                 encoding="utf-8")
+    assert cli.load_config(p)["gates"][0]["min_diff_lines"] == 40
+    p.write_text('[[gates]]\nid = "d"\nkind = "diff"\nmin_diff_lines = 40\n',
+                 encoding="utf-8")
+    with pytest.raises(ValueError, match=r"gates\[0\]\.min_diff_lines"):
+        cli.load_config(p)
+
+
+def test_shipped_configs_set_the_size_gate_as_the_issue_says():
+    """funloops' own loop.toml sets a threshold; the template carries the knob
+    commented, so a fresh host never skips until it opts in."""
+    assert _gate("simplify")["min_diff_lines"] > 0
+    template_path = cli.REPO_ROOT / "docs" / "agents" / "loop.toml.template"
+    template = cli.load_config(template_path)
+    assert next(g for g in template["gates"] if g["id"] == "simplify")["min_diff_lines"] == 0
+    assert "# min_diff_lines" in template_path.read_text(encoding="utf-8")
+
+
+def test_diff_gate_reports_the_changed_line_count_as_a_field():
+    """The count the size gate compares travels as a declared field, never as
+    prose the orchestrator re-parses out of the summary. Binary rows count 0."""
+    result = gates.evaluate_diff_gate({"id": "g", "forbidden_paths": []},
+                                      "3\t1\ta.py\n2\t0\tb.py\n-\t-\timg.png\n")
+    assert result["changed_lines"] == 6
+
+
+def test_validate_simplify_accepts_skipped_small():
+    result = gates.validate(_gate("simplify"), {
+        "outcome": "skipped-small", "lines_delta": 0, "cuts": [], "kept": []})
+    assert result["passed"] is True and result["reasons"] == []
+    assert "skipped-small" in result["summary"]
+
+
+def test_build_trajectory_round_trips_a_skipped_small_simplify():
+    """The skip records only its outcome; the trace shaping fills the rest of
+    the envelope with its empty values and the outcome survives verbatim."""
+    payload = mint.build_trajectory(
+        {"number": 17, "title": "size gate", "labels": []}, branch="loop/issue-17",
+        commits=["a"], numstat="1\t0\tx.py\n", gates=[], fix_rounds=0,
+        outcome="shipped", trace={"simplify": {"outcome": "skipped-small"}},
+    )
+    assert payload["frontmatter"]["trace"]["simplify"] == {
+        "outcome": "skipped-small", "lines_delta": 0, "cuts": [], "kept": []}
+
+
+def test_command_doc_describes_the_simplify_size_gate():
+    """§1c names the field compared (diff-guard's changed_lines), the trace
+    outcome and the PR-body line; §1e holds the cumulative diff to the same
+    threshold."""
+    c = _command_doc_subsection("### 1c.")
+    assert "min_diff_lines" in c and "changed_lines" in c
+    assert '"skipped-small"' in c and "simplify: skipped (" in c
+    e = _command_doc_subsection("### 1e.")
+    assert "min_diff_lines" in e and "cumulative" in e
 
 
 # --- the CLI seam -----------------------------------------------------------

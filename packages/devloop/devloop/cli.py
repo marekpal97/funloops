@@ -177,7 +177,8 @@ def _known_key(section: str, key: str) -> None:
 
 def _checked_gates(gates: list[dict]) -> list[dict]:
     """Refuse by name a gate entry with an unknown kind or a key its kind's
-    verb does not read."""
+    verb does not read. The simplify gate's ``min_diff_lines`` is a
+    non-negative int; absent loads as 0, the threshold no count is below."""
     for i, gate in enumerate(gates):
         kind = gate.get("kind")
         if kind not in GATE_KEYS:
@@ -187,6 +188,11 @@ def _checked_gates(gates: list[dict]) -> list[dict]:
         for key in sorted(set(gate) - allowed):
             raise ValueError(f"unknown key 'gates[{i}].{key}' for kind '{kind}' "
                              f"(known: {', '.join(sorted(allowed))})")
+        if kind == "simplify":
+            floor = gate.setdefault("min_diff_lines", 0)
+            if isinstance(floor, bool) or not isinstance(floor, int) or floor < 0:
+                raise ValueError(f"gates[{i}].min_diff_lines: expected a "
+                                 f"non-negative int, got {floor!r}")
     return gates
 
 

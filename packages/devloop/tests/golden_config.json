@@ -61,7 +61,8 @@
         "tests",
         "judge"
       ],
-      "revert_note": "⚠ simplify-reverted"
+      "revert_note": "⚠ simplify-reverted",
+      "min_diff_lines": 50
     }
   ],
   "constitution": []
