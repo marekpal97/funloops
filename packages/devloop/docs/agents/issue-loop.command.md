@@ -517,9 +517,9 @@ you know at dispatch and return time, never from a guess:
 - `tokens` — the total tokens the harness reported for the stage, when it
   reports one.
 
-Omit `tokens` and `session_ref` when unknown — never zeroed or blanked: an
-absent key means "not recorded", a `0` or `""` would read as a measurement.
-The same applies to the other five: a key you cannot fill stays absent.
+Omit any key you cannot fill, `tokens` and `session_ref` included — never
+zeroed or blanked: an absent key means "not recorded", a `0` or `""` would
+read as a measurement.
 
 `--trace-json` points at a JSON file **you compose from the gate agents' own
 reports** — no new model call: the judge's per-criterion evidence, findings and

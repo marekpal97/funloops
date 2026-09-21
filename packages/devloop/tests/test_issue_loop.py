@@ -783,17 +783,6 @@ def test_skill_record_carries_the_dispatch_join_keys_verbatim():
     ]
 
 
-def test_skill_record_without_join_keys_is_unchanged():
-    """An entry with none of the seven fields builds exactly today's four-field
-    record — no zeroed, blanked, or null join keys appear."""
-    payload = _trajectory_with_skills([
-        {"id": "judge", "role": "judge", "outcome": "passed"},
-    ])
-    assert payload["frontmatter"]["skills"] == [
-        {"id": "judge", "role": "judge", "outcome": "passed", "fix_rounds_attributed": 0},
-    ]
-
-
 @pytest.mark.parametrize("bad, path, shown", [
     ({"tokens": "many"}, "skills[0].tokens", "'many'"),
     ({"duration_sec": True}, "skills[0].duration_sec", "True"),

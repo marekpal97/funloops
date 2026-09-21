@@ -343,10 +343,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_traj.add_argument("--skills-json", default=None,
                         help="file with the stage-dispatch log: a list of "
                              "{id, role, outcome, fix_rounds_attributed} plus the "
-                             "optional dispatch join keys (transport, harness, "
-                             "model, effort, session_ref, duration_sec, tokens) — "
-                             "the skills the loop dispatched (implementer, judge, "
-                             "...). Omit for an empty skills[].")
+                             "optional dispatch join keys (issue-loop.command.md "
+                             "§3) — the skills the loop dispatched (implementer, "
+                             "judge, ...). Omit for an empty skills[].")
     p_traj.add_argument("--skill-centric", action="store_true",
                         help="mark this record skill-centric (adds the "
                              "skill-invocation tag alongside loop-run)")

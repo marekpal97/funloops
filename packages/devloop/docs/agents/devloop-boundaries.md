@@ -259,8 +259,7 @@ seam, never here.
 invocation.** It records the stages *this loop dispatched* — implementer,
 the judge, and future stages — as
 `{id, role, outcome, fix_rounds_attributed}` plus the optional dispatch join
-keys (`transport`, `harness`, `model`, `effort`, `session_ref`,
-`duration_sec`, `tokens`), passed through verbatim. The generic capture-all is
+keys (command doc §3), passed through verbatim. The generic capture-all is
 **parked**: it needs a new mechanism (a Skill-tool hook or transcript scraping)
 and has no live reader, and a capability ships with its consumer or not at all.
 *Unpark trigger:* a consumer that needs invocations the loop did not itself
