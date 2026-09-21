@@ -439,12 +439,9 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   — run the §1c simplify flow ONCE over the whole branch, before pushing
   anything. Same gate entry, same steps, one extra input: the diff is the
   **cumulative merge-base diff** `git diff origin/main...HEAD`. §1c's size
-  gate (step 0) holds the cumulative diff to the same `min_diff_lines`: run
-  `check --gate diff-guard --base-ref origin/main` once over the whole branch
-  and compare its `changed_lines`; a skip records `skipped-small` under
-  `stack_simplify` and the PR body's simplify line reads
-  `simplify: skipped (<changed_lines> lines < min_diff_lines)`. The
-  subagent also receives the **whole-file** contents of every touched file
+  gate (step 0) applies to that cumulative diff against the same
+  `min_diff_lines` (`check --gate diff-guard --base-ref origin/main`); a skip
+  lands under `stack_simplify`. The subagent also receives the **whole-file** contents of every touched file
   (`git diff --name-only origin/main...HEAD`, then read each) so it can see a
   later slice re-rolling an earlier slice's helper. Keep-or-revert is §1c's
   steps 1, 3 and 4 on the whole branch (the gate's `rerun` list, `reset --hard
@@ -530,11 +527,9 @@ verdict flips, the simplify gate's cut/keep rationale, the TDD red-confirmation
 The rail only accepts and shapes it (unknown keys dropped; a non-dict trace is
 rejected). `severity` is `problem` or `note`, the judge envelope's own values.
 `simplify` records the pr-per-issue branch's one pass and is absent per slice
-in stacked mode; a §1c size-gate skip records `{"outcome": "skipped-small"}`
-alone, and the rail fills the rest of the envelope with its empty values.
-`stack_simplify` records the §1e stack-tip pass, the one pass of a stacked
-run, on the **final completed issue's** trajectory — which issue is final is
-orchestrator knowledge the rail never holds. It lands under the single
+in stacked mode; `stack_simplify` records the §1e stack-tip pass, the one
+pass of a stacked run, on the **final completed issue's** trajectory — which
+issue is final is orchestrator knowledge the rail never holds. It lands under the single
 `trace` frontmatter key — the machine-readable half of the tracker's gate
 evidence, not a second prose owner. Omit `--trace-json` and the key is absent.
 
