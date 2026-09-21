@@ -18,3 +18,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["devloop"]
+
+# The rail's own docs travel inside the wheel: the packaged constitution,
+# persona, loop.toml default and command docs. A consumer that installs from
+# git gets them under devloop/docs/agents; the source tree keeps them beside
+# the package.
+[tool.hatch.build.targets.wheel.force-include]
+"docs/agents" = "devloop/docs/agents"

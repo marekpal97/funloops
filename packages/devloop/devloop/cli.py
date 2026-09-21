@@ -58,10 +58,20 @@ from devloop.gates import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_REL = Path("docs") / "agents" / "loop.toml"
-PACKAGE_CONFIG = REPO_ROOT / CONFIG_REL
 CONSTITUTION_REL = Path("docs") / "agents" / "constitution.md"
-PACKAGE_CONSTITUTION = REPO_ROOT / CONSTITUTION_REL
-PACKAGE_PERSONA = REPO_ROOT / "docs" / "agents" / "ponytail-persona.md"
+
+
+def _package_docs() -> Path:
+    """The rail's own docs/agents: inside the package when installed from a
+    wheel, beside it in the source tree."""
+    inside = Path(__file__).resolve().parent / "docs" / "agents"
+    return inside if inside.is_dir() else REPO_ROOT / "docs" / "agents"
+
+
+PACKAGE_DOCS = _package_docs()
+PACKAGE_CONFIG = PACKAGE_DOCS / "loop.toml"
+PACKAGE_CONSTITUTION = PACKAGE_DOCS / "constitution.md"
+PACKAGE_PERSONA = PACKAGE_DOCS / "ponytail-persona.md"
 
 
 def _walk_up(rel: Path, start: Path | None = None):
@@ -78,10 +88,12 @@ def _walk_up(rel: Path, start: Path | None = None):
 
 
 def _is_packaged(constitution: Path) -> bool:
-    """Whether this constitution is the packaged one: it sits beside a
-    ``devloop`` package. Place, not bytes, so a diverged copy in a worktree
-    is still the default and never an overlay."""
-    return (constitution.parents[2] / "devloop" / "__init__.py").is_file()
+    """Whether this constitution is the packaged one: it sits beside or
+    inside a ``devloop`` package. Place, not bytes, so a diverged copy in a
+    worktree is still the default and never an overlay."""
+    home = constitution.parents[2]
+    return (home / "devloop" / "__init__.py").is_file() or (
+        home.name == "devloop" and (home / "__init__.py").is_file())
 
 
 def find_config(start: Path | None = None) -> Path:
