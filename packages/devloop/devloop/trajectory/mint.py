@@ -5,7 +5,6 @@ Internal to this file: the trace normalizers and the skill projection.
 
 from __future__ import annotations
 
-
 TRANSPORTS = ("agent-tool", "herdr", "headless-argv")
 DISPATCH_KEYS: dict[str, type] = {
     "transport": str, "harness": str, "model": str, "effort": str,
