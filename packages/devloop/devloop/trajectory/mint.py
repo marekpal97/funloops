@@ -5,16 +5,35 @@ Internal to this file: the trace normalizers and the skill projection.
 
 from __future__ import annotations
 
+TRANSPORTS = ("agent-tool", "herdr", "headless-argv")
+DISPATCH_KEYS: dict[str, type] = {
+    "transport": str, "harness": str, "model": str, "effort": str,
+    "session_ref": str, "duration_sec": int, "tokens": int,
+}
 
-def _normalize_skill(entry: dict) -> dict:
+
+def _normalize_skill(entry: dict, where: str, reasons: list[str]) -> dict:
     """Project one stage-dispatch record to ``{id, role, outcome,
-    fix_rounds_attributed}``; extra keys are dropped."""
-    return {
+    fix_rounds_attributed}`` plus whichever dispatch join keys it carries,
+    verbatim; extra keys are dropped. A wrong-typed join key appends a
+    ``<where>.<key>: …`` reason instead of landing in the record."""
+    out = {
         "id": entry.get("id", ""),
         "role": entry.get("role", ""),
         "outcome": entry.get("outcome", ""),
         "fix_rounds_attributed": int(entry.get("fix_rounds_attributed", 0) or 0),
     }
+    for key, kind in DISPATCH_KEYS.items():
+        if key not in entry:
+            continue
+        value = entry[key]
+        if not isinstance(value, kind) or isinstance(value, bool):
+            reasons.append(f"{where}.{key}: expected {kind.__name__}, got {value!r}")
+        elif key == "transport" and value not in TRANSPORTS:
+            reasons.append(f"{where}.{key}: {value!r} is not one of {' | '.join(TRANSPORTS)}")
+        else:
+            out[key] = value
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -118,13 +137,19 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
     a skeleton the orchestrator fills.
 
     ``skills`` is the stage-dispatch log, ``[{id, role, outcome,
-    fix_rounds_attributed}]``; ``skill_centric`` adds the ``skill-invocation``
-    tag. ``primed``/``served`` mirror the claim-time prime verdict;
-    ``primed=None`` omits both keys. ``trace`` is stored under one ``trace``
+    fix_rounds_attributed}]``, each entry optionally carrying the dispatch
+    join keys in ``DISPATCH_KEYS``; a wrong-typed key raises ``ValueError``
+    with one field-path reason per arg. ``skill_centric`` adds the
+    ``skill-invocation`` tag. ``primed``/``served`` mirror the claim-time
+    prime verdict; ``primed=None`` omits both keys. ``trace`` is stored under one ``trace``
     key; ``trace=None`` omits it.
     """
     files = [line.split("\t")[2] for line in numstat.strip().splitlines()
              if len(line.split("\t")) == 3]
+    reasons: list[str] = []
+    stages = [_normalize_skill(s, f"skills[{i}]", reasons) for i, s in enumerate(skills or [])]
+    if reasons:
+        raise ValueError(*reasons)
     tags = ["loop-run"] + (["skill-invocation"] if skill_centric else [])
     frontmatter = {
         "issue": issue["number"],
@@ -138,7 +163,7 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
         "files_touched": sorted(set(files)),
         "gates": [{"id": g["id"], "passed": g["passed"], "summary": g.get("summary", "")}
                   for g in gates],
-        "skills": [_normalize_skill(s) for s in (skills or [])],
+        "skills": stages,
     }
     if primed is not None:
         if served is not None and (
