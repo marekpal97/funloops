@@ -115,6 +115,8 @@ threshold = "all"        # all | majority — of the issue's acceptance criteria
 # subagent's delete-list, re-runs `rerun`, and hard-resets to the snapshot if
 # it goes red — so required=false is literal: its failure mode is a revert,
 # not a block. Stacked delivery runs it once, at the stack tip (dec-0ab8ab6b).
+# It is the most expensive stage per line of benefit (a fresh subagent, then
+# a test run on any cut), so a diff below min_diff_lines skips it outright.
 [[gates]]
 id = "simplify"
 kind = "simplify"
@@ -122,3 +124,4 @@ required = false
 skill = "ponytail-review"          # vendored under docs/agents/; host /simplify is the fallback
 rerun = ["tests"]                  # re-verify the shrunk diff against these gate ids, in order; no second judge
 revert_note = "⚠ simplify-reverted"  # PR-body note when the shrunk diff is discarded
+min_diff_lines = 50                # skip the stage when diff-guard counted fewer changed lines; 0 = never skip

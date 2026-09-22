@@ -266,6 +266,14 @@ A second rejection is a failed gate: route to human with the reasons.
 after every required gate is green**, and is safe by construction: it can only
 *shrink* the verified diff. `required = false` — its "failure" mode is a revert.
 
+0. **Size gate.** Compare the diff-guard result's `changed_lines` field (the
+   count `check --gate diff-guard` printed for this branch) with the gate's
+   `min_diff_lines` (absent loads as 0, so the stage never skips unless the
+   host sets it). `changed_lines < min_diff_lines` → skip steps 1–4 entirely,
+   no subagent and no re-verify: the §3 trace envelope is
+   `{"outcome": "skipped-small"}` and the PR body's simplify line reads
+   `simplify: skipped (<changed_lines> lines < min_diff_lines)`. Otherwise
+   continue.
 1. **Snapshot the tip.** `pre=$(git -C <worktree> rev-parse HEAD)`.
 2. **Get the delete-list.** Dispatch a **fresh subagent** with the text of the
    **vendored** `ponytail-review.command.md` skill beside this file (host
@@ -340,7 +348,8 @@ table; the simplify line; the findings line; the attribution block.
   `exited 0`, never the command text; a pass with nothing to report is the
   number alone.
 - The simplify line is one line under the table: `simplify: -<N> lines`,
-  `simplify: lean`, or the gate's `revert_note`.
+  `simplify: lean`, `simplify: skipped (<n> lines < min_diff_lines)`, or the
+  gate's `revert_note`.
 - The findings line is `Findings: see comment` or `Findings: none`.
 - No summary bullets, no run parameters, no line-count deltas of documents,
   no notes addressed to the orchestrator.
@@ -429,8 +438,10 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   Once the stack is final — DAG exhausted, cap hit, or an issue routed to human
   — run the §1c simplify flow ONCE over the whole branch, before pushing
   anything. Same gate entry, same steps, one extra input: the diff is the
-  **cumulative merge-base diff** `git diff origin/main...HEAD`, and the
-  subagent also receives the **whole-file** contents of every touched file
+  **cumulative merge-base diff** `git diff origin/main...HEAD`. §1c's size
+  gate (step 0) applies to that cumulative diff against the same
+  `min_diff_lines` (`check --gate diff-guard --base-ref origin/main`); a skip
+  lands under `stack_simplify`. The subagent also receives the **whole-file** contents of every touched file
   (`git diff --name-only origin/main...HEAD`, then read each) so it can see a
   later slice re-rolling an earlier slice's helper. Keep-or-revert is §1c's
   steps 1, 3 and 4 on the whole branch (the gate's `rerun` list, `reset --hard

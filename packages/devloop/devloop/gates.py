@@ -129,7 +129,8 @@ def run_verify_lines(number: int, body: str, cwd: Path) -> dict:
 def evaluate_diff_gate(gate: dict, numstat: str) -> dict:
     """Evaluate ``git diff --numstat`` output against ``forbidden_paths``
     (:func:`devloop.paths.match` forms). Size never blocks; the changed-line
-    count is reported for the PR body."""
+    count travels as ``changed_lines`` for the PR body and the simplify
+    gate's size threshold."""
     forbidden = gate.get("forbidden_paths", [])
     touched_forbidden, total = [], 0
     for line in numstat.strip().splitlines():
@@ -147,6 +148,7 @@ def evaluate_diff_gate(gate: dict, numstat: str) -> dict:
         "summary": (f"touches forbidden paths: {', '.join(touched_forbidden)}"
                     if touched_forbidden else f"{total} changed lines, no forbidden paths"),
         "detail": "",
+        "changed_lines": total,
     }
 
 
@@ -168,7 +170,7 @@ def run_diff_gate(gate: dict, cwd: Path, base_ref: str) -> dict:
 
 VERDICTS = ("met", "not-met")
 SEVERITIES = ("problem", "note")
-SIMPLIFY_OUTCOMES = ("applied", "reverted", "lean")
+SIMPLIFY_OUTCOMES = ("applied", "reverted", "lean", "skipped-small")
 
 
 def reject(gate: dict, reasons: list[str]) -> dict:
@@ -249,9 +251,9 @@ def validate_judge(gate: dict, raw: dict) -> dict:
 
 
 def validate_simplify(gate: dict, raw: dict) -> dict:
-    """Validate a simplify return: ``{outcome: applied|reverted|lean,
-    lines_delta, cuts[], kept[]}``. A schema-valid return always passes; its
-    failure mode is the revert."""
+    """Validate a simplify return: ``{outcome: applied|reverted|lean|
+    skipped-small, lines_delta, cuts[], kept[]}``. A schema-valid return
+    always passes; its failure mode is the revert."""
     reasons: list[str] = []
     outcome = _enum(raw, "payload", "outcome", SIMPLIFY_OUTCOMES, reasons)
     delta = raw.get("lines_delta")
@@ -274,7 +276,7 @@ GATE_KEYS = {
     "command": {"cmd", "timeout_sec"},
     "diff": {"forbidden_paths"},
     "judge": {"threshold"},
-    "simplify": {"skill", "rerun", "revert_note"},
+    "simplify": {"skill", "rerun", "revert_note", "min_diff_lines"},
 }
 COMMON_GATE_KEYS = {"id", "kind", "required"}
 

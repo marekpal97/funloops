@@ -117,7 +117,7 @@ threshold) touches no code.
 | `diff` | rail (deterministic) | forbidden paths (no line cap) |
 | `command` | rail (deterministic) | any shell command; pass = exit 0 — the tests gate, and the issue's own `verify:` lines |
 | `judge` | fresh LLM judge | the one judgment stage: per-criterion verdicts against the issue's acceptance criteria (`threshold = all\|majority`) plus advisory findings that never block (dec-611cbd8a) |
-| `simplify` | fresh subagent (vendored ponytail-review) | over-engineering trim — the one **applying** gate. Runs last; `required = false`; shrinks the verified diff, re-runs the `rerun` gates (the tests gate), reverts to the pre-simplify tip if one goes red; stacked delivery runs it once, at the stack tip |
+| `simplify` | fresh subagent (vendored ponytail-review) | over-engineering trim — the one **applying** gate. Runs last; `required = false`; shrinks the verified diff, re-runs the `rerun` gates (the tests gate), reverts to the pre-simplify tip if one goes red; skipped outright when diff-guard's `changed_lines` is below the gate's `min_diff_lines`; stacked delivery runs it once, at the stack tip |
 
 Design rules baked in:
 

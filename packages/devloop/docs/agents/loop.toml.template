@@ -106,3 +106,4 @@ required = false
 skill = "ponytail-review"          # vendored under docs/agents/; host /simplify is the fallback
 rerun = ["tests"]                  # re-verify the shrunk diff against these gate ids, in order; no second judge
 revert_note = "⚠ simplify-reverted"  # PR-body note when the shrunk diff is discarded
+# min_diff_lines = 50              # skip the stage (subagent + re-verify) when diff-guard counted fewer changed lines; absent or 0 = never skip
