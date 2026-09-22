@@ -2859,14 +2859,22 @@ def _command_doc_subsection(marker: str) -> str:
     return "\n".join(lines[start:end])
 
 
-def test_implementer_and_gate_subagents_return_long_reports_by_file_path():
-    """funloops#47 (dec-72c80057): §1b (the implementer) and §1c (the judge and
-    simplify subagents) both say a report longer than a screen is written to a
-    file in the worktree and its path returned — inline returns were truncated."""
-    for marker in ("### 1b.", "### 1c."):
-        section = " ".join(_command_doc_subsection(marker).split())  # reflow-safe
-        assert "longer than a screen" in section, marker
-        assert "file in the worktree and its path returned" in section, marker
+def test_every_role_returns_by_the_file_its_dispatch_names_on_both_transports():
+    """funloops#47 (dec-72c80057) then #65: the return file is the one return
+    channel. §1b names it as the dispatch's third line, outside the worktree,
+    and gives one recipe per transport — the herdr one starts a named agent,
+    prompts it, routes `blocked` to human, re-prompts the same name for a fix
+    round and removes the worktree; §1c reads the judge return from that file
+    on either transport."""
+    b = " ".join(_command_doc_subsection("### 1b.").split())  # reflow-safe
+    assert "the pack plus three lines" in b and "return file path" in b
+    assert "never inside the worktree" in b
+    for token in ("herdr worktree create", "herdr agent start", "herdr agent prompt",
+                  "`blocked`", "same agent name", "herdr worktree remove"):
+        assert token in b, token
+    c = " ".join(_command_doc_subsection("### 1c.").split())
+    assert "return file its dispatch names" in c and "either transport" in c
+    assert "--return-json <return-file>" in c
 
 
 def test_issue_loop_doc_1b_passes_the_tickets_decisions_to_the_decisions_leg():

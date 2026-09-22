@@ -59,13 +59,14 @@ file-only (a trust boundary, not a run-time posture); the rail rejects unknown
 keys by name on both paths, and `--stacked` without `--dag` is an error per §1e.
 Then `uv run devloop config <set-flags>` (resolved knobs, the per-role
 `dispatch` table, and gates) and `uv run devloop plan <set-flags>` (frontier /
-blocked / claimed). Each stage you dispatch (implementer, judge, simplify)
-runs as its `dispatch.<role>` entry says: `transport = "agent-tool"` is the
-Agent tool in this session; `transport = "herdr"` is a herdr session started
-with `--kind <harness>` and the entry's `args` as the literal argv tail. Record
-what the entry named in the stage's dispatch join keys (§3). A declared
-`[dispatch.small]` tier stands in for the judgment roles' entries below a diff
-size; §1c resolves it once the diff exists. `plan` reports the
+blocked / claimed). Each stage you dispatch is a role, and a role is a
+`dispatch.<role>` entry: the table's three (implementer, judge, simplify) plus
+any the host declares — one more role costs one entry and one section of this
+doc, the rule `devloop-boundaries.md` states for gate kinds. The entry's
+`posture` shapes its pack and its `transport` picks the dispatch recipe, both
+in §1b. Record what the entry named in the stage's dispatch join keys (§3). A
+declared `[dispatch.small]` tier stands in for the judgment roles' entries
+below a diff size; §1c resolves it once the diff exists. `plan` reports the
 whole frontier; the orchestrator takes the first `max_issues_per_run` of the
 reported frontier, in the order reported, and the rest wait for the next run.
 
@@ -150,36 +151,74 @@ to `context_served(source='loop-prime')`; `--dry-run` suppresses that write.
 
 <!-- /host-extension -->
 
-**The pack — every implementer and fix-round dispatch, no toggle.** `uv run
---directory <worktree> devloop pack <N> --role implementer [--trace FILE]`
-composes the dispatch context; splice its stdout **verbatim** into the
-implementer prompt. Its sections, in order: the issue — spliced once, here;
-never re-read into the prompt; `## Rules` — the packaged
+**The pack — every dispatch of every role, no toggle.** `uv run --directory
+<worktree> devloop pack <N> --role <role> [--trace FILE]` composes the
+dispatch context; splice its stdout **verbatim** into the prompt. The role's
+`dispatch.<role>.posture` shapes it. A `writer` pack (the implementer), in
+order: the issue — spliced once, here; never re-read into the prompt;
+`## Rules` — the packaged
 `constitution.md` beside this file, then the host's own
 `docs/agents/constitution.md`, one continuously numbered list (a repo overlay
 **extends** the default, **never replaces** it); `## Persona` —
 `ponytail-persona.md`, the implementer's write-time posture; the repo map;
 `## Standing orders` — the implementer's orders and the codegraph drill-down,
-owned by `pack.py` and pinned by its golden. The judge's
-copy is `--role judge`: the same issue, rules and map, no persona and no
-standing orders — the rules are the shape standard its findings cite (§1c),
-the persona is not its business. `{"error": …}` instead of
-a pack means the rules or the persona did not resolve: STOP and surface it —
+owned by `pack.py` and pinned by its golden. A `reader` pack (the judge,
+simplify, any reviewing role the host declares) is the same issue, rules and
+map, no persona and no standing orders — the rules are the shape standard its
+findings cite (§1c), the persona is not its business. `{"error": …}` instead
+of a pack means the role has no entry or no posture, or the rules or the
+persona did not resolve: STOP and surface it —
 dispatching without the rules is the fail-open its own rule names. Amendments
 to either layer are a human's PR; `watched_paths` lands any `docs/agents/` diff
 in the skim lane. An issue names a file for the pack's tier-2 slice by
 backticking its repo-relative path.
 
-**The dispatch is the pack plus two lines.** Dispatch a **fresh implementer
-agent** with worktree isolation (Agent tool, a fresh agent type with
-`isolation: "worktree"`; never the fork type — a fork inherits this
-orchestrator's whole conversation, including context the subagents must not
-see). Its prompt is, verbatim: the pack, the branch name
-(`<branch_prefix><N>`), and the baseline line (§0.5: `green` or `red`).
-Nothing else: every standing order is the pack's, so one text owns each rule,
-and the issue arrives once. A report longer than a screen is written to a
-file in the worktree and its path returned; an inline return that long gets
-truncated.
+**The dispatch is the pack plus three lines.** Whatever the transport, the
+dispatch text is, verbatim: the pack, the branch name (`<branch_prefix><N>`),
+the baseline line (§0.5: `green` or `red`), and the return file path. Nothing
+else: every standing order is the pack's, so one text owns each rule, and the
+issue arrives once. The return file is the one return channel for every role
+on both transports: one path per dispatch under a directory you make once per
+run (`mktemp -d`), never inside the worktree, so a return can never land in
+the diff. The agent writes its whole return there and you read the file, never
+its screen (an inline return gets truncated; a herdr screen loses
+alternate-screen output). A fix round names a fresh path. The role's
+`dispatch.<role>.transport` picks the recipe:
+
+- **`agent-tool`.** Dispatch a **fresh implementer agent** with worktree
+  isolation (Agent tool, a fresh agent type with `isolation: "worktree"`, the
+  entry's `model` when it names one; never the fork type — a fork inherits
+  this orchestrator's whole conversation, including context the subagents
+  must not see). Its prompt is the dispatch text. A fix round is a SendMessage
+  to the same agent: it keeps its context.
+- **`herdr`.** The worktree is a herdr workspace and the agent a named herdr
+  session; every command answers in JSON, and the ids come from those answers,
+  never from a guess. `harness` is required on this transport (`--kind` has no
+  default): an entry without one is a config error you surface, not a guess.
+
+  ```bash
+  herdr worktree create --branch <branch_prefix><N> --base origin/main --label <branch_prefix><N> --no-focus
+  #   → .result.worktree.path (the <worktree> every rail call targets),
+  #     .result.workspace.workspace_id, .result.root_pane.pane_id
+  herdr agent start <role>-<N> --kind <harness> --pane <pane-id> -- <args>
+  #   the entry's harness and args (the literal argv tail); returns once the agent is ready
+  herdr agent prompt <role>-<N> "Your dispatch is <dispatch-file>: read it whole and follow it. Write your return to <return-file>." --wait --timeout <ms>
+  ```
+
+  Write the dispatch text to `<dispatch-file>` beside the return file first:
+  the prompt is the pointer, the file is the same text the Agent tool gets
+  inline. `--wait` returns the first settled state. `idle` or `done`: read the
+  return file. **`blocked`** — herdr recognised an approval or question UI —
+  routes the issue to human (§1c's route-to-human block, with `herdr agent
+  read <role>-<N> --source recent-unwrapped --lines 120` as the evidence);
+  never answer the dialog yourself. `agent_prompt_stalled` or a timeout is the
+  same exit, the error as the evidence. A fix round is `herdr agent prompt` to
+  the **same agent name** with the evidence, the re-spliced dispatch file and
+  a fresh return path: it keeps its context as SendMessage does. `herdr agent
+  get <role>-<N>` carries the session facts §3 records. Teardown:
+  `herdr worktree remove --workspace <workspace-id>` is this transport's
+  `git worktree remove` (§1d, same `--force` rule); it closes the agent's
+  pane with the workspace.
 
 ### 1c. Gate pipeline
 
@@ -188,9 +227,10 @@ Run the configured gates **in order**, inside the implementer's worktree.
 **The gate split — which plane runs which kind.** `command` and `diff` gates
 **execute in the rail**: Python runs the shell command / the diff arithmetic and
 returns the verdict. `judge` and `simplify` are never executed by the rail —
-*this* orchestrator dispatches a fresh agent for each (§1b). A gate agent's
-report longer than a screen is written to a file in the
-worktree and its path returned; you read the file. The rail's `check` runs the two
+*this* orchestrator dispatches a fresh agent for each as its `dispatch.<role>`
+entry says (§1b's recipe for its transport). A gate agent's return is the
+return file its dispatch names, on either transport; you read the file, never
+its screen. The rail's `check` runs the two
 deterministic kinds and refuses every other kind — judgment kind or typo alike —
 with `gate kind '<k>' is LLM-judged — run it from the /issue-loop command, not
 the script`. Protocol detail (the two registries, the shared `GateResult` shape,
@@ -224,9 +264,11 @@ keys (§3). The implementer never takes the small tier: it runs before any diff
 exists, so §0's `config` without a count is its table.
 
 **The judge — the one LLM judgment stage.** `kind: judge` — dispatch a **fresh
-judge subagent** (a fresh agent, no implementation context) with the judge
-pack (`uv run --directory <worktree> devloop pack <N> --role judge`, §1b),
-`git diff origin/main...HEAD`, and the test and verify-rail output. Tell it,
+judge subagent** (a fresh agent, no implementation context) as
+`dispatch.judge` says, with the judge pack (`uv run --directory <worktree>
+devloop pack <N> --role judge`, §1b), `git diff origin/main...HEAD`, the test
+and verify-rail output, and its return file path (§1b: it writes the object
+below to that file, and that file is what you hand the rail). Tell it,
 verbatim:
 
 > The contract is the issue's acceptance criteria plus the Interfaces block's
@@ -267,16 +309,17 @@ the triage lane (§1d) — never a fix round, never an issue.
 
 **Every judgment return is schema-checked before it becomes a verdict.** (For
 `simplify` the **vendored** skill owns its output format, a prose delete-list;
-you condense it into the envelope.) Write the JSON to a file and hand it to
-the rail before acting on it — `uv run devloop validate --gate <id>
+you condense it into the envelope.) Hand the return file to the rail before
+acting on it, on either transport — `uv run devloop validate --gate <id>
 --return-json <return-file>`. The rail emits the same `GateResult` the
 deterministic gates emit, plus `reasons`, and exits `0` — schema-valid and
 **passed** (judge: no criterion
 `not-met` per the gate's `threshold`, `all` or `majority`); `1` — schema-valid
 and **failed**: a real verdict, run a fix round per the failure flow below; `2`
 — **schema-rejected**: `reasons` names each offending field path and value
-(`criteria[1].verdict: 'probably' is not one of met | not-met`). SendMessage
-those reasons to the same subagent and **re-ask** — never hand-fix its return,
+(`criteria[1].verdict: 'probably' is not one of met | not-met`). **Re-ask**
+the same agent with those reasons and a fresh return path (SendMessage on the
+Agent tool, `herdr agent prompt <name>` on herdr) — never hand-fix its return,
 never read a verdict out of a rejected one, never pass it on to `--gates-json`.
 A second rejection is a failed gate: route to human with the reasons.
 
@@ -293,10 +336,12 @@ after every required gate is green**, and is safe by construction: it can only
    `simplify: skipped (<changed_lines> lines < min_diff_lines)`. Otherwise
    continue.
 1. **Snapshot the tip.** `pre=$(git -C <worktree> rev-parse HEAD)`.
-2. **Get the delete-list.** Dispatch a **fresh subagent** with the text of the
-   **vendored** `ponytail-review.command.md` skill beside this file (host
-   `/simplify` is the fallback) and the branch diff `git diff
-   origin/main...HEAD`. Condense its delete-list and `net: -<N> lines possible` tally into
+2. **Get the delete-list.** Dispatch a **fresh subagent** as `dispatch.simplify`
+   says (§1b's recipe) with the text of the **vendored**
+   `ponytail-review.command.md` skill beside this file (host `/simplify` is
+   the fallback), the branch diff `git diff origin/main...HEAD`, and its
+   return file path. Read the delete-list from that file and condense it with
+   its `net: -<N> lines possible` tally into
    `{"outcome": "applied", "lines_delta": -<N>, "cuts": [{"what": …, "why":
    …}], "kept": [{…}]}` and `validate` it. `outcome` is `"lean"` when the
    subagent said `Lean already. Ship.` (skip the rest; the PR body's simplify
@@ -311,8 +356,9 @@ after every required gate is green**, and is safe by construction: it can only
 
 **On a required-gate failure:** feed the evidence (gate id, summary, detail, the
 failed criteria with their evidence, the red verify lines) back to the
-implementer subagent (SendMessage to the same agent — it keeps its context) for
-a fix round, re-splicing **the pack** (§1b). An `intent` entry rides that round
+implementer subagent (the same agent, by its transport's fix-round line in
+§1b — it keeps its context) for a fix round, re-splicing **the pack** and
+naming a fresh return path (§1b). An `intent` entry rides that round
 like any other criterion. Re-run the pipeline
 **from the first failed gate**; the re-judge covers **only the failed criteria**
 (the envelope then carries just those entries) — it does not re-open met ones
@@ -535,18 +581,21 @@ them through verbatim and rejects a wrong type with the field path in
 `reasons` (`skills[0].tokens: expected int, got 'many'`). Fill them from what
 you know at dispatch and return time, never from a guess:
 
-- `transport` — how you started the stage: `agent-tool` (the Agent tool),
-  `herdr` (a herdr session), `headless-argv` (a harness CLI you ran as a
-  subprocess).
-- `harness` — the harness that executed it (`claude-code`, `codex`, …); the
-  Agent tool is always the harness you are running in.
-- `model` and `effort` — the model id and effort level the dispatch asked for,
-  as you passed them (the Agent tool's `model` argument, the CLI's model flag).
+- `transport` — the role's entry's `transport`, the recipe §1b ran:
+  `agent-tool` (the Agent tool), `herdr` (a herdr session), `headless-argv` (a
+  harness CLI you ran as a subprocess).
+- `harness` — the entry's `harness` (herdr's `--kind`); on the Agent tool, the
+  harness you are running in.
+- `model` and `effort` — the entry's `model` and `effort` as the tier resolved
+  them (§1c), the values you passed on (the Agent tool's `model` argument, the
+  argv tail's model flag).
 - `tier` — `base` or `small`: the tier the §1c `config --diff-lines` call
   named for the judgment stages; the implementer's dispatch has no count and
   is `base`.
-- `session_ref` — the harness's own session id when the transport exposes one
-  (herdr's session id, a headless run's session id).
+- `session_ref` — the harness's own session id when the transport exposes one:
+  on herdr, `herdr agent get <name>` → `.result.agent.agent_session.value`
+  (an id or a path, as its `kind` says); a headless run's session id. The
+  Agent tool exposes none: omit it.
 - `duration_sec` — whole seconds from dispatch to the stage's return.
 - `tokens` — the total tokens the harness reported for the stage, when it
   reports one.

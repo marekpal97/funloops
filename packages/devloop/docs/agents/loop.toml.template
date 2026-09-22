@@ -63,8 +63,10 @@ red_min_diff_lines = 800         # "big diff" → red (a signal for the human la
 
 # ── Dispatch ──────────────────────────────────────────────────────────────
 # Which agent runs each role. Run posture, so every key takes --set for one
-# run. The roles are implementer, judge, simplify; another role or key is
-# refused by name. Absent keys mean the Agent tool in the orchestrator's own
+# run. A role IS its entry: implementer, judge and simplify always resolve,
+# and one more [dispatch.<role>] table declares one more role (plus its
+# section in issue-loop.command.md); a key outside the six is refused by
+# name. Absent keys mean the Agent tool in the orchestrator's own
 # session and model, with no argv tail. The rail checks shape only — it never
 # validates a harness or model name, and it never imports a harness profile:
 # `args` is the literal argv tail the harness binary takes, written by you.

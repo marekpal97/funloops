@@ -82,8 +82,10 @@ exactly the config file's), and every key of a `[dispatch.<role>]` table with
 literal `args` tail and its `posture` (`writer` | `reader`) — is run posture,
 not gate semantics; `devloop config` prints the resolved table, one entry per
 role, and an absent key means the Agent tool in the orchestrator's own
-session. The rail checks shape only and never validates a harness or model
-name. An optional `[dispatch.small]` tier — `max_diff_lines` plus `model` /
+session. A role is its entry: the three the loop names always resolve, one
+more table declares one more role, and `devloop pack --role <r>` shapes any
+of them by its `posture`. The rail checks shape only and never validates a
+harness or model name. An optional `[dispatch.small]` tier — `max_diff_lines` plus `model` /
 `effort` / `args` for `judge` and `simplify` — stands in for those two roles'
 base entries when the diff-guard count is at or under the threshold;
 `devloop config --diff-lines <n>` prints the `tier` (`base` | `small`) a

@@ -81,8 +81,10 @@ watched_paths = ["*/docs/agents/*", "docs/agents/"]
 red_min_diff_lines = 800       # "big diff" → red (a human-lane signal, never a block)
 
 # ── Dispatch ──────────────────────────────────────────────────────────────
-# Which agent runs each role (implementer, judge, simplify). Every key takes
-# --set for one run; the template lists them all. Absent keys mean the Agent
+# Which agent runs each role. A role IS its entry: implementer, judge and
+# simplify always resolve, and one more table here declares one more role
+# (`devloop pack --role <r>` takes any of them). Every key takes --set for
+# one run; the template lists them all. Absent keys mean the Agent
 # tool in the orchestrator's own session and model, with no argv tail.
 [dispatch.implementer]
 posture = "writer"          # writer: persona + standing orders; reader: neither
