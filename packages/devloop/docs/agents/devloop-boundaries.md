@@ -134,7 +134,7 @@ report into the deduped, ordered op list `board sweep --apply` replays.
 Conventions text: `issue-loop.command.md` §Board hygiene.
 
 **`pack.py`** — the dispatch pack (funloops#28, #45, #46, #47; dec-f12457eb,
-dec-fd12489d, dec-d2de831e, dec-2f8c2322, dec-e6561edc, dec-72c80057): `Issue`, `Role`,
+dec-fd12489d, dec-d2de831e, dec-2f8c2322, dec-e6561edc, dec-72c80057): `Issue`, `Posture`,
 `compose`, `LINE_BUDGET`, `FileRecord`, `Codegraph` (the tool object:
 `repo_map` · `sync` · `files` · `context` · `entry_points` · `node`),
 `Directory` (the map object: `tree` · `catalog` · `slice`, and the fold

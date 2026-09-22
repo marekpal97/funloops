@@ -1026,20 +1026,29 @@ def test_dispatch_override_via_set_sets_one_key_of_one_role(tmp_path):
     assert cfg["dispatch"]["simplify"] == {"transport": "agent-tool"}
 
 
-@pytest.mark.parametrize("spec,message", [
-    ("dispatch.bogus.model=x", "unknown role 'dispatch.bogus'"),
-    ("dispatch.judge.bogus=x", "unknown key 'dispatch.judge.bogus'"),
-])
-def test_dispatch_refuses_an_unknown_role_or_key_by_name_on_both_paths(tmp_path, spec, message):
+def test_dispatch_refuses_an_unknown_key_by_name_on_both_paths(tmp_path):
     cfg = cli.load_config(tmp_path / "nope.toml")
-    with pytest.raises(ValueError, match=message):
-        cli.apply_overrides(cfg, [spec])
-    head, _, value = spec.partition("=")
-    _, role, key = head.split(".")
+    with pytest.raises(ValueError, match="unknown key 'dispatch.judge.bogus'"):
+        cli.apply_overrides(cfg, ["dispatch.judge.bogus=x"])
     p = tmp_path / "loop.toml"
-    p.write_text(f'[dispatch.{role}]\n{key} = "{value}"\n', encoding="utf-8")
-    with pytest.raises(ValueError, match=message):
+    p.write_text('[dispatch.judge]\nbogus = "x"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown key 'dispatch.judge.bogus'"):
         cli.load_config(p)
+
+
+def test_a_dispatch_entry_declares_a_role_on_both_paths(tmp_path):
+    """A role is a `[dispatch]` entry (funloops#65): an entry the defaults do
+    not carry declares a new role over the default transport, whether the
+    file or `--set` declares it; the default roles stay as they were."""
+    declared = {"transport": "agent-tool", "posture": "reader"}
+    p = tmp_path / "loop.toml"
+    p.write_text('[dispatch.reviewer]\nposture = "reader"\n', encoding="utf-8")
+    cfg = cli.load_config(p)
+    assert cfg["dispatch"]["reviewer"] == declared
+    assert cfg["dispatch"]["judge"] == {"transport": "agent-tool"}
+    cfg = cli.apply_overrides(cli.load_config(tmp_path / "nope.toml"),
+                              ["dispatch.reviewer.posture=reader"])
+    assert cfg["dispatch"]["reviewer"] == declared
 
 
 @pytest.mark.parametrize("entry", [
@@ -1235,11 +1244,11 @@ def test_load_config_rejects_deleted_scalar_keys_naming_them(tmp_path, section, 
 
 def test_load_config_rejects_the_deleted_dispatch_persona_key(tmp_path):
     """`[dispatch] persona` is gone (dec-d79e8e7b addendum): the persona is
-    spliced unconditionally. The section now holds per-role tables, so the
-    old scalar is refused as a role the loop does not dispatch."""
+    spliced by posture. The section now holds per-role tables, so the old
+    scalar is refused by name as a role entry that is not a table."""
     p = tmp_path / "loop.toml"
     p.write_text("[dispatch]\npersona = true\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="unknown role 'dispatch.persona'"):
+    with pytest.raises(ValueError, match="dispatch.persona: expected a table"):
         cli.load_config(p)
 
 

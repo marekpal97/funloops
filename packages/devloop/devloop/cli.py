@@ -163,15 +163,17 @@ DEFAULT_CONFIG: dict = {
 # checked per kind (gates.GATE_KEYS); anything else is unknown by name.
 SECTIONS = ("loop", "labels", "tdd", "triage")
 
-# [dispatch]: which agent runs a role, one sub-table per role. The rail checks
-# shape only; a harness or model name is the host's to get right. Absent keys
-# mean the Agent tool, the session's model, no argv tail.
+# [dispatch]: which agent runs a role, one sub-table per role. A role IS its
+# entry: the loop's own three always resolve, and any other entry declares
+# one more. The rail checks shape only; a harness or model name is the host's
+# to get right. Absent keys mean the Agent tool, the session's model, no
+# argv tail.
 ROLES = ("implementer", "judge", "simplify")
 DISPATCH_KEYS: dict[str, type] = {
     "posture": str, "transport": str, "harness": str, "model": str, "effort": str,
     "args": list,
 }
-DISPATCH_CHOICES = {"transport": ("agent-tool", "herdr"), "posture": ("writer", "reader")}
+DISPATCH_CHOICES = {"transport": ("agent-tool", "herdr"), "posture": get_args(pack.Posture)}
 DISPATCH_DEFAULT = {"transport": "agent-tool"}
 # [dispatch.small]: the size tier. At or under max_diff_lines changed lines its
 # per-role model / effort / args lay over the base table for the judgment
@@ -194,11 +196,9 @@ def _known_key(section: str, key: str) -> None:
 
 
 def _checked_dispatch(role: str, entry: object, where: str = "dispatch") -> dict:
-    """Refuse by name a role the loop does not dispatch, a key its entry does
-    not carry, or a value of the wrong shape: transport and posture take their
-    declared values, args is a list of strings, the rest are strings."""
-    if role not in ROLES:
-        raise ValueError(f"unknown role '{where}.{role}' (known: {', '.join(ROLES)})")
+    """Refuse by name a key a role's entry does not carry, or a value of the
+    wrong shape: transport and posture take their declared values, args is a
+    list of strings, the rest are strings."""
     if not isinstance(entry, dict):
         raise ValueError(f"{where}.{role}: expected a table, got {entry!r}")
     for key, value in entry.items():
@@ -303,7 +303,7 @@ def load_config(path: Path | None = None) -> dict:
                         cfg["dispatch"]["small"] = _checked_small(entry)
                     else:
                         checked = _checked_dispatch(role, entry)
-                        cfg["dispatch"][role].update(checked)
+                        cfg["dispatch"].setdefault(role, dict(DISPATCH_DEFAULT)).update(checked)
                 continue
             if section not in SECTIONS:
                 raise ValueError(
@@ -349,7 +349,7 @@ def apply_overrides(cfg: dict, specs: list[str]) -> dict:
                     small.update(checked)
                 continue
             checked = _checked_dispatch(role, {key: value})
-            cfg["dispatch"][role].update(checked)
+            cfg["dispatch"].setdefault(role, dict(DISPATCH_DEFAULT)).update(checked)
             continue
         if section not in SECTIONS:
             raise ValueError(f"--set section '{section}' not overridable ({OVERRIDABLE})")
@@ -504,9 +504,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_pack = sub.add_parser("pack", help="compose one dispatch's context and print it", parents=[common])
     p_pack.add_argument("number", type=int)
-    p_pack.add_argument("--role", choices=get_args(pack.Role), default="implementer",
-                        help="implementer: issue + rules + persona + repo map + "
-                             "standing orders; judge: issue + rules + repo map")
+    p_pack.add_argument("--role", default="implementer", metavar="ROLE",
+                        help="any [dispatch] role; its posture shapes the pack — "
+                             "writer: issue + rules + persona + repo map + standing "
+                             "orders; reader: issue + rules + repo map")
     p_pack.add_argument("--cwd", default=".",
                         help="the worktree to map (its .codegraph index is self-provisioned)")
     p_pack.add_argument("--codegraph-bin",
@@ -692,18 +693,28 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if failed else 0
     elif args.cmd == "pack":
         root = Path(args.cwd).resolve()
+        roles = [r for r in cfg["dispatch"] if r != "small"]
+        posture = cfg["dispatch"].get(args.role, {}).get("posture")
+        # A role no entry declares, an entry without a posture, a missing
+        # rules file or persona: each is an error marker, never a pack shaped
+        # by a guess or dispatched without them.
+        if args.role not in roles:
+            print(json.dumps({"error": f"unknown role '{args.role}' (known: {', '.join(roles)})"}))
+            return 2
+        if posture is None:
+            print(json.dumps({"error": f"dispatch.{args.role}.posture: required to shape "
+                                       f"the pack ({' | '.join(DISPATCH_CHOICES['posture'])})"}))
+            return 2
         issue = pack.Issue(**json.loads(github.run(
             ["issue", "view", str(args.number), "--json", "title,body"], cwd=root)))
         try:
-            # A missing rules file or persona is an error marker, never a
-            # pack that dispatches without them.
             rules = [pack.body(p) for p in find_constitution(root)]
-            persona = pack.body(PACKAGE_PERSONA) if args.role == "implementer" else ""
+            persona = pack.body(PACKAGE_PERSONA) if posture == "writer" else ""
         except FileNotFoundError as exc:
             print(json.dumps({"error": str(exc)}))
             return 2
         print(pack.compose(
-            args.number, issue, args.role, rules, persona,
+            args.number, issue, args.role, posture, rules, persona,
             pack.Codegraph(args.codegraph_bin, root),
             prime=Path(args.prime).read_text(encoding="utf-8") if args.prime else "",
             trace=Path(args.trace).read_text(encoding="utf-8") if args.trace else "",
