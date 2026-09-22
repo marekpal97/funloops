@@ -162,6 +162,18 @@ DEFAULT_CONFIG: dict = {
 # checked per kind (gates.GATE_KEYS); anything else is unknown by name.
 SECTIONS = ("loop", "labels", "tdd", "triage")
 
+# [dispatch]: which agent runs a role, one sub-table per role. The rail checks
+# shape only; a harness or model name is the host's to get right. Absent keys
+# mean the Agent tool, the session's model, no argv tail.
+ROLES = ("implementer", "judge", "simplify")
+DISPATCH_KEYS: dict[str, type] = {
+    "posture": str, "transport": str, "harness": str, "model": str, "effort": str,
+    "args": list,
+}
+DISPATCH_CHOICES = {"transport": ("agent-tool", "herdr"), "posture": ("writer", "reader")}
+DISPATCH_DEFAULT = {"transport": "agent-tool"}
+OVERRIDABLE = " | ".join((*SECTIONS, "dispatch.<role>"))
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -173,6 +185,29 @@ def _known_key(section: str, key: str) -> None:
     if key not in DEFAULT_CONFIG[section]:
         known = ", ".join(sorted(DEFAULT_CONFIG[section]))
         raise ValueError(f"unknown key '{section}.{key}' (known: {known})")
+
+
+def _checked_dispatch(role: str, entry: object) -> dict:
+    """Refuse by name a role the loop does not dispatch, a key its entry does
+    not carry, or a value of the wrong shape: transport and posture take their
+    declared values, args is a list of strings, the rest are strings."""
+    if role not in ROLES:
+        raise ValueError(f"unknown role 'dispatch.{role}' (known: {', '.join(ROLES)})")
+    if not isinstance(entry, dict):
+        raise ValueError(f"dispatch.{role}: expected a table, got {entry!r}")
+    for key, value in entry.items():
+        if key not in DISPATCH_KEYS:
+            raise ValueError(f"unknown key 'dispatch.{role}.{key}' "
+                             f"(known: {', '.join(DISPATCH_KEYS)})")
+        choices = DISPATCH_CHOICES.get(key)
+        if choices and value not in choices:
+            raise ValueError(f"dispatch.{role}.{key}: expected "
+                             f"{' | '.join(choices)}, got {value!r}")
+        strings = value if key == "args" else [value]
+        if not isinstance(value, DISPATCH_KEYS[key]) or not all(isinstance(a, str) for a in strings):
+            want = "a list of strings" if key == "args" else "a string"
+            raise ValueError(f"dispatch.{role}.{key}: expected {want}, got {value!r}")
+    return entry
 
 
 def _checked_gates(gates: list[dict]) -> list[dict]:
@@ -201,6 +236,7 @@ def load_config(path: Path | None = None) -> dict:
     section or key the defaults do not carry raises ``ValueError`` naming it."""
     path = path if path is not None else find_config()
     cfg: dict = {section: dict(DEFAULT_CONFIG[section]) for section in SECTIONS}
+    cfg["dispatch"] = {role: dict(DISPATCH_DEFAULT) for role in ROLES}
     cfg["gates"] = []
     if path.exists():
         data = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -208,9 +244,14 @@ def load_config(path: Path | None = None) -> dict:
             if section == "gates":
                 cfg["gates"] = _checked_gates(values)
                 continue
+            if section == "dispatch":
+                for role, entry in values.items():
+                    checked = _checked_dispatch(role, entry)
+                    cfg["dispatch"][role].update(checked)
+                continue
             if section not in SECTIONS:
                 raise ValueError(
-                    f"unknown section '{section}' in {path.name} (known: {' | '.join(SECTIONS)})")
+                    f"unknown section '{section}' in {path.name} (known: {OVERRIDABLE})")
             for key in values:
                 _known_key(section, key)
             cfg[section].update(values)
@@ -219,7 +260,8 @@ def load_config(path: Path | None = None) -> dict:
 
 def parse_override(spec: str) -> tuple[str, str, object]:
     """Parse one ``--set [section.]key=value`` spec. The section defaults to
-    ``loop``; the value is parsed as a TOML scalar, a bare word as a string."""
+    ``loop``; ``dispatch.<role>.<key>`` keeps ``<role>.<key>`` as the key; the
+    value is parsed as a TOML scalar, a bare word as a string."""
     head, sep, raw = spec.partition("=")
     if not sep or not head.strip() or not raw.strip():
         raise ValueError(f"malformed --set '{spec}' (expected [section.]key=value)")
@@ -235,12 +277,16 @@ def parse_override(spec: str) -> tuple[str, str, object]:
 
 def apply_overrides(cfg: dict, specs: list[str]) -> dict:
     """Apply per-run ``--set`` overrides after loop.toml. Only existing scalar
-    knobs may be overridden; gates are file-only."""
+    knobs and ``dispatch.<role>.<key>`` may be overridden; gates are file-only."""
     for spec in specs:
         section, key, value = parse_override(spec)
+        if section == "dispatch":
+            role, _, key = key.partition(".")
+            checked = _checked_dispatch(role, {key: value})
+            cfg["dispatch"][role].update(checked)
+            continue
         if section not in SECTIONS:
-            raise ValueError(
-                f"--set section '{section}' not overridable ({' | '.join(SECTIONS)})")
+            raise ValueError(f"--set section '{section}' not overridable ({OVERRIDABLE})")
         _known_key(section, key)
         cfg[section][key] = value
     return cfg
@@ -262,8 +308,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--set", action="append", dest="overrides", default=[],
         metavar="[SECTION.]KEY=VALUE",
         help="per-run config override, e.g. --set delivery=stacked "
-             "--set max_issues_per_run=6 (section defaults to 'loop'; "
-             "repeatable; applied after loop.toml; gates are file-only)",
+             "--set max_issues_per_run=6 --set dispatch.judge.model=opus "
+             "(section defaults to 'loop'; repeatable; applied after "
+             "loop.toml; gates are file-only)",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 

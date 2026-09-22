@@ -28,6 +28,17 @@
     "watched_paths": [],
     "red_min_diff_lines": 800
   },
+  "dispatch": {
+    "implementer": {
+      "transport": "agent-tool"
+    },
+    "judge": {
+      "transport": "agent-tool"
+    },
+    "simplify": {
+      "transport": "agent-tool"
+    }
+  },
   "gates": [
     {
       "id": "diff-guard",

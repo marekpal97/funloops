@@ -14,9 +14,10 @@
 # command (orchestration). Semantics: issue-loop.md. Per-run posture belongs on
 # the command line, not in edits to this file: every knob in
 # [loop]/[labels]/[tdd]/[triage] takes `--set [section.]key=value` for a
-# single run. Gates are file-only by design — the pipeline is a trust
-# boundary you change in review-visible history, not a per-run mood. A key
-# the rail does not know is refused by name, on both paths.
+# single run, and every [dispatch.<role>] key takes
+# `--set dispatch.<role>.<key>=<value>`. Gates are file-only by design — the
+# pipeline is a trust boundary you change in review-visible history, not a
+# per-run mood. A key the rail does not know is refused by name, on both paths.
 
 [loop]
 max_issues_per_run = 3   # token guardrail: issues processed per invocation
@@ -58,6 +59,29 @@ sensitive_paths = []
 # human seeing the diff.
 watched_paths = ["docs/agents/"]
 red_min_diff_lines = 800         # "big diff" → red (a signal for the human lane, never a block)
+
+# ── Dispatch ──────────────────────────────────────────────────────────────
+# Which agent runs each role. Run posture, so every key takes --set for one
+# run. The roles are implementer, judge, simplify; another role or key is
+# refused by name. Absent keys mean the Agent tool in the orchestrator's own
+# session and model, with no argv tail. The rail checks shape only — it never
+# validates a harness or model name, and it never imports a harness profile:
+# `args` is the literal argv tail the harness binary takes, written by you.
+[dispatch.implementer]
+posture = "writer"          # writer: persona + standing orders; reader: neither
+transport = "agent-tool"    # agent-tool | herdr
+# harness = "claude"        # herdr --kind value; absent = the orchestrator's own harness
+# model = "opus"            # recorded in the stage record; passed via args
+# effort = "high"
+# args = ["--model", "opus"]  # literal argv tail after `--`; the host writes it
+
+[dispatch.judge]
+posture = "reader"
+transport = "agent-tool"
+
+[dispatch.simplify]
+posture = "reader"
+transport = "agent-tool"
 
 # ── Gate pipeline ─────────────────────────────────────────────────────────
 # Ordered, and the order is the contract: the deterministic guards run first,

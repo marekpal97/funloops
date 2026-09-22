@@ -7,8 +7,10 @@
 #
 # Per-run posture belongs on the command line, not in edits to this file:
 # every knob in [loop]/[labels]/[tdd]/[triage] can be overridden for one run
-# via `--set [section.]key=value` (section defaults to loop), with /issue-loop
-# sugar `--stacked` and `--max-issues <n>`. Gates are file-only by design.
+# via `--set [section.]key=value` (section defaults to loop), every
+# [dispatch.<role>] key via `--set dispatch.<role>.<key>=<value>`, with
+# /issue-loop sugar `--stacked` and `--max-issues <n>`. Gates are file-only
+# by design.
 # The rail refuses a key it does not know — a typo or a knob the subtractive
 # pass deleted (dec-cf8f0d33) — by name, on both paths.
 
@@ -76,6 +78,22 @@ sensitive_paths = [
 # leading `*/` cannot reach.
 watched_paths = ["*/docs/agents/*", "docs/agents/"]
 red_min_diff_lines = 800       # "big diff" → red (a human-lane signal, never a block)
+
+# ── Dispatch ──────────────────────────────────────────────────────────────
+# Which agent runs each role (implementer, judge, simplify). Every key takes
+# --set for one run; the template lists them all. Absent keys mean the Agent
+# tool in the orchestrator's own session and model, with no argv tail.
+[dispatch.implementer]
+posture = "writer"          # writer: persona + standing orders; reader: neither
+transport = "agent-tool"    # agent-tool | herdr
+
+[dispatch.judge]
+posture = "reader"
+transport = "agent-tool"
+
+[dispatch.simplify]
+posture = "reader"
+transport = "agent-tool"
 
 # ── Gate pipeline ─────────────────────────────────────────────────────────
 # Ordered. kinds: command | diff (deterministic, run by the rail)

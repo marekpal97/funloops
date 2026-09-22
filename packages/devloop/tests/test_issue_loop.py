@@ -991,6 +991,87 @@ def test_apply_overrides_noop_without_specs(tmp_path):
     assert cli.apply_overrides(cfg, []) is cfg
 
 
+# --- [dispatch] — which agent runs a role is run posture, per role -----------
+
+
+def test_load_config_without_dispatch_resolves_every_role_to_the_agent_tool(tmp_path):
+    """No `[dispatch]` table: every configured role is the Agent tool with no
+    harness, model, effort, args or posture — today's behaviour, spelled out."""
+    cfg = cli.load_config(tmp_path / "nope.toml")
+    assert cfg["dispatch"] == {
+        "implementer": {"transport": "agent-tool"},
+        "judge": {"transport": "agent-tool"},
+        "simplify": {"transport": "agent-tool"},
+    }
+
+
+def test_load_config_merges_a_dispatch_role_over_the_default(tmp_path):
+    p = tmp_path / "loop.toml"
+    p.write_text('[dispatch.judge]\ntransport = "herdr"\nharness = "codex"\n'
+                 'args = ["-m", "o3"]\n', encoding="utf-8")
+    cfg = cli.load_config(p)
+    assert cfg["dispatch"]["judge"] == {
+        "transport": "herdr", "harness": "codex", "args": ["-m", "o3"]}
+    assert cfg["dispatch"]["implementer"] == {"transport": "agent-tool"}
+
+
+def test_dispatch_override_via_set_sets_one_key_of_one_role(tmp_path):
+    cfg = cli.apply_overrides(cli.load_config(tmp_path / "nope.toml"),
+                              ["dispatch.judge.harness=codex",
+                               'dispatch.judge.args=["--model", "opus"]'])
+    assert cfg["dispatch"]["judge"] == {
+        "transport": "agent-tool", "harness": "codex", "args": ["--model", "opus"]}
+    assert cfg["dispatch"]["simplify"] == {"transport": "agent-tool"}
+
+
+@pytest.mark.parametrize("spec,message", [
+    ("dispatch.bogus.model=x", "unknown role 'dispatch.bogus'"),
+    ("dispatch.judge.bogus=x", "unknown key 'dispatch.judge.bogus'"),
+])
+def test_dispatch_refuses_an_unknown_role_or_key_by_name_on_both_paths(tmp_path, spec, message):
+    cfg = cli.load_config(tmp_path / "nope.toml")
+    with pytest.raises(ValueError, match=message):
+        cli.apply_overrides(cfg, [spec])
+    head, _, value = spec.partition("=")
+    _, role, key = head.split(".")
+    p = tmp_path / "loop.toml"
+    p.write_text(f'[dispatch.{role}]\n{key} = "{value}"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        cli.load_config(p)
+
+
+@pytest.mark.parametrize("entry", [
+    'transport = "ssh"',        # not agent-tool | herdr
+    'posture = "editor"',       # not writer | reader
+    'args = "--model opus"',    # the argv tail is a list, not one string
+    "model = 4",                # a name, not a number
+])
+def test_dispatch_refuses_a_value_of_the_wrong_shape_naming_the_key(tmp_path, entry):
+    """Shape only: transport and posture are closed sets, args is a list of
+    strings, the rest are strings. Model and harness names are never checked
+    against a list."""
+    p = tmp_path / "loop.toml"
+    p.write_text(f"[dispatch.implementer]\n{entry}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="dispatch.implementer." + entry.split(" ")[0]):
+        cli.load_config(p)
+
+
+def test_template_carries_the_dispatch_table_with_every_key_and_no_host_value():
+    """Every dispatch key appears in the template, live or commented; what
+    resolves from it names no harness, model, effort or argv tail."""
+    template_path = cli.REPO_ROOT / "docs" / "agents" / "loop.toml.template"
+    text = template_path.read_text(encoding="utf-8")
+    for key in ("transport", "harness", "model", "effort", "args", "posture"):
+        assert f"{key} = " in text, key
+    dispatch = cli.load_config(template_path)["dispatch"]
+    assert set(dispatch) == {"implementer", "judge", "simplify"}
+    for role, entry in dispatch.items():
+        assert entry["transport"] == "agent-tool", role
+        assert not {"harness", "model", "effort", "args"} & set(entry), role
+    assert dispatch["implementer"]["posture"] == "writer"
+    assert dispatch["judge"]["posture"] == "reader"
+
+
 # --- deleted keys are rejected, named (issue #39 AC2, dec-cf8f0d33) ---------
 # The same unknown-key check `--set` always had now runs on the file too: a
 # knob the subtractive pass deleted is neither silently honored nor silently
@@ -1014,12 +1095,13 @@ def test_load_config_rejects_deleted_scalar_keys_naming_them(tmp_path, section, 
         cli.load_config(p)
 
 
-def test_load_config_rejects_the_deleted_dispatch_section(tmp_path):
+def test_load_config_rejects_the_deleted_dispatch_persona_key(tmp_path):
     """`[dispatch] persona` is gone (dec-d79e8e7b addendum): the persona is
-    spliced unconditionally, so the whole section is unknown."""
+    spliced unconditionally. The section now holds per-role tables, so the
+    old scalar is refused as a role the loop does not dispatch."""
     p = tmp_path / "loop.toml"
     p.write_text("[dispatch]\npersona = true\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="dispatch"):
+    with pytest.raises(ValueError, match="unknown role 'dispatch.persona'"):
         cli.load_config(p)
 
 

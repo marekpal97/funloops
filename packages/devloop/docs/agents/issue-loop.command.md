@@ -57,8 +57,13 @@ to **every** `devloop` invocation in this run, so rail and orchestrator see the
 same effective config. Never edit `loop.toml` on the user's behalf. Gates are
 file-only (a trust boundary, not a run-time posture); the rail rejects unknown
 keys by name on both paths, and `--stacked` without `--dag` is an error per §1e.
-Then `uv run devloop config <set-flags>` (resolved knobs + gates) and `uv run
-devloop plan <set-flags>` (frontier / blocked / claimed). `plan` reports the
+Then `uv run devloop config <set-flags>` (resolved knobs, the per-role
+`dispatch` table, and gates) and `uv run devloop plan <set-flags>` (frontier /
+blocked / claimed). Each stage you dispatch (implementer, judge, simplify)
+runs as its `dispatch.<role>` entry says: `transport = "agent-tool"` is the
+Agent tool in this session; `transport = "herdr"` is a herdr session started
+with `--kind <harness>` and the entry's `args` as the literal argv tail. Record
+what the entry named in the stage's dispatch join keys (§3). `plan` reports the
 whole frontier; the orchestrator takes the first `max_issues_per_run` of the
 reported frontier, in the order reported, and the rest wait for the next run.
 
