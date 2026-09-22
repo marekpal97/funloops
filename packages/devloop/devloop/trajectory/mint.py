@@ -6,12 +6,11 @@ Internal to this file: the trace normalizers and the skill projection.
 from __future__ import annotations
 
 TRANSPORTS = ("agent-tool", "herdr", "headless-argv")
-TIERS = ("base", "small")
 DISPATCH_KEYS: dict[str, type] = {
     "transport": str, "harness": str, "model": str, "effort": str,
     "session_ref": str, "duration_sec": int, "tokens": int, "tier": str,
 }
-DISPATCH_CHOICES = {"transport": TRANSPORTS, "tier": TIERS}
+DISPATCH_CHOICES = {"transport": TRANSPORTS, "tier": ("base", "small")}
 
 
 def _normalize_skill(entry: dict, where: str, reasons: list[str]) -> dict:

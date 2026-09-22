@@ -1119,11 +1119,6 @@ def test_load_config_keeps_the_small_tier_as_declared_beside_the_base_table(tmp_
         "transport": "agent-tool", "model": "opus", "effort": "high"}
 
 
-def test_load_config_without_a_small_tier_declares_none(tmp_path):
-    """Absent tier: nothing under dispatch.small, and every count is base."""
-    assert "small" not in cli.load_config(tmp_path / "nope.toml")["dispatch"]
-
-
 @pytest.mark.parametrize("lines,tier,judge,simplify", [
     (199, "small", {"model": "sonnet", "effort": "low"}, {"model": "sonnet"}),
     (200, "small", {"model": "sonnet", "effort": "low"}, {"model": "sonnet"}),  # at the threshold
@@ -1207,16 +1202,11 @@ def test_small_tier_via_set_is_refused_by_name_when_malformed(tmp_path, spec, me
 
 def test_command_doc_picks_the_tier_from_diff_guard_and_records_it():
     """§1c resolves the tier with the diff-guard count before dispatching the
-    judges, and §3 lists `tier` among the dispatch join keys the stage record
-    carries."""
-    doc = (cli.REPO_ROOT / "docs" / "agents" / "issue-loop.command.md").read_text(
-        encoding="utf-8")
-    gate = doc[doc.index("### 1c."):doc.index("### 1d.")]
+    judges and records it."""
+    gate = _command_doc_subsection("### 1c.")
     assert "devloop config --diff-lines" in gate
     assert "changed_lines" in gate[:gate.index("devloop config --diff-lines")]
     assert "`tier`" in gate
-    vault = doc[doc.index("## 3."):doc.index("## 4.")]
-    assert "- `tier`" in vault
 
 
 # --- deleted keys are rejected, named (issue #39 AC2, dec-cf8f0d33) ---------

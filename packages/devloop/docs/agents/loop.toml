@@ -98,21 +98,6 @@ transport = "agent-tool"
 posture = "reader"
 transport = "agent-tool"
 
-# The size tier. At or under max_diff_lines changed lines (the diff-guard
-# count) its model / effort / args stand in for the base entries of judge and
-# simplify. The implementer runs before any diff exists and never takes it.
-# Absent, the base table applies at every size; declared, max_diff_lines is
-# required. `devloop config --diff-lines <n>` prints the tier a count takes
-# and the effective table. Not live here: which cheaper judge to trust is a
-# host decision the run records (`tier` in the stage record) make.
-# [dispatch.small]
-# max_diff_lines = 200
-# [dispatch.small.judge]
-# model = "sonnet"
-# effort = "low"
-# [dispatch.small.simplify]
-# model = "sonnet"
-
 # ── Gate pipeline ─────────────────────────────────────────────────────────
 # Ordered. kinds: command | diff (deterministic, run by the rail)
 #                 judge | simplify (LLM-judged / orchestrated, run by the

@@ -169,10 +169,7 @@ SECTIONS = ("loop", "labels", "tdd", "triage")
 # to get right. Absent keys mean the Agent tool, the session's model, no
 # argv tail.
 ROLES = ("implementer", "judge", "simplify")
-DISPATCH_KEYS: dict[str, type] = {
-    "posture": str, "transport": str, "harness": str, "model": str, "effort": str,
-    "args": list,
-}
+DISPATCH_KEYS = ("posture", "transport", "harness", "model", "effort", "args")
 DISPATCH_CHOICES = {"transport": ("agent-tool", "herdr"), "posture": get_args(pack.Posture)}
 DISPATCH_DEFAULT = {"transport": "agent-tool"}
 # [dispatch.small]: the size tier. At or under max_diff_lines changed lines its
@@ -195,22 +192,23 @@ def _known_key(section: str, key: str) -> None:
         raise ValueError(f"unknown key '{section}.{key}' (known: {known})")
 
 
-def _checked_dispatch(role: str, entry: object, where: str = "dispatch") -> dict:
+def _checked_dispatch(role: str, entry: object, where: str = "dispatch",
+                      keys: tuple[str, ...] = DISPATCH_KEYS) -> dict:
     """Refuse by name a key a role's entry does not carry, or a value of the
     wrong shape: transport and posture take their declared values, args is a
     list of strings, the rest are strings."""
     if not isinstance(entry, dict):
         raise ValueError(f"{where}.{role}: expected a table, got {entry!r}")
     for key, value in entry.items():
-        if key not in DISPATCH_KEYS:
+        if key not in keys:
             raise ValueError(f"unknown key '{where}.{role}.{key}' "
-                             f"(known: {', '.join(DISPATCH_KEYS)})")
+                             f"(known: {', '.join(keys)})")
         choices = DISPATCH_CHOICES.get(key)
         if choices and value not in choices:
             raise ValueError(f"{where}.{role}.{key}: expected "
                              f"{' | '.join(choices)}, got {value!r}")
-        strings = value if key == "args" else [value]
-        if not isinstance(value, DISPATCH_KEYS[key]) or not all(isinstance(a, str) for a in strings):
+        strings = value if isinstance(value, list) else [value]
+        if isinstance(value, list) != (key == "args") or not all(isinstance(a, str) for a in strings):
             want = "a list of strings" if key == "args" else "a string"
             raise ValueError(f"{where}.{role}.{key}: expected {want}, got {value!r}")
     return entry
@@ -228,11 +226,7 @@ def _checked_small(entry: object) -> dict:
                 raise ValueError("dispatch.small.max_diff_lines: expected a "
                                  f"non-negative int, got {value!r}")
         elif key in TIERED_ROLES:
-            extra = sorted(set(value) - set(TIER_KEYS)) if isinstance(value, dict) else []
-            if extra:
-                raise ValueError(f"unknown key 'dispatch.small.{key}.{extra[0]}' "
-                                 f"(known: {', '.join(TIER_KEYS)})")
-            _checked_dispatch(key, value, where="dispatch.small")
+            _checked_dispatch(key, value, where="dispatch.small", keys=TIER_KEYS)
         else:
             raise ValueError(f"unknown key 'dispatch.small.{key}' "
                              f"(known: max_diff_lines, {', '.join(TIERED_ROLES)})")
@@ -248,7 +242,7 @@ def _checked_tier(cfg: dict) -> dict:
     return cfg
 
 
-def resolve_tier(cfg: dict, diff_lines: int | None) -> dict:
+def resolve_tier(cfg: dict, diff_lines: int | None) -> None:
     """Name under ``tier`` the dispatch tier a diff of ``diff_lines`` takes and
     lay the small tier's entries over the judgment roles when it applies. No
     count, no small tier, or a count over ``max_diff_lines`` is ``base``; the
@@ -260,7 +254,6 @@ def resolve_tier(cfg: dict, diff_lines: int | None) -> dict:
     if applies:
         for role in TIERED_ROLES:
             cfg["dispatch"][role].update(small.get(role, {}))
-    return cfg
 
 
 def _checked_gates(gates: list[dict]) -> list[dict]:
@@ -396,10 +389,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_config = sub.add_parser("config", help="print resolved config as JSON", parents=[common])
     p_config.add_argument("--diff-lines", type=int, default=None, metavar="N",
-                          help="the diff-guard changed-line count: resolves the "
-                               "dispatch tier (`tier`) and lays [dispatch.small] "
-                               "over judge and simplify when N is at or under "
-                               "its max_diff_lines; omit for the base table")
+                          help="the diff-guard changed-line count: picks the dispatch "
+                               "tier; omit for the base table")
 
     p_check = sub.add_parser(
         "check", help="run one deterministic gate, or an issue's verify: lines", parents=[common])
