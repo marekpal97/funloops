@@ -63,7 +63,9 @@ blocked / claimed). Each stage you dispatch (implementer, judge, simplify)
 runs as its `dispatch.<role>` entry says: `transport = "agent-tool"` is the
 Agent tool in this session; `transport = "herdr"` is a herdr session started
 with `--kind <harness>` and the entry's `args` as the literal argv tail. Record
-what the entry named in the stage's dispatch join keys (§3). `plan` reports the
+what the entry named in the stage's dispatch join keys (§3). A declared
+`[dispatch.small]` tier stands in for the judgment roles' entries below a diff
+size; §1c resolves it once the diff exists. `plan` reports the
 whole frontier; the orchestrator takes the first `max_issues_per_run` of the
 reported frontier, in the order reported, and the rest wait for the next run.
 
@@ -209,6 +211,17 @@ results, summary}`; no lines = `no verify lines`, exit 0. Re-running `check --is
 on an issue already being verified is a fixed point (excluded, counted); a runaway
 cycle is one red result naming it. Red = **deterministic not-met**: a fix round,
 rerun until green or `max_fix_rounds` is spent; a missing binary is red, named, never skipped.
+
+**Pick the dispatch tier.** With the diff-guard result's `changed_lines` in
+hand, `uv run --directory <worktree> devloop config --diff-lines
+<changed_lines> <set-flags>` resolves the tier: `tier` is `small` when the
+count is at or under `[dispatch.small]`'s `max_diff_lines`, and the small
+tier's model / effort / args then stand in `dispatch.judge` and
+`dispatch.simplify`; otherwise, or with no small tier declared, it is `base`
+and the table is §0's. Dispatch the judge and simplify as that output's
+`dispatch.<role>` says, and record its `tier` in each of those stages' join
+keys (§3). The implementer never takes the small tier: it runs before any diff
+exists, so §0's `config` without a count is its table.
 
 **The judge — the one LLM judgment stage.** `kind: judge` — dispatch a **fresh
 judge subagent** (a fresh agent, no implementation context) with the judge
@@ -433,7 +446,8 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   <tip-before-this-issue>` so the forbidden-paths check applies per slice; the
   tests gate always runs on the whole branch (earlier slices must stay green —
   that IS the stacking guarantee). The judge sees the per-issue diff (`git diff
-  <tip-before>...HEAD`). **Simplify does not run per slice** (dec-0ab8ab6b):
+  <tip-before>...HEAD`), and its tier (§1c) follows the same per-slice
+  count. **Simplify does not run per slice** (dec-0ab8ab6b):
   the one pass is the stack-tip pass below, where cross-slice trimming lives.
 - **Tracker visibility without PRs.** After each issue passes, one line: `gh
   issue comment <N> --body "🤖 issue-loop run <run-id>: slice landed on
@@ -445,8 +459,9 @@ is sequential (`max_parallel` is ignored). Differences from the flow above:
   anything. Same gate entry, same steps, one extra input: the diff is the
   **cumulative merge-base diff** `git diff origin/main...HEAD`. §1c's size
   gate (step 0) applies to that cumulative diff against the same
-  `min_diff_lines` (`check --gate diff-guard --base-ref origin/main`); a skip
-  lands under `stack_simplify`. The subagent also receives the **whole-file** contents of every touched file
+  `min_diff_lines` (`check --gate diff-guard --base-ref origin/main`), and
+  the pass's tier follows that cumulative count; a skip lands under
+  `stack_simplify`. The subagent also receives the **whole-file** contents of every touched file
   (`git diff --name-only origin/main...HEAD`, then read each) so it can see a
   later slice re-rolling an earlier slice's helper. Keep-or-revert is §1c's
   steps 1, 3 and 4 on the whole branch (the gate's `rerun` list, `reset --hard
@@ -527,6 +542,9 @@ you know at dispatch and return time, never from a guess:
   Agent tool is always the harness you are running in.
 - `model` and `effort` — the model id and effort level the dispatch asked for,
   as you passed them (the Agent tool's `model` argument, the CLI's model flag).
+- `tier` — `base` or `small`: the tier the §1c `config --diff-lines` call
+  named for the judgment stages; the implementer's dispatch has no count and
+  is `base`.
 - `session_ref` — the harness's own session id when the transport exposes one
   (herdr's session id, a headless run's session id).
 - `duration_sec` — whole seconds from dispatch to the stage's return.

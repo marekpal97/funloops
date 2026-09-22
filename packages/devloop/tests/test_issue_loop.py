@@ -759,6 +759,7 @@ def test_build_trajectory_skills_shape():
 DISPATCH_KEYS = {
     "transport": "agent-tool", "harness": "claude-code", "model": "claude-opus-5",
     "effort": "high", "session_ref": "sess-01ABC", "duration_sec": 412, "tokens": 183_000,
+    "tier": "small",
 }
 
 
@@ -771,7 +772,7 @@ def _trajectory_with_skills(skills):
 
 
 def test_skill_record_carries_the_dispatch_join_keys_verbatim():
-    """A stage record with all seven dispatch join keys lands in frontmatter
+    """A stage record with all eight dispatch join keys lands in frontmatter
     with every value unchanged; the four contracted fields stay beside them."""
     payload = _trajectory_with_skills([
         {"id": "implementer", "role": "implementer", "outcome": "shipped",
@@ -788,6 +789,7 @@ def test_skill_record_carries_the_dispatch_join_keys_verbatim():
     ({"duration_sec": True}, "skills[0].duration_sec", "True"),
     ({"transport": "carrier-pigeon"}, "skills[0].transport", "'carrier-pigeon'"),
     ({"model": 5}, "skills[0].model", "5"),
+    ({"tier": "tiny"}, "skills[0].tier", "'tiny'"),
 ])
 def test_wrong_typed_join_key_is_rejected_with_its_field_path(bad, path, shown):
     """A wrong-typed join key raises, and each reason names the offending field
@@ -824,7 +826,7 @@ def test_trajectory_verb_prints_join_key_reasons(tmp_path, monkeypatch, capsys):
 
 
 def test_command_doc_section3_says_how_each_join_key_is_filled():
-    """§3 tells the orchestrator how to fill each of the seven join keys, and
+    """§3 tells the orchestrator how to fill each of the eight join keys, and
     that tokens and session_ref are omitted when unknown, never zeroed or
     blanked."""
     sec = _command_doc_subsection("## 3.")
@@ -1070,6 +1072,142 @@ def test_template_carries_the_dispatch_table_with_every_key_and_no_host_value():
         assert not {"harness", "model", "effort", "args"} & set(entry), role
     assert dispatch["implementer"]["posture"] == "writer"
     assert dispatch["judge"]["posture"] == "reader"
+
+
+# --- [dispatch.small] — a size tier over the judgment roles ------------------
+# Below a diff-size threshold the small tier's model/effort override the base
+# table for judge and simplify. The implementer runs before any diff exists,
+# so it always reads the base table.
+
+SMALL_TIER = (
+    '[dispatch.implementer]\nmodel = "opus"\n'
+    '[dispatch.judge]\nmodel = "opus"\neffort = "high"\n'
+    '[dispatch.small]\nmax_diff_lines = 200\n'
+    '[dispatch.small.judge]\nmodel = "sonnet"\neffort = "low"\n'
+    '[dispatch.small.simplify]\nmodel = "sonnet"\n'
+)
+
+
+def _host_config(tmp_path, monkeypatch, text):
+    """A host repo whose docs/agents/loop.toml is ``text``, as the cwd."""
+    (tmp_path / ".git").mkdir()
+    d = tmp_path / "docs" / "agents"
+    d.mkdir(parents=True)
+    (d / "loop.toml").write_text(text, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+
+def test_load_config_keeps_the_small_tier_as_declared_beside_the_base_table(tmp_path):
+    p = tmp_path / "loop.toml"
+    p.write_text(SMALL_TIER, encoding="utf-8")
+    cfg = cli.load_config(p)
+    assert cfg["dispatch"]["small"] == {
+        "max_diff_lines": 200,
+        "judge": {"model": "sonnet", "effort": "low"},
+        "simplify": {"model": "sonnet"},
+    }
+    assert cfg["dispatch"]["judge"] == {
+        "transport": "agent-tool", "model": "opus", "effort": "high"}
+
+
+def test_load_config_without_a_small_tier_declares_none(tmp_path):
+    """Absent tier: nothing under dispatch.small, and every count is base."""
+    assert "small" not in cli.load_config(tmp_path / "nope.toml")["dispatch"]
+
+
+@pytest.mark.parametrize("lines,tier,judge,simplify", [
+    (199, "small", {"model": "sonnet", "effort": "low"}, {"model": "sonnet"}),
+    (200, "small", {"model": "sonnet", "effort": "low"}, {"model": "sonnet"}),  # at the threshold
+    (201, "base", {"model": "opus", "effort": "high"}, {}),
+])
+def test_config_diff_lines_picks_the_tier_for_the_judgment_roles_only(
+        tmp_path, monkeypatch, capsys, lines, tier, judge, simplify):
+    """At or under max_diff_lines the small tier's values override the base
+    table for judge and simplify; above it the base table stands. The
+    implementer keeps its base entry under every count."""
+    _host_config(tmp_path, monkeypatch, SMALL_TIER)
+    assert cli.main(["config", "--diff-lines", str(lines)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["tier"] == tier
+    assert out["dispatch"]["judge"] == {"transport": "agent-tool", **judge}
+    assert out["dispatch"]["simplify"] == {"transport": "agent-tool", **simplify}
+    assert out["dispatch"]["implementer"] == {"transport": "agent-tool", "model": "opus"}
+
+
+def test_config_without_a_count_is_the_base_tier(tmp_path, monkeypatch, capsys):
+    """No --diff-lines (the implementer's dispatch, before any diff exists):
+    the base table, named as such."""
+    _host_config(tmp_path, monkeypatch, SMALL_TIER)
+    assert cli.main(["config"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["tier"] == "base"
+    assert out["dispatch"]["judge"]["model"] == "opus"
+
+
+def test_config_diff_lines_without_a_small_tier_is_base(tmp_path, monkeypatch, capsys):
+    _host_config(tmp_path, monkeypatch, '[dispatch.judge]\nmodel = "opus"\n')
+    assert cli.main(["config", "--diff-lines", "0"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["tier"] == "base"
+    assert "small" not in out["dispatch"]
+    assert out["dispatch"]["judge"]["model"] == "opus"
+
+
+@pytest.mark.parametrize("text,message", [
+    ('[dispatch.small]\nmax_diff_lines = -1\n', "dispatch.small.max_diff_lines"),
+    ('[dispatch.small]\nmax_diff_lines = "many"\n', "dispatch.small.max_diff_lines"),
+    ('[dispatch.small]\nmax_diff_lines = true\n', "dispatch.small.max_diff_lines"),
+    ('[dispatch.small.judge]\nmodel = "x"\n', "dispatch.small.max_diff_lines"),  # no threshold
+    ('[dispatch.small]\nmax_diff_lines = 10\nbogus = 1\n', "unknown key 'dispatch.small.bogus'"),
+    ('[dispatch.small]\nmax_diff_lines = 10\n[dispatch.small.implementer]\nmodel = "x"\n',
+     "unknown key 'dispatch.small.implementer'"),
+    ('[dispatch.small]\nmax_diff_lines = 10\n[dispatch.small.judge]\ntransport = "herdr"\n',
+     "unknown key 'dispatch.small.judge.transport'"),
+    ('[dispatch.small]\nmax_diff_lines = 10\n[dispatch.small.judge]\nmodel = 4\n',
+     "dispatch.small.judge.model"),
+])
+def test_small_tier_is_refused_by_name_when_malformed(tmp_path, text, message):
+    """The threshold is a required non-negative int; the tier carries only the
+    judgment roles, each with model, effort or args; anything else is named."""
+    p = tmp_path / "loop.toml"
+    p.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        cli.load_config(p)
+
+
+def test_small_tier_via_set_works_like_the_base_table(tmp_path):
+    cfg = cli.apply_overrides(cli.load_config(tmp_path / "nope.toml"), [
+        "dispatch.small.max_diff_lines=120", "dispatch.small.judge.model=sonnet"])
+    assert cfg["dispatch"]["small"] == {"max_diff_lines": 120, "judge": {"model": "sonnet"}}
+    p = tmp_path / "loop.toml"
+    p.write_text(SMALL_TIER, encoding="utf-8")
+    cfg = cli.apply_overrides(cli.load_config(p), ["dispatch.small.max_diff_lines=50"])
+    assert cfg["dispatch"]["small"]["max_diff_lines"] == 50
+    assert cfg["dispatch"]["small"]["judge"] == {"model": "sonnet", "effort": "low"}
+
+
+@pytest.mark.parametrize("spec,message", [
+    ("dispatch.small.judge.model=sonnet", "dispatch.small.max_diff_lines"),  # no threshold
+    ("dispatch.small.implementer.model=x", "unknown key 'dispatch.small.implementer'"),
+    ("dispatch.small.max_diff_lines=-5", "dispatch.small.max_diff_lines"),
+])
+def test_small_tier_via_set_is_refused_by_name_when_malformed(tmp_path, spec, message):
+    with pytest.raises(ValueError, match=message):
+        cli.apply_overrides(cli.load_config(tmp_path / "nope.toml"), [spec])
+
+
+def test_command_doc_picks_the_tier_from_diff_guard_and_records_it():
+    """§1c resolves the tier with the diff-guard count before dispatching the
+    judges, and §3 lists `tier` among the dispatch join keys the stage record
+    carries."""
+    doc = (cli.REPO_ROOT / "docs" / "agents" / "issue-loop.command.md").read_text(
+        encoding="utf-8")
+    gate = doc[doc.index("### 1c."):doc.index("### 1d.")]
+    assert "devloop config --diff-lines" in gate
+    assert "changed_lines" in gate[:gate.index("devloop config --diff-lines")]
+    assert "`tier`" in gate
+    vault = doc[doc.index("## 3."):doc.index("## 4.")]
+    assert "- `tier`" in vault
 
 
 # --- deleted keys are rejected, named (issue #39 AC2, dec-cf8f0d33) ---------

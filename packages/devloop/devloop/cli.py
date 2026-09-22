@@ -11,7 +11,8 @@ Subcommands:
   claim    — claim an issue for a run (the assignee IS the claim)
   release  — drop the claim
   config     — print resolved loop config (defaults merged with loop.toml;
-               an unknown or deleted key is refused by name)
+               an unknown or deleted key is refused by name); --diff-lines N
+               names the dispatch tier a diff of N changed lines takes
   check      — run one deterministic gate (kind: command | diff) and emit JSON;
                --issue N runs the issue's `verify:` lines as command gates
   validate   — validate a judgment gate's subagent return (kind: judge |
@@ -172,7 +173,12 @@ DISPATCH_KEYS: dict[str, type] = {
 }
 DISPATCH_CHOICES = {"transport": ("agent-tool", "herdr"), "posture": ("writer", "reader")}
 DISPATCH_DEFAULT = {"transport": "agent-tool"}
-OVERRIDABLE = " | ".join((*SECTIONS, "dispatch.<role>"))
+# [dispatch.small]: the size tier. At or under max_diff_lines changed lines its
+# per-role model / effort / args lay over the base table for the judgment
+# roles. The implementer runs before any diff exists, so it never takes it.
+TIERED_ROLES = ("judge", "simplify")
+TIER_KEYS = ("model", "effort", "args")
+OVERRIDABLE = " | ".join((*SECTIONS, "dispatch.<role>", "dispatch.small"))
 
 
 # ---------------------------------------------------------------------------
@@ -187,27 +193,74 @@ def _known_key(section: str, key: str) -> None:
         raise ValueError(f"unknown key '{section}.{key}' (known: {known})")
 
 
-def _checked_dispatch(role: str, entry: object) -> dict:
+def _checked_dispatch(role: str, entry: object, where: str = "dispatch") -> dict:
     """Refuse by name a role the loop does not dispatch, a key its entry does
     not carry, or a value of the wrong shape: transport and posture take their
     declared values, args is a list of strings, the rest are strings."""
     if role not in ROLES:
-        raise ValueError(f"unknown role 'dispatch.{role}' (known: {', '.join(ROLES)})")
+        raise ValueError(f"unknown role '{where}.{role}' (known: {', '.join(ROLES)})")
     if not isinstance(entry, dict):
-        raise ValueError(f"dispatch.{role}: expected a table, got {entry!r}")
+        raise ValueError(f"{where}.{role}: expected a table, got {entry!r}")
     for key, value in entry.items():
         if key not in DISPATCH_KEYS:
-            raise ValueError(f"unknown key 'dispatch.{role}.{key}' "
+            raise ValueError(f"unknown key '{where}.{role}.{key}' "
                              f"(known: {', '.join(DISPATCH_KEYS)})")
         choices = DISPATCH_CHOICES.get(key)
         if choices and value not in choices:
-            raise ValueError(f"dispatch.{role}.{key}: expected "
+            raise ValueError(f"{where}.{role}.{key}: expected "
                              f"{' | '.join(choices)}, got {value!r}")
         strings = value if key == "args" else [value]
         if not isinstance(value, DISPATCH_KEYS[key]) or not all(isinstance(a, str) for a in strings):
             want = "a list of strings" if key == "args" else "a string"
-            raise ValueError(f"dispatch.{role}.{key}: expected {want}, got {value!r}")
+            raise ValueError(f"{where}.{role}.{key}: expected {want}, got {value!r}")
     return entry
+
+
+def _checked_small(entry: object) -> dict:
+    """Refuse by name a small-tier key that is neither the threshold nor a
+    judgment role, a role key outside model / effort / args, or a threshold
+    that is not a non-negative int."""
+    if not isinstance(entry, dict):
+        raise ValueError(f"dispatch.small: expected a table, got {entry!r}")
+    for key, value in entry.items():
+        if key == "max_diff_lines":
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError("dispatch.small.max_diff_lines: expected a "
+                                 f"non-negative int, got {value!r}")
+        elif key in TIERED_ROLES:
+            extra = sorted(set(value) - set(TIER_KEYS)) if isinstance(value, dict) else []
+            if extra:
+                raise ValueError(f"unknown key 'dispatch.small.{key}.{extra[0]}' "
+                                 f"(known: {', '.join(TIER_KEYS)})")
+            _checked_dispatch(key, value, where="dispatch.small")
+        else:
+            raise ValueError(f"unknown key 'dispatch.small.{key}' "
+                             f"(known: max_diff_lines, {', '.join(TIERED_ROLES)})")
+    return entry
+
+
+def _checked_tier(cfg: dict) -> dict:
+    """A declared small tier without its threshold would apply never and say
+    nothing; refuse it once the file and the overrides are both in."""
+    small = cfg["dispatch"].get("small")
+    if small is not None and "max_diff_lines" not in small:
+        raise ValueError("dispatch.small.max_diff_lines: required when the tier is declared")
+    return cfg
+
+
+def resolve_tier(cfg: dict, diff_lines: int | None) -> dict:
+    """Name under ``tier`` the dispatch tier a diff of ``diff_lines`` takes and
+    lay the small tier's entries over the judgment roles when it applies. No
+    count, no small tier, or a count over ``max_diff_lines`` is ``base``; the
+    implementer reads the base table under every count."""
+    small = cfg["dispatch"].get("small")
+    applies = (small is not None and diff_lines is not None
+               and diff_lines <= small["max_diff_lines"])
+    cfg["tier"] = "small" if applies else "base"
+    if applies:
+        for role in TIERED_ROLES:
+            cfg["dispatch"][role].update(small.get(role, {}))
+    return cfg
 
 
 def _checked_gates(gates: list[dict]) -> list[dict]:
@@ -246,8 +299,11 @@ def load_config(path: Path | None = None) -> dict:
                 continue
             if section == "dispatch":
                 for role, entry in values.items():
-                    checked = _checked_dispatch(role, entry)
-                    cfg["dispatch"][role].update(checked)
+                    if role == "small":
+                        cfg["dispatch"]["small"] = _checked_small(entry)
+                    else:
+                        checked = _checked_dispatch(role, entry)
+                        cfg["dispatch"][role].update(checked)
                 continue
             if section not in SECTIONS:
                 raise ValueError(
@@ -255,7 +311,7 @@ def load_config(path: Path | None = None) -> dict:
             for key in values:
                 _known_key(section, key)
             cfg[section].update(values)
-    return cfg
+    return _checked_tier(cfg)
 
 
 def parse_override(spec: str) -> tuple[str, str, object]:
@@ -277,11 +333,21 @@ def parse_override(spec: str) -> tuple[str, str, object]:
 
 def apply_overrides(cfg: dict, specs: list[str]) -> dict:
     """Apply per-run ``--set`` overrides after loop.toml. Only existing scalar
-    knobs and ``dispatch.<role>.<key>`` may be overridden; gates are file-only."""
+    knobs, ``dispatch.<role>.<key>`` and ``dispatch.small[.<role>].<key>`` may
+    be overridden; gates are file-only."""
     for spec in specs:
         section, key, value = parse_override(spec)
         if section == "dispatch":
             role, _, key = key.partition(".")
+            if role == "small":
+                sub, dot, leaf = key.partition(".")
+                checked = _checked_small({sub: {leaf: value}} if dot else {sub: value})
+                small = cfg["dispatch"].setdefault("small", {})
+                if dot:
+                    small.setdefault(sub, {}).update(checked[sub])
+                else:
+                    small.update(checked)
+                continue
             checked = _checked_dispatch(role, {key: value})
             cfg["dispatch"][role].update(checked)
             continue
@@ -289,7 +355,7 @@ def apply_overrides(cfg: dict, specs: list[str]) -> dict:
             raise ValueError(f"--set section '{section}' not overridable ({OVERRIDABLE})")
         _known_key(section, key)
         cfg[section][key] = value
-    return cfg
+    return _checked_tier(cfg)
 
 
 def _split_csv(value: str | None) -> list[str]:
@@ -328,7 +394,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_release = sub.add_parser("release", help="release a claimed issue", parents=[common])
     p_release.add_argument("number", type=int)
 
-    sub.add_parser("config", help="print resolved config as JSON", parents=[common])
+    p_config = sub.add_parser("config", help="print resolved config as JSON", parents=[common])
+    p_config.add_argument("--diff-lines", type=int, default=None, metavar="N",
+                          help="the diff-guard changed-line count: resolves the "
+                               "dispatch tier (`tier`) and lays [dispatch.small] "
+                               "over judge and simplify when N is at or under "
+                               "its max_diff_lines; omit for the base table")
 
     p_check = sub.add_parser(
         "check", help="run one deterministic gate, or an issue's verify: lines", parents=[common])
@@ -460,6 +531,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.cmd == "config":
+        resolve_tier(cfg, args.diff_lines)
         # An "error" entry tells the orchestrator to stop, not to splice nothing.
         try:
             cfg["constitution"] = [str(p) for p in find_constitution()]

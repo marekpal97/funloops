@@ -76,5 +76,6 @@
       "min_diff_lines": 50
     }
   ],
+  "tier": "base",
   "constitution": []
 }

@@ -15,7 +15,8 @@
 # the command line, not in edits to this file: every knob in
 # [loop]/[labels]/[tdd]/[triage] takes `--set [section.]key=value` for a
 # single run, and every [dispatch.<role>] key takes
-# `--set dispatch.<role>.<key>=<value>`. Gates are file-only by design — the
+# `--set dispatch.<role>.<key>=<value>` (the size tier:
+# `--set dispatch.small[.<role>].<key>=<value>`). Gates are file-only by design — the
 # pipeline is a trust boundary you change in review-visible history, not a
 # per-run mood. A key the rail does not know is refused by name, on both paths.
 
@@ -82,6 +83,20 @@ transport = "agent-tool"
 [dispatch.simplify]
 posture = "reader"
 transport = "agent-tool"
+
+# The size tier (optional). At or under max_diff_lines changed lines — the
+# diff-guard count — these model / effort / args stand in for the base entries
+# of judge and simplify. The implementer runs before any diff exists and never
+# takes it. Absent, the base table applies at every size; declared,
+# max_diff_lines is required. `devloop config --diff-lines <n>` prints the
+# tier a count takes and the effective table; each stage record carries it.
+# [dispatch.small]
+# max_diff_lines = 200
+# [dispatch.small.judge]
+# model = "sonnet"
+# effort = "low"
+# [dispatch.small.simplify]
+# model = "sonnet"
 
 # ── Gate pipeline ─────────────────────────────────────────────────────────
 # Ordered, and the order is the contract: the deterministic guards run first,

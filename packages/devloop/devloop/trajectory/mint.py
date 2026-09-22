@@ -6,10 +6,12 @@ Internal to this file: the trace normalizers and the skill projection.
 from __future__ import annotations
 
 TRANSPORTS = ("agent-tool", "herdr", "headless-argv")
+TIERS = ("base", "small")
 DISPATCH_KEYS: dict[str, type] = {
     "transport": str, "harness": str, "model": str, "effort": str,
-    "session_ref": str, "duration_sec": int, "tokens": int,
+    "session_ref": str, "duration_sec": int, "tokens": int, "tier": str,
 }
+DISPATCH_CHOICES = {"transport": TRANSPORTS, "tier": TIERS}
 
 
 def _normalize_skill(entry: dict, where: str, reasons: list[str]) -> dict:
@@ -29,8 +31,9 @@ def _normalize_skill(entry: dict, where: str, reasons: list[str]) -> dict:
         value = entry[key]
         if not isinstance(value, kind) or isinstance(value, bool):
             reasons.append(f"{where}.{key}: expected {kind.__name__}, got {value!r}")
-        elif key == "transport" and value not in TRANSPORTS:
-            reasons.append(f"{where}.{key}: {value!r} is not one of {' | '.join(TRANSPORTS)}")
+        elif key in DISPATCH_CHOICES and value not in DISPATCH_CHOICES[key]:
+            reasons.append(f"{where}.{key}: {value!r} is not one of "
+                           f"{' | '.join(DISPATCH_CHOICES[key])}")
         else:
             out[key] = value
     return out
