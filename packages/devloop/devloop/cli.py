@@ -11,7 +11,8 @@ Subcommands:
   claim    — claim an issue for a run (the assignee IS the claim)
   release  — drop the claim
   config     — print resolved loop config (defaults merged with loop.toml;
-               an unknown or deleted key is refused by name)
+               an unknown or deleted key is refused by name); --diff-lines N
+               names the dispatch tier a diff of N changed lines takes
   check      — run one deterministic gate (kind: command | diff) and emit JSON;
                --issue N runs the issue's `verify:` lines as command gates
   validate   — validate a judgment gate's subagent return (kind: judge |
@@ -162,6 +163,22 @@ DEFAULT_CONFIG: dict = {
 # checked per kind (gates.GATE_KEYS); anything else is unknown by name.
 SECTIONS = ("loop", "labels", "tdd", "triage")
 
+# [dispatch]: which agent runs a role, one sub-table per role. A role IS its
+# entry: the loop's own three always resolve, and any other entry declares
+# one more. The rail checks shape only; a harness or model name is the host's
+# to get right. Absent keys mean the Agent tool, the session's model, no
+# argv tail.
+ROLES = ("implementer", "judge", "simplify")
+DISPATCH_KEYS = ("posture", "transport", "harness", "model", "effort", "args")
+DISPATCH_CHOICES = {"transport": ("agent-tool", "herdr"), "posture": get_args(pack.Posture)}
+DISPATCH_DEFAULT = {"transport": "agent-tool"}
+# [dispatch.small]: the size tier. At or under max_diff_lines changed lines its
+# per-role model / effort / args lay over the base table for the judgment
+# roles. The implementer runs before any diff exists, so it never takes it.
+TIERED_ROLES = ("judge", "simplify")
+TIER_KEYS = ("model", "effort", "args")
+OVERRIDABLE = " | ".join((*SECTIONS, "dispatch.<role>", "dispatch.small"))
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -173,6 +190,70 @@ def _known_key(section: str, key: str) -> None:
     if key not in DEFAULT_CONFIG[section]:
         known = ", ".join(sorted(DEFAULT_CONFIG[section]))
         raise ValueError(f"unknown key '{section}.{key}' (known: {known})")
+
+
+def _checked_dispatch(role: str, entry: object, where: str = "dispatch",
+                      keys: tuple[str, ...] = DISPATCH_KEYS) -> dict:
+    """Refuse by name a key a role's entry does not carry, or a value of the
+    wrong shape: transport and posture take their declared values, args is a
+    list of strings, the rest are strings."""
+    if not isinstance(entry, dict):
+        raise ValueError(f"{where}.{role}: expected a table, got {entry!r}")
+    for key, value in entry.items():
+        if key not in keys:
+            raise ValueError(f"unknown key '{where}.{role}.{key}' "
+                             f"(known: {', '.join(keys)})")
+        choices = DISPATCH_CHOICES.get(key)
+        if choices and value not in choices:
+            raise ValueError(f"{where}.{role}.{key}: expected "
+                             f"{' | '.join(choices)}, got {value!r}")
+        strings = value if isinstance(value, list) else [value]
+        if isinstance(value, list) != (key == "args") or not all(isinstance(a, str) for a in strings):
+            want = "a list of strings" if key == "args" else "a string"
+            raise ValueError(f"{where}.{role}.{key}: expected {want}, got {value!r}")
+    return entry
+
+
+def _checked_small(entry: object) -> dict:
+    """Refuse by name a small-tier key that is neither the threshold nor a
+    judgment role, a role key outside model / effort / args, or a threshold
+    that is not a non-negative int."""
+    if not isinstance(entry, dict):
+        raise ValueError(f"dispatch.small: expected a table, got {entry!r}")
+    for key, value in entry.items():
+        if key == "max_diff_lines":
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError("dispatch.small.max_diff_lines: expected a "
+                                 f"non-negative int, got {value!r}")
+        elif key in TIERED_ROLES:
+            _checked_dispatch(key, value, where="dispatch.small", keys=TIER_KEYS)
+        else:
+            raise ValueError(f"unknown key 'dispatch.small.{key}' "
+                             f"(known: max_diff_lines, {', '.join(TIERED_ROLES)})")
+    return entry
+
+
+def _checked_tier(cfg: dict) -> dict:
+    """A declared small tier without its threshold would apply never and say
+    nothing; refuse it once the file and the overrides are both in."""
+    small = cfg["dispatch"].get("small")
+    if small is not None and "max_diff_lines" not in small:
+        raise ValueError("dispatch.small.max_diff_lines: required when the tier is declared")
+    return cfg
+
+
+def resolve_tier(cfg: dict, diff_lines: int | None) -> None:
+    """Name under ``tier`` the dispatch tier a diff of ``diff_lines`` takes and
+    lay the small tier's entries over the judgment roles when it applies. No
+    count, no small tier, or a count over ``max_diff_lines`` is ``base``; the
+    implementer reads the base table under every count."""
+    small = cfg["dispatch"].get("small")
+    applies = (small is not None and diff_lines is not None
+               and diff_lines <= small["max_diff_lines"])
+    cfg["tier"] = "small" if applies else "base"
+    if applies:
+        for role in TIERED_ROLES:
+            cfg["dispatch"][role].update(small.get(role, {}))
 
 
 def _checked_gates(gates: list[dict]) -> list[dict]:
@@ -201,6 +282,7 @@ def load_config(path: Path | None = None) -> dict:
     section or key the defaults do not carry raises ``ValueError`` naming it."""
     path = path if path is not None else find_config()
     cfg: dict = {section: dict(DEFAULT_CONFIG[section]) for section in SECTIONS}
+    cfg["dispatch"] = {role: dict(DISPATCH_DEFAULT) for role in ROLES}
     cfg["gates"] = []
     if path.exists():
         data = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -208,18 +290,27 @@ def load_config(path: Path | None = None) -> dict:
             if section == "gates":
                 cfg["gates"] = _checked_gates(values)
                 continue
+            if section == "dispatch":
+                for role, entry in values.items():
+                    if role == "small":
+                        cfg["dispatch"]["small"] = _checked_small(entry)
+                    else:
+                        checked = _checked_dispatch(role, entry)
+                        cfg["dispatch"].setdefault(role, dict(DISPATCH_DEFAULT)).update(checked)
+                continue
             if section not in SECTIONS:
                 raise ValueError(
-                    f"unknown section '{section}' in {path.name} (known: {' | '.join(SECTIONS)})")
+                    f"unknown section '{section}' in {path.name} (known: {OVERRIDABLE})")
             for key in values:
                 _known_key(section, key)
             cfg[section].update(values)
-    return cfg
+    return _checked_tier(cfg)
 
 
 def parse_override(spec: str) -> tuple[str, str, object]:
     """Parse one ``--set [section.]key=value`` spec. The section defaults to
-    ``loop``; the value is parsed as a TOML scalar, a bare word as a string."""
+    ``loop``; ``dispatch.<role>.<key>`` keeps ``<role>.<key>`` as the key; the
+    value is parsed as a TOML scalar, a bare word as a string."""
     head, sep, raw = spec.partition("=")
     if not sep or not head.strip() or not raw.strip():
         raise ValueError(f"malformed --set '{spec}' (expected [section.]key=value)")
@@ -235,15 +326,29 @@ def parse_override(spec: str) -> tuple[str, str, object]:
 
 def apply_overrides(cfg: dict, specs: list[str]) -> dict:
     """Apply per-run ``--set`` overrides after loop.toml. Only existing scalar
-    knobs may be overridden; gates are file-only."""
+    knobs, ``dispatch.<role>.<key>`` and ``dispatch.small[.<role>].<key>`` may
+    be overridden; gates are file-only."""
     for spec in specs:
         section, key, value = parse_override(spec)
+        if section == "dispatch":
+            role, _, key = key.partition(".")
+            if role == "small":
+                sub, dot, leaf = key.partition(".")
+                checked = _checked_small({sub: {leaf: value}} if dot else {sub: value})
+                small = cfg["dispatch"].setdefault("small", {})
+                if dot:
+                    small.setdefault(sub, {}).update(checked[sub])
+                else:
+                    small.update(checked)
+                continue
+            checked = _checked_dispatch(role, {key: value})
+            cfg["dispatch"].setdefault(role, dict(DISPATCH_DEFAULT)).update(checked)
+            continue
         if section not in SECTIONS:
-            raise ValueError(
-                f"--set section '{section}' not overridable ({' | '.join(SECTIONS)})")
+            raise ValueError(f"--set section '{section}' not overridable ({OVERRIDABLE})")
         _known_key(section, key)
         cfg[section][key] = value
-    return cfg
+    return _checked_tier(cfg)
 
 
 def _split_csv(value: str | None) -> list[str]:
@@ -262,8 +367,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--set", action="append", dest="overrides", default=[],
         metavar="[SECTION.]KEY=VALUE",
         help="per-run config override, e.g. --set delivery=stacked "
-             "--set max_issues_per_run=6 (section defaults to 'loop'; "
-             "repeatable; applied after loop.toml; gates are file-only)",
+             "--set max_issues_per_run=6 --set dispatch.judge.model=opus "
+             "(section defaults to 'loop'; repeatable; applied after "
+             "loop.toml; gates are file-only)",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -281,7 +387,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_release = sub.add_parser("release", help="release a claimed issue", parents=[common])
     p_release.add_argument("number", type=int)
 
-    sub.add_parser("config", help="print resolved config as JSON", parents=[common])
+    p_config = sub.add_parser("config", help="print resolved config as JSON", parents=[common])
+    p_config.add_argument("--diff-lines", type=int, default=None, metavar="N",
+                          help="the diff-guard changed-line count: picks the dispatch "
+                               "tier; omit for the base table")
 
     p_check = sub.add_parser(
         "check", help="run one deterministic gate, or an issue's verify: lines", parents=[common])
@@ -386,9 +495,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_pack = sub.add_parser("pack", help="compose one dispatch's context and print it", parents=[common])
     p_pack.add_argument("number", type=int)
-    p_pack.add_argument("--role", choices=get_args(pack.Role), default="implementer",
-                        help="implementer: issue + rules + persona + repo map + "
-                             "standing orders; judge: issue + rules + repo map")
+    p_pack.add_argument("--role", default="implementer", metavar="ROLE",
+                        help="any [dispatch] role; its posture shapes the pack — "
+                             "writer: issue + rules + persona + repo map + standing "
+                             "orders; reader: issue + rules + repo map")
     p_pack.add_argument("--cwd", default=".",
                         help="the worktree to map (its .codegraph index is self-provisioned)")
     p_pack.add_argument("--codegraph-bin",
@@ -413,6 +523,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.cmd == "config":
+        resolve_tier(cfg, args.diff_lines)
         # An "error" entry tells the orchestrator to stop, not to splice nothing.
         try:
             cfg["constitution"] = [str(p) for p in find_constitution()]
@@ -573,18 +684,28 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if failed else 0
     elif args.cmd == "pack":
         root = Path(args.cwd).resolve()
+        roles = [r for r in cfg["dispatch"] if r != "small"]
+        posture = cfg["dispatch"].get(args.role, {}).get("posture")
+        # A role no entry declares, an entry without a posture, a missing
+        # rules file or persona: each is an error marker, never a pack shaped
+        # by a guess or dispatched without them.
+        if args.role not in roles:
+            print(json.dumps({"error": f"unknown role '{args.role}' (known: {', '.join(roles)})"}))
+            return 2
+        if posture is None:
+            print(json.dumps({"error": f"dispatch.{args.role}.posture: required to shape "
+                                       f"the pack ({' | '.join(DISPATCH_CHOICES['posture'])})"}))
+            return 2
         issue = pack.Issue(**json.loads(github.run(
             ["issue", "view", str(args.number), "--json", "title,body"], cwd=root)))
         try:
-            # A missing rules file or persona is an error marker, never a
-            # pack that dispatches without them.
             rules = [pack.body(p) for p in find_constitution(root)]
-            persona = pack.body(PACKAGE_PERSONA) if args.role == "implementer" else ""
+            persona = pack.body(PACKAGE_PERSONA) if posture == "writer" else ""
         except FileNotFoundError as exc:
             print(json.dumps({"error": str(exc)}))
             return 2
         print(pack.compose(
-            args.number, issue, args.role, rules, persona,
+            args.number, issue, args.role, posture, rules, persona,
             pack.Codegraph(args.codegraph_bin, root),
             prime=Path(args.prime).read_text(encoding="utf-8") if args.prime else "",
             trace=Path(args.trace).read_text(encoding="utf-8") if args.trace else "",

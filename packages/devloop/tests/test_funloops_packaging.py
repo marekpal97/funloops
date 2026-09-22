@@ -43,9 +43,11 @@ def _shape(cfg: dict) -> dict:
     """Sections, their knob lists, and the gate id/kind/key contract — the part
     of the config that must not drift; values are host-owned. `constitution`
     is resolved absolute paths (machine-owned values, issue #26), so only its
-    presence and container type are shape."""
+    presence and container type are shape. `tier` with no diff count is the
+    base table, so its value is the shape."""
     return {s: [(g["id"], g["kind"], sorted(g)) for g in cfg[s]] if s == "gates"
             else type(cfg[s]).__name__ if s == "constitution"
+            else cfg[s] if s == "tier"
             else list(cfg[s])
             for s in cfg}
 

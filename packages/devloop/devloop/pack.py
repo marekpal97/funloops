@@ -1,9 +1,10 @@
 """The dispatch pack: one dispatch's context, printed by ``devloop pack``.
 
-In order: the issue; the rules; the persona (implementer only); the repo
-map from codegraph's CLI, a catalog tier and an issue-slice tier, any
+In order: the issue; the rules; the persona (writer posture only); the
+repo map from codegraph's CLI, a catalog tier and an issue-slice tier, any
 failure degrading to a marked block; the prime block and the run's trace
-when the host supplies them; the standing orders (implementer only).
+when the host supplies them; the standing orders (writer posture only).
+The role is any ``[dispatch]`` entry; its ``posture`` picks the sections.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Literal, NamedTuple
 
-Role = Literal["implementer", "judge"]
+Posture = Literal["writer", "reader"]
 
 # Each tier renders at most this many lines; over it, the largest directories
 # fold first. Sized so the map fits under 2,000 chars of an 8,000-char pack.
@@ -29,28 +30,29 @@ class Issue(NamedTuple):
     body: str
 
 
-def compose(number: int, issue: Issue, role: Role, rules: list[str], persona: str,
-            codegraph: Codegraph, prime: str = "", trace: str = "") -> str:
-    """The pack text for one dispatch. An empty ``rules`` is refused; a
-    codegraph failure renders the degraded block, never an exception."""
+def compose(number: int, issue: Issue, role: str, posture: Posture, rules: list[str],
+            persona: str, codegraph: Codegraph, prime: str = "", trace: str = "") -> str:
+    """The pack text for one dispatch: ``role`` names it, ``posture`` shapes
+    it. An empty ``rules`` is refused; a codegraph failure renders the
+    degraded block, never an exception."""
     if not rules:
         raise ValueError("a pack carries the rules; none were resolved")
     try:
         repo_map = codegraph.repo_map(issue)
     except CodegraphUnavailable as e:
         repo_map = DEGRADED.format(reason=e)
-    implementer = role == "implementer"
+    writer = posture == "writer"
     parts = [f"# Dispatch pack — issue #{number} ({role})",
              f"## Issue\n\n{issue.title}\n\n{issue.body.strip()}",
              "## Rules\n\n" + "\n\n".join(rules)]
-    if implementer:
+    if writer:
         parts.append(f"## Persona\n\n{persona}")
     parts.append(repo_map)
     if prime.strip():
         parts.append(f"## Prior lessons\n\n{prime.strip()}")
     if trace.strip():
         parts.append(f"## Run trace\n\n{trace.strip()}")
-    if implementer:
+    if writer:
         parts.append(STANDING_ORDERS)
     return "\n\n".join(parts) + "\n"
 
@@ -326,9 +328,10 @@ neighbours (what they import, who imports them)."""
 STANDING_ORDERS = """\
 ## Standing orders
 
-The dispatch is this pack plus two lines the orchestrator adds: the branch
-name and the baseline verdict (`green` or `red`, the tests gate on the pristine
-worktree). Nothing else instructs you; a rule stated here is stated once.
+The dispatch is this pack plus three lines the orchestrator adds: the branch
+name, the baseline verdict (`green` or `red`, the tests gate on the pristine
+worktree), and the return file path. Nothing else instructs you; a rule stated
+here is stated once.
 
 - Read the repo's architecture and design docs for the areas you touch before
   editing them; a documented standard overrides your instinct.
@@ -361,8 +364,9 @@ worktree). Nothing else instructs you; a rule stated here is stated once.
   orchestrator owns the control plane.
 - Return: worktree path, branch, files touched, test commands run, any deviation
   from the issue's declared shapes with its reason, and any acceptance criterion
-  you believe is NOT yet met (honesty over green-washing). A report longer than
-  a screen is a file in the worktree; return its path.
+  you believe is NOT yet met (honesty over green-washing). Write the whole
+  return to the return file the dispatch names; the orchestrator reads that
+  file, never your screen.
 
 **Drill down with codegraph's CLI.** The catalog and slice above are already
 spliced; do not re-derive them. Before writing, look at what exists:
