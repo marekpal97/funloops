@@ -134,14 +134,17 @@ report into the deduped, ordered op list `board sweep --apply` replays.
 Conventions text: `issue-loop.command.md` §Board hygiene.
 
 **`pack.py`** — the dispatch pack (funloops#28, #45, #46, #47; dec-f12457eb,
-dec-fd12489d, dec-d2de831e, dec-2f8c2322, dec-e6561edc, dec-72c80057): `Issue`, `Role`,
+dec-fd12489d, dec-d2de831e, dec-2f8c2322, dec-e6561edc, dec-72c80057): `Issue`, `Posture`,
 `compose`, `LINE_BUDGET`, `FileRecord`, `Codegraph` (the tool object:
 `repo_map` · `sync` · `files` · `context` · `entry_points` · `node`),
 `Directory` (the map object: `tree` · `catalog` · `slice`, and the fold
 below them), and below those `responsibility`, `parts`, `named_files`,
 `body`. Composition, the map's two tiers and the line budget are the
 module docstring's and `LINE_BUDGET`'s comment; the dispatch shape is
-`issue-loop.command.md` §1b (dec-72c80057, dec-e6561edc).
+`issue-loop.command.md` §1b (dec-72c80057, dec-e6561edc). A role is a
+`loop.toml [dispatch.<role>]` entry whose `posture` shapes its pack and whose
+`transport` picks §1b's recipe; one more role is one entry plus one section
+of the command doc, the same rule §3 states for judgment kinds.
 
 **`index_client.py`** — §5.
 

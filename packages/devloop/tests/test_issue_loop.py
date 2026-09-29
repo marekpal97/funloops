@@ -759,6 +759,7 @@ def test_build_trajectory_skills_shape():
 DISPATCH_KEYS = {
     "transport": "agent-tool", "harness": "claude-code", "model": "claude-opus-5",
     "effort": "high", "session_ref": "sess-01ABC", "duration_sec": 412, "tokens": 183_000,
+    "tier": "small",
 }
 
 
@@ -771,7 +772,7 @@ def _trajectory_with_skills(skills):
 
 
 def test_skill_record_carries_the_dispatch_join_keys_verbatim():
-    """A stage record with all seven dispatch join keys lands in frontmatter
+    """A stage record with all eight dispatch join keys lands in frontmatter
     with every value unchanged; the four contracted fields stay beside them."""
     payload = _trajectory_with_skills([
         {"id": "implementer", "role": "implementer", "outcome": "shipped",
@@ -788,6 +789,7 @@ def test_skill_record_carries_the_dispatch_join_keys_verbatim():
     ({"duration_sec": True}, "skills[0].duration_sec", "True"),
     ({"transport": "carrier-pigeon"}, "skills[0].transport", "'carrier-pigeon'"),
     ({"model": 5}, "skills[0].model", "5"),
+    ({"tier": "tiny"}, "skills[0].tier", "'tiny'"),
 ])
 def test_wrong_typed_join_key_is_rejected_with_its_field_path(bad, path, shown):
     """A wrong-typed join key raises, and each reason names the offending field
@@ -824,7 +826,7 @@ def test_trajectory_verb_prints_join_key_reasons(tmp_path, monkeypatch, capsys):
 
 
 def test_command_doc_section3_says_how_each_join_key_is_filled():
-    """§3 tells the orchestrator how to fill each of the seven join keys, and
+    """§3 tells the orchestrator how to fill each of the eight join keys, and
     that tokens and session_ref are omitted when unknown, never zeroed or
     blanked."""
     sec = _command_doc_subsection("## 3.")
@@ -991,6 +993,222 @@ def test_apply_overrides_noop_without_specs(tmp_path):
     assert cli.apply_overrides(cfg, []) is cfg
 
 
+# --- [dispatch] — which agent runs a role is run posture, per role -----------
+
+
+def test_load_config_without_dispatch_resolves_every_role_to_the_agent_tool(tmp_path):
+    """No `[dispatch]` table: every configured role is the Agent tool with no
+    harness, model, effort, args or posture — today's behaviour, spelled out."""
+    cfg = cli.load_config(tmp_path / "nope.toml")
+    assert cfg["dispatch"] == {
+        "implementer": {"transport": "agent-tool"},
+        "judge": {"transport": "agent-tool"},
+        "simplify": {"transport": "agent-tool"},
+    }
+
+
+def test_load_config_merges_a_dispatch_role_over_the_default(tmp_path):
+    p = tmp_path / "loop.toml"
+    p.write_text('[dispatch.judge]\ntransport = "herdr"\nharness = "codex"\n'
+                 'args = ["-m", "o3"]\n', encoding="utf-8")
+    cfg = cli.load_config(p)
+    assert cfg["dispatch"]["judge"] == {
+        "transport": "herdr", "harness": "codex", "args": ["-m", "o3"]}
+    assert cfg["dispatch"]["implementer"] == {"transport": "agent-tool"}
+
+
+def test_dispatch_override_via_set_sets_one_key_of_one_role(tmp_path):
+    cfg = cli.apply_overrides(cli.load_config(tmp_path / "nope.toml"),
+                              ["dispatch.judge.harness=codex",
+                               'dispatch.judge.args=["--model", "opus"]'])
+    assert cfg["dispatch"]["judge"] == {
+        "transport": "agent-tool", "harness": "codex", "args": ["--model", "opus"]}
+    assert cfg["dispatch"]["simplify"] == {"transport": "agent-tool"}
+
+
+def test_dispatch_refuses_an_unknown_key_by_name_on_both_paths(tmp_path):
+    cfg = cli.load_config(tmp_path / "nope.toml")
+    with pytest.raises(ValueError, match="unknown key 'dispatch.judge.bogus'"):
+        cli.apply_overrides(cfg, ["dispatch.judge.bogus=x"])
+    p = tmp_path / "loop.toml"
+    p.write_text('[dispatch.judge]\nbogus = "x"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown key 'dispatch.judge.bogus'"):
+        cli.load_config(p)
+
+
+def test_a_dispatch_entry_declares_a_role_on_both_paths(tmp_path):
+    """A role is a `[dispatch]` entry (funloops#65): an entry the defaults do
+    not carry declares a new role over the default transport, whether the
+    file or `--set` declares it; the default roles stay as they were."""
+    declared = {"transport": "agent-tool", "posture": "reader"}
+    p = tmp_path / "loop.toml"
+    p.write_text('[dispatch.reviewer]\nposture = "reader"\n', encoding="utf-8")
+    cfg = cli.load_config(p)
+    assert cfg["dispatch"]["reviewer"] == declared
+    assert cfg["dispatch"]["judge"] == {"transport": "agent-tool"}
+    cfg = cli.apply_overrides(cli.load_config(tmp_path / "nope.toml"),
+                              ["dispatch.reviewer.posture=reader"])
+    assert cfg["dispatch"]["reviewer"] == declared
+
+
+@pytest.mark.parametrize("entry", [
+    'transport = "ssh"',        # not agent-tool | herdr
+    'posture = "editor"',       # not writer | reader
+    'args = "--model opus"',    # the argv tail is a list, not one string
+    "model = 4",                # a name, not a number
+])
+def test_dispatch_refuses_a_value_of_the_wrong_shape_naming_the_key(tmp_path, entry):
+    """Shape only: transport and posture are closed sets, args is a list of
+    strings, the rest are strings. Model and harness names are never checked
+    against a list."""
+    p = tmp_path / "loop.toml"
+    p.write_text(f"[dispatch.implementer]\n{entry}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="dispatch.implementer." + entry.split(" ")[0]):
+        cli.load_config(p)
+
+
+def test_template_carries_the_dispatch_table_with_every_key_and_no_host_value():
+    """Every dispatch key appears in the template, live or commented; what
+    resolves from it names no harness, model, effort or argv tail."""
+    template_path = cli.REPO_ROOT / "docs" / "agents" / "loop.toml.template"
+    text = template_path.read_text(encoding="utf-8")
+    for key in ("transport", "harness", "model", "effort", "args", "posture"):
+        assert f"{key} = " in text, key
+    dispatch = cli.load_config(template_path)["dispatch"]
+    assert set(dispatch) == {"implementer", "judge", "simplify"}
+    for role, entry in dispatch.items():
+        assert entry["transport"] == "agent-tool", role
+        assert not {"harness", "model", "effort", "args"} & set(entry), role
+    assert dispatch["implementer"]["posture"] == "writer"
+    assert dispatch["judge"]["posture"] == "reader"
+
+
+# --- [dispatch.small] — a size tier over the judgment roles ------------------
+# Below a diff-size threshold the small tier's model/effort override the base
+# table for judge and simplify. The implementer runs before any diff exists,
+# so it always reads the base table.
+
+SMALL_TIER = (
+    '[dispatch.implementer]\nmodel = "opus"\n'
+    '[dispatch.judge]\nmodel = "opus"\neffort = "high"\n'
+    '[dispatch.small]\nmax_diff_lines = 200\n'
+    '[dispatch.small.judge]\nmodel = "sonnet"\neffort = "low"\n'
+    '[dispatch.small.simplify]\nmodel = "sonnet"\n'
+)
+
+
+def _host_config(tmp_path, monkeypatch, text):
+    """A host repo whose docs/agents/loop.toml is ``text``, as the cwd."""
+    (tmp_path / ".git").mkdir()
+    d = tmp_path / "docs" / "agents"
+    d.mkdir(parents=True)
+    (d / "loop.toml").write_text(text, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+
+def test_load_config_keeps_the_small_tier_as_declared_beside_the_base_table(tmp_path):
+    p = tmp_path / "loop.toml"
+    p.write_text(SMALL_TIER, encoding="utf-8")
+    cfg = cli.load_config(p)
+    assert cfg["dispatch"]["small"] == {
+        "max_diff_lines": 200,
+        "judge": {"model": "sonnet", "effort": "low"},
+        "simplify": {"model": "sonnet"},
+    }
+    assert cfg["dispatch"]["judge"] == {
+        "transport": "agent-tool", "model": "opus", "effort": "high"}
+
+
+@pytest.mark.parametrize("lines,tier,judge,simplify", [
+    (199, "small", {"model": "sonnet", "effort": "low"}, {"model": "sonnet"}),
+    (200, "small", {"model": "sonnet", "effort": "low"}, {"model": "sonnet"}),  # at the threshold
+    (201, "base", {"model": "opus", "effort": "high"}, {}),
+])
+def test_config_diff_lines_picks_the_tier_for_the_judgment_roles_only(
+        tmp_path, monkeypatch, capsys, lines, tier, judge, simplify):
+    """At or under max_diff_lines the small tier's values override the base
+    table for judge and simplify; above it the base table stands. The
+    implementer keeps its base entry under every count."""
+    _host_config(tmp_path, monkeypatch, SMALL_TIER)
+    assert cli.main(["config", "--diff-lines", str(lines)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["tier"] == tier
+    assert out["dispatch"]["judge"] == {"transport": "agent-tool", **judge}
+    assert out["dispatch"]["simplify"] == {"transport": "agent-tool", **simplify}
+    assert out["dispatch"]["implementer"] == {"transport": "agent-tool", "model": "opus"}
+
+
+def test_config_without_a_count_is_the_base_tier(tmp_path, monkeypatch, capsys):
+    """No --diff-lines (the implementer's dispatch, before any diff exists):
+    the base table, named as such."""
+    _host_config(tmp_path, monkeypatch, SMALL_TIER)
+    assert cli.main(["config"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["tier"] == "base"
+    assert out["dispatch"]["judge"]["model"] == "opus"
+
+
+def test_config_diff_lines_without_a_small_tier_is_base(tmp_path, monkeypatch, capsys):
+    _host_config(tmp_path, monkeypatch, '[dispatch.judge]\nmodel = "opus"\n')
+    assert cli.main(["config", "--diff-lines", "0"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["tier"] == "base"
+    assert "small" not in out["dispatch"]
+    assert out["dispatch"]["judge"]["model"] == "opus"
+
+
+@pytest.mark.parametrize("text,message", [
+    ('[dispatch.small]\nmax_diff_lines = -1\n', "dispatch.small.max_diff_lines"),
+    ('[dispatch.small]\nmax_diff_lines = "many"\n', "dispatch.small.max_diff_lines"),
+    ('[dispatch.small]\nmax_diff_lines = true\n', "dispatch.small.max_diff_lines"),
+    ('[dispatch.small.judge]\nmodel = "x"\n', "dispatch.small.max_diff_lines"),  # no threshold
+    ('[dispatch.small]\nmax_diff_lines = 10\nbogus = 1\n', "unknown key 'dispatch.small.bogus'"),
+    ('[dispatch.small]\nmax_diff_lines = 10\n[dispatch.small.implementer]\nmodel = "x"\n',
+     "unknown key 'dispatch.small.implementer'"),
+    ('[dispatch.small]\nmax_diff_lines = 10\n[dispatch.small.judge]\ntransport = "herdr"\n',
+     "unknown key 'dispatch.small.judge.transport'"),
+    ('[dispatch.small]\nmax_diff_lines = 10\n[dispatch.small.judge]\nmodel = 4\n',
+     "dispatch.small.judge.model"),
+])
+def test_small_tier_is_refused_by_name_when_malformed(tmp_path, text, message):
+    """The threshold is a required non-negative int; the tier carries only the
+    judgment roles, each with model, effort or args; anything else is named."""
+    p = tmp_path / "loop.toml"
+    p.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        cli.load_config(p)
+
+
+def test_small_tier_via_set_works_like_the_base_table(tmp_path):
+    cfg = cli.apply_overrides(cli.load_config(tmp_path / "nope.toml"), [
+        "dispatch.small.max_diff_lines=120", "dispatch.small.judge.model=sonnet"])
+    assert cfg["dispatch"]["small"] == {"max_diff_lines": 120, "judge": {"model": "sonnet"}}
+    p = tmp_path / "loop.toml"
+    p.write_text(SMALL_TIER, encoding="utf-8")
+    cfg = cli.apply_overrides(cli.load_config(p), ["dispatch.small.max_diff_lines=50"])
+    assert cfg["dispatch"]["small"]["max_diff_lines"] == 50
+    assert cfg["dispatch"]["small"]["judge"] == {"model": "sonnet", "effort": "low"}
+
+
+@pytest.mark.parametrize("spec,message", [
+    ("dispatch.small.judge.model=sonnet", "dispatch.small.max_diff_lines"),  # no threshold
+    ("dispatch.small.implementer.model=x", "unknown key 'dispatch.small.implementer'"),
+    ("dispatch.small.max_diff_lines=-5", "dispatch.small.max_diff_lines"),
+])
+def test_small_tier_via_set_is_refused_by_name_when_malformed(tmp_path, spec, message):
+    with pytest.raises(ValueError, match=message):
+        cli.apply_overrides(cli.load_config(tmp_path / "nope.toml"), [spec])
+
+
+def test_command_doc_picks_the_tier_from_diff_guard_and_records_it():
+    """§1c resolves the tier with the diff-guard count before dispatching the
+    judges and records it."""
+    gate = _command_doc_subsection("### 1c.")
+    assert "devloop config --diff-lines" in gate
+    assert "changed_lines" in gate[:gate.index("devloop config --diff-lines")]
+    assert "`tier`" in gate
+
+
 # --- deleted keys are rejected, named (issue #39 AC2, dec-cf8f0d33) ---------
 # The same unknown-key check `--set` always had now runs on the file too: a
 # knob the subtractive pass deleted is neither silently honored nor silently
@@ -1014,12 +1232,13 @@ def test_load_config_rejects_deleted_scalar_keys_naming_them(tmp_path, section, 
         cli.load_config(p)
 
 
-def test_load_config_rejects_the_deleted_dispatch_section(tmp_path):
+def test_load_config_rejects_the_deleted_dispatch_persona_key(tmp_path):
     """`[dispatch] persona` is gone (dec-d79e8e7b addendum): the persona is
-    spliced unconditionally, so the whole section is unknown."""
+    spliced by posture. The section now holds per-role tables, so the old
+    scalar is refused by name as a role entry that is not a table."""
     p = tmp_path / "loop.toml"
     p.write_text("[dispatch]\npersona = true\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="dispatch"):
+    with pytest.raises(ValueError, match="dispatch.persona: expected a table"):
         cli.load_config(p)
 
 
@@ -2630,14 +2849,22 @@ def _command_doc_subsection(marker: str) -> str:
     return "\n".join(lines[start:end])
 
 
-def test_implementer_and_gate_subagents_return_long_reports_by_file_path():
-    """funloops#47 (dec-72c80057): §1b (the implementer) and §1c (the judge and
-    simplify subagents) both say a report longer than a screen is written to a
-    file in the worktree and its path returned — inline returns were truncated."""
-    for marker in ("### 1b.", "### 1c."):
-        section = " ".join(_command_doc_subsection(marker).split())  # reflow-safe
-        assert "longer than a screen" in section, marker
-        assert "file in the worktree and its path returned" in section, marker
+def test_every_role_returns_by_the_file_its_dispatch_names_on_both_transports():
+    """funloops#47 (dec-72c80057) then #65: the return file is the one return
+    channel. §1b names it as the dispatch's third line, outside the worktree,
+    and gives one recipe per transport — the herdr one starts a named agent,
+    prompts it, routes `blocked` to human, re-prompts the same name for a fix
+    round and removes the worktree; §1c reads the judge return from that file
+    on either transport."""
+    b = " ".join(_command_doc_subsection("### 1b.").split())  # reflow-safe
+    assert "the pack plus three lines" in b and "return file path" in b
+    assert "never inside the worktree" in b
+    for token in ("herdr worktree create", "herdr agent start", "herdr agent prompt",
+                  "`blocked`", "same agent name", "herdr worktree remove"):
+        assert token in b, token
+    c = " ".join(_command_doc_subsection("### 1c.").split())
+    assert "return file its dispatch names" in c and "either transport" in c
+    assert "--return-json <return-file>" in c
 
 
 def test_issue_loop_doc_1b_passes_the_tickets_decisions_to_the_decisions_leg():

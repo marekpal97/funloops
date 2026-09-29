@@ -77,9 +77,10 @@ Do not assume the list above is comprehensive.
 
 ## Standing orders
 
-The dispatch is this pack plus two lines the orchestrator adds: the branch
-name and the baseline verdict (`green` or `red`, the tests gate on the pristine
-worktree). Nothing else instructs you; a rule stated here is stated once.
+The dispatch is this pack plus three lines the orchestrator adds: the branch
+name, the baseline verdict (`green` or `red`, the tests gate on the pristine
+worktree), and the return file path. Nothing else instructs you; a rule stated
+here is stated once.
 
 - Read the repo's architecture and design docs for the areas you touch before
   editing them; a documented standard overrides your instinct.
@@ -112,8 +113,9 @@ worktree). Nothing else instructs you; a rule stated here is stated once.
   orchestrator owns the control plane.
 - Return: worktree path, branch, files touched, test commands run, any deviation
   from the issue's declared shapes with its reason, and any acceptance criterion
-  you believe is NOT yet met (honesty over green-washing). A report longer than
-  a screen is a file in the worktree; return its path.
+  you believe is NOT yet met (honesty over green-washing). Write the whole
+  return to the return file the dispatch names; the orchestrator reads that
+  file, never your screen.
 
 **Drill down with codegraph's CLI.** The catalog and slice above are already
 spliced; do not re-derive them. Before writing, look at what exists:

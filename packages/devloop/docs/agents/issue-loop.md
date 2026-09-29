@@ -73,10 +73,24 @@ run to the DAG component containing issue N — "work this epic, ignore the
 rest of the backlog."
 
 **Config is defaults; flags are posture.** Every scalar knob in
-`loop.toml`'s `[loop]`/`[labels]`/`[tdd]` sections can be overridden for a
-single run with `--set [section.]key=value` (section defaults to `loop`;
-values parse as TOML scalars, so the override language is exactly the config
-file's). `/issue-loop` adds sugar for the common pair — `--stacked` and
+`loop.toml`'s `[loop]`/`[labels]`/`[tdd]`/`[triage]` sections can be
+overridden for a single run with `--set [section.]key=value` (section
+defaults to `loop`; values parse as TOML scalars, so the override language is
+exactly the config file's), and every key of a `[dispatch.<role>]` table with
+`--set dispatch.<role>.<key>=<value>`. Which agent runs a role — its
+`transport` (`agent-tool` | `herdr`), `harness`, `model`, `effort`, the
+literal `args` tail and its `posture` (`writer` | `reader`) — is run posture,
+not gate semantics; `devloop config` prints the resolved table, one entry per
+role, and an absent key means the Agent tool in the orchestrator's own
+session. A role is its entry: the three the loop names always resolve, one
+more table declares one more role, and `devloop pack --role <r>` shapes any
+of them by its `posture`. The rail checks shape only and never validates a
+harness or model name. An optional `[dispatch.small]` tier — `max_diff_lines` plus `model` /
+`effort` / `args` for `judge` and `simplify` — stands in for those two roles'
+base entries when the diff-guard count is at or under the threshold;
+`devloop config --diff-lines <n>` prints the `tier` (`base` | `small`) a
+count takes with the effective table, the implementer never takes it, and
+`--set dispatch.small.judge.model=…` works like the base table. `/issue-loop` adds sugar for the common pair — `--stacked` and
 `--max-issues <n>` — and threads the resolved `--set` flags through every
 rail invocation, so orchestrator and script share one effective config.
 Running one epic stacked is therefore

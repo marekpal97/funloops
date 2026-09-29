@@ -102,17 +102,20 @@ sys.stdout.write(out.read_text(encoding="utf-8"))
     return binary, log
 
 
-@pytest.mark.parametrize("role", ["implementer", "judge"])
-def test_pack_is_golden_and_byte_stable(repo, tmp_path, capsys, role):
+@pytest.mark.parametrize("role, posture", [("implementer", "writer"), ("judge", "reader")])
+def test_pack_is_golden_and_byte_stable(repo, tmp_path, capsys, role, posture):
     """Section order per funloops#45's Interfaces block: Issue, Rules, Persona
-    (implementer only), Repo map, Prior lessons, Run trace, Standing orders
-    (implementer only) — the judge's golden carries the rules and no persona."""
+    (writer posture only), Repo map, Prior lessons, Run trace, Standing orders
+    (writer posture only) — the judge's golden carries the rules and no
+    persona. The posture is the role's `[dispatch]` entry's (funloops#65)."""
     binary, log = fake_codegraph(tmp_path)
     argv = ["pack", "7", "--role", role, "--cwd", str(repo),
             "--codegraph-bin", str(binary)]
     assert cli.main(argv) == 0
     first = capsys.readouterr().out
     assert first == (FIX / f"{role}.md").read_text(encoding="utf-8")
+    assert ("## Persona" in first) is (posture == "writer")
+    assert ("## Standing orders" in first) is (posture == "writer")
     # no index in a fresh worktree → init; then the tiers in order: the
     # catalog, the entry points (context as JSON), the spliced context, and
     # one node call per file the issue names (helper first: first mention wins)
@@ -120,6 +123,26 @@ def test_pack_is_golden_and_byte_stable(repo, tmp_path, capsys, role):
                                        "node", "node"]
     assert cli.main(argv) == 0
     assert capsys.readouterr().out == first
+
+
+def test_any_configured_role_packs_by_its_posture(repo, tmp_path, capsys):
+    """A role is a `[dispatch]` entry (funloops#65): a reviewer declared by
+    `--set` packs by its posture — a reader gets the judge's golden under its
+    own header, no persona, no standing orders. A role no entry declares, or
+    one whose entry names no posture, is an error marker and exit 2, never a
+    pack shaped by a guess."""
+    binary, _ = fake_codegraph(tmp_path)
+    argv = ["pack", "7", "--cwd", str(repo), "--codegraph-bin", str(binary)]
+    assert cli.main([*argv, "--role", "reviewer",
+                     "--set", "dispatch.reviewer.posture=reader"]) == 0
+    judge = (FIX / "judge.md").read_text(encoding="utf-8")
+    assert capsys.readouterr().out == judge.replace("(judge)", "(reviewer)", 1)
+    assert cli.main([*argv, "--role", "bogus"]) == 2
+    error = json.loads(capsys.readouterr().out)["error"]
+    assert "bogus" in error and "implementer" in error
+    assert cli.main([*argv, "--role", "reviewer",
+                     "--set", "dispatch.reviewer.transport=herdr"]) == 2
+    assert "posture" in json.loads(capsys.readouterr().out)["error"]
 
 
 @pytest.fixture
