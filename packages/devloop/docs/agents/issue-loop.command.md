@@ -177,7 +177,10 @@ backticking its repo-relative path.
 dispatch text is, verbatim: the pack, the branch name (`<branch_prefix><N>`),
 the baseline line (§0.5: `green` or `red`), and the return file path. Nothing
 else: every standing order is the pack's, so one text owns each rule, and the
-issue arrives once. The return file is the one return channel for every role
+issue arrives once. A gate role's dispatch adds exactly what §1c names for
+it (the judge: the diff and the test and verify-rail output; simplify: the
+vendored skill text and the diff) and the implementer's worktree path, which
+it works inside and never edits. The return file is the one return channel for every role
 on both transports: one path per dispatch under a directory you make once per
 run (`mktemp -d`), never inside the worktree, so a return can never land in
 the diff. The agent writes its whole return there and you read the file, never
@@ -190,25 +193,42 @@ alternate-screen output). A fix round names a fresh path. The role's
   entry's `model` when it names one; never the fork type — a fork inherits
   this orchestrator's whole conversation, including context the subagents
   must not see). Its prompt is the dispatch text. A fix round is a SendMessage
-  to the same agent: it keeps its context.
+  to the same agent: it keeps its context. A gate role (judge, simplify) is a
+  fresh agent **without** isolation: it works in the implementer's worktree,
+  whose path its dispatch names.
 - **`herdr`.** The worktree is a herdr workspace and the agent a named herdr
   session; every command answers in JSON, and the ids come from those answers,
   never from a guess. `harness` is required on this transport (`--kind` has no
   default): an entry without one is a config error you surface, not a guess.
+  The entry's `args` must settle who answers the harness's approval prompts
+  (the template shows a working tail per harness): a prompt no one answers
+  reads as `blocked`. Append `--add-dir <return-dir>` to the tail when the
+  harness sandboxes writes, so the return file is writable.
 
   ```bash
-  herdr worktree create --branch <branch_prefix><N> --base origin/main --label <branch_prefix><N> --no-focus
+  # implementer: a new worktree, the agent in its root pane
+  herdr worktree create --cwd <repo-root> --branch <branch_prefix><N> --base origin/main --label <branch_prefix><N> --no-focus
   #   → .result.worktree.path (the <worktree> every rail call targets),
   #     .result.workspace.workspace_id, .result.root_pane.pane_id
+  # gate role (judge, simplify): no new worktree; a new pane beside the implementer's
+  herdr pane split <implementer-pane-id> --direction right --cwd <worktree>
+  #   → .result.pane.pane_id
   herdr agent start <role>-<N> --kind <harness> --pane <pane-id> -- <args>
   #   the entry's harness and args (the literal argv tail); returns once the agent is ready
   herdr agent prompt <role>-<N> "Your dispatch is <dispatch-file>: read it whole and follow it. Write your return to <return-file>." --wait --timeout <ms>
   ```
 
+  `--cwd <repo-root>` is required: without it herdr resolves the repository
+  from the focused workspace, which may be another repo. A herdr worktree
+  lives outside the repo tree, but a harness that trusts by repository (Codex)
+  keys that trust on `<repo-root>`, never on `<worktree>`.
   Write the dispatch text to `<dispatch-file>` beside the return file first:
   the prompt is the pointer, the file is the same text the Agent tool gets
   inline. `--wait` returns the first settled state. `idle` or `done`: read the
-  return file. **`blocked`** — herdr recognised an approval or question UI —
+  return file. **A settled agent with no return file failed** — a harness
+  error (an unsupported model, an API refusal) settles as `idle` too: route
+  to human (§1c's route-to-human block) with `herdr agent read <role>-<N>
+  --source recent-unwrapped --lines 120` as the evidence. **`blocked`** — herdr recognised an approval or question UI —
   routes the issue to human (§1c's route-to-human block, with `herdr agent
   read <role>-<N> --source recent-unwrapped --lines 120` as the evidence);
   never answer the dialog yourself. `agent_prompt_stalled` or a timeout is the

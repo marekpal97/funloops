@@ -2867,6 +2867,29 @@ def test_every_role_returns_by_the_file_its_dispatch_names_on_both_transports():
     assert "--return-json <return-file>" in c
 
 
+def test_the_herdr_recipe_targets_the_repo_and_keeps_gate_roles_in_the_implementers_worktree():
+    """The herdr recipe names the repo for the worktree, gives gate roles a
+    pane in the implementer's workspace instead of a new worktree, says the
+    argv tail settles approval prompts, and treats a settled agent without a
+    return file as a failure."""
+    b = " ".join(_command_doc_subsection("### 1b.").split())  # reflow-safe
+    for token in ("herdr worktree create --cwd <repo-root>",
+                  "herdr pane split <implementer-pane-id>",
+                  "the implementer's worktree path",
+                  "who answers the harness's approval prompts",
+                  "keys that trust on `<repo-root>`",
+                  "A settled agent with no return file failed"):
+        assert token in b, token
+
+
+def test_the_template_shows_an_unattended_herdr_tail_per_harness():
+    """A herdr agent's approval prompt has no one to answer it, so the
+    template carries a working argv tail for each harness it names."""
+    text = (cli.REPO_ROOT / "docs" / "agents" / "loop.toml.template").read_text(encoding="utf-8")
+    assert 'claude: args = ["--permission-mode", "auto"]' in text
+    assert 'codex:  args = ["-s", "workspace-write", "-a", "never"]' in text
+
+
 def test_issue_loop_doc_1b_passes_the_tickets_decisions_to_the_decisions_leg():
     """funloops#49 (dec-f5bdf9ea): §1b says the ticket's `## Decisions` ids go
     to `--decisions`, merged with the ids the file walk finds, so the durable
