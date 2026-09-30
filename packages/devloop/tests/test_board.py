@@ -59,6 +59,7 @@ def test_missing_and_boilerplate_labels():
     report = board.doctor([_board(labels=["bug", "help wanted"])], CFG)
     missing = {f["op"]["name"] for f in _checks(report, "label-missing")}
     assert "epic" in missing and "ready-for-agent" in missing and "agent-claimed" in missing
+    assert "review-light" in missing
     assert [f["op"] for f in _checks(report, "label-boilerplate")] == [
         {"repo": REPO, "op": "delete_label", "name": "help wanted"}]
     assert not report["ok"]

@@ -32,6 +32,7 @@ REQUIRED_LABELS = {
     "needs-info": ("Waiting on reporter for more information", "d876e3"),
     "ready-for-agent": ("Fully specified, ready for an AFK agent", "0e8a16"),
     "ready-for-human": ("Requires human implementation", "d93f0b"),
+    "review-light": ("Loop triage: shipped, a human skims the PR (the yellow lane)", "fbca04"),
     "wontfix": ("Will not be actioned", "ffffff"),
     "arch-proposal": ("Draft architectural proposal from the slow loop", "c5def5"),
     "agent-claimed": ("Claimed by an /issue-loop run", "1d76db"),
