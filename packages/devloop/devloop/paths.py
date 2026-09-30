@@ -7,13 +7,10 @@ from __future__ import annotations
 import fnmatch
 import re
 
-# An issue names a file for the pack's map by backticking its repo-relative path.
-BACKTICKED = re.compile(r"`([^`\n]+)`")
-
 
 def backticked(body: str) -> list[str]:
     """Every backticked token in ``body``, first mention first, deduped."""
-    return list(dict.fromkeys(BACKTICKED.findall(body)))
+    return list(dict.fromkeys(re.findall(r"`([^`\n]+)`", body)))
 
 
 def match(path: str, pattern: str) -> bool:

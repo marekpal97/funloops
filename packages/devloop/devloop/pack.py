@@ -304,9 +304,8 @@ def named_files(body: str, root: Path) -> list[str]:
     """Every backticked token in ``body`` that resolves to a file inside
     ``root``, first mention first, deduped. Symlinks are followed, so a link
     out of the repo does not count."""
-    found = [tok for tok in paths.backticked(body)
-             if (root / tok).resolve().is_relative_to(root) and (root / tok).is_file()]
-    return found
+    return [tok for tok in paths.backticked(body)
+            if (root / tok).resolve().is_relative_to(root) and (root / tok).is_file()]
 
 
 def body(path: Path) -> str:
