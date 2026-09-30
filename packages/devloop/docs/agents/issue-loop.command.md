@@ -455,10 +455,12 @@ findings gets no comment; its body line reads `Findings: none`.
 - <one sentence>
 ```
 
-Keep the `ready-for-agent` label and the assignee — the issue closes on merge;
-if the PR is rejected, a human unassigns to re-queue. **No stack-tip simplify
-here — a documented no-op:** a pr-per-issue branch holds one slice, so §1c's
-simplify already ran at what IS the stack tip (the whole-branch pass is §1e's).
+Keep the assignee — the issue closes on merge; if the PR is rejected, a human
+unassigns and re-adds `ready-for-agent` to re-queue. `ready-for-agent` is
+removed at ship; the triage lane label below is the issue's only rung. **No
+stack-tip simplify here — a documented no-op:** a pr-per-issue branch holds one
+slice, so §1c's simplify already ran at what IS the stack tip (the whole-branch
+pass is §1e's).
 
 **Risk-lane triage — label what a human should look at.** After the PR is
 opened, assemble its signal set — you already hold all of it — into a JSON file
@@ -478,8 +480,9 @@ because you assemble these signals and enum drift is realistic:
 | `tests_touched`   | bool      | no (→F)  | the change carries test coverage                    |
 
 The rail returns `{issue, lane, label, reasons}` — red wins, `reasons` lists
-every triggered rule. **You** apply the label via gh (`gh issue edit <N>
---add-label <label>`, or `gh pr edit`). **yellow** (`review-light`) is the
+every triggered rule. **You** apply the label to the issue in one gh call,
+`gh issue edit <N> --remove-label ready-for-agent --add-label <label>`, so the
+lane label is its only rung. **yellow** (`review-light`) is the
 default lane: a human skims, the reasons (fix rounds, a watched path, no
 coverage signal) telling them where to look; there is no auto-merge lane.
 **red** (`ready-for-human`): sensitive path (always), big diff, degraded
