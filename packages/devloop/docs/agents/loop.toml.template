@@ -86,6 +86,23 @@ transport = "agent-tool"
 posture = "reader"
 transport = "agent-tool"
 
+# On herdr the agent runs in its own terminal, so nobody answers its approval
+# prompts: an unanswered prompt settles as `blocked` and routes the issue to
+# human. `args` must settle that per harness. Tails that run unattended
+# (the orchestrator appends `--add-dir <return-dir>` per run):
+#   claude: args = ["--permission-mode", "auto"]
+#   codex:  args = ["-s", "workspace-write", "-a", "never"]
+# Codex also blocks at startup on its folder-trust prompt, keyed on the
+# repository root: trust the repo once in ~/.codex/config.toml, or pass
+# "-c", 'projects."<repo-root>".trust_level="trusted"' in the tail.
+# Try a role on herdr for one run with
+# `--set dispatch.judge.transport=herdr --set dispatch.judge.harness=codex`.
+# [dispatch.judge]
+# posture = "reader"
+# transport = "herdr"
+# harness = "codex"
+# args = ["-s", "workspace-write", "-a", "never"]
+
 # The size tier (optional). At or under max_diff_lines changed lines — the
 # diff-guard count — these model / effort / args stand in for the base entries
 # of judge and simplify. The implementer runs before any diff exists and never
