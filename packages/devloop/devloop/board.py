@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 
+from devloop import paths
+
 EPIC_LABEL = "epic"
 RUNG_ROLES = ("needs-triage", "needs-info", "ready-for-agent", "ready-for-human",
               "wontfix", "arch-proposal")
@@ -206,7 +208,29 @@ def _check_edges(board: dict, cfg: dict, now: datetime) -> list[dict]:
     return out
 
 
-_CHECKS = (_check_labels, _check_epics, _check_rungs, _check_edges)
+def _check_paths(board: dict, cfg: dict, now: datetime) -> list[dict]:
+    """A runnable non-epic issue names a file for the pack's tier-2 slice by
+    backticking a repo-relative path; a body that names none falls back to a
+    title-only codegraph query. Resolves against the snapshot's ``files`` —
+    the repo's tracked paths — so the check stays pure."""
+    repo, runnable = board["repo"], cfg["labels"]["runnable"]
+    files = set(board["files"])
+    if not files:
+        return []
+    epics = _epics(board["issues"])
+    out = []
+    for i in board["issues"]:
+        if not _is_open(i) or i["number"] in epics or runnable not in _labels(i):
+            continue
+        if set(paths.backticked(i.get("body", ""))) & files:
+            continue
+        out.append(_finding("path-missing", "warn", repo, i["number"],
+                            f"#{i['number']} is runnable but backticks no repo-relative file — "
+                            "the pack's slice falls back to a title-only query"))
+    return out
+
+
+_CHECKS = (_check_labels, _check_epics, _check_rungs, _check_edges, _check_paths)
 
 
 def doctor(boards: list[dict], cfg: dict, now: datetime | None = None) -> dict:

@@ -100,8 +100,10 @@ Fail-closed posture on the three safety-critical signals is part of the
 interface, stated in the docstring and pinned by the existing tests.
 
 **`paths.py`** — `match(path, pattern)` (dir-prefix / glob / bare-basename
-dispatch by pattern shape) and `hits(files, patterns)`. The only leaf util
-(§6). Two callers: `triage` (sensitive/watched paths) and the diff gate
+dispatch by pattern shape), `hits(files, patterns)` and `backticked(body)`
+(the tokens an issue body names, shared by `pack` and `board`). The only leaf
+util (§6). The matcher's two callers: `triage` (sensitive/watched paths) and
+the diff gate
 (`forbidden_paths` — unified by #94; all shipped `forbidden_paths` entries end
 in `/`, where `match` is exactly `startswith`. The unification means
 `forbidden_paths` *adopts* the three-form convention; a future non-slash entry
@@ -116,16 +118,19 @@ native_blockers?}` — which is the `github`↔`dag` contract; `dag` never sees
 `cli.py` composed from `github.run`: the assign-vs-label claim convention is
 loop policy, not gh plumbing, and one-call-site wrappers would fail the
 deletion test. For the `board` verb it also owns the richer **board-snapshot
-shape** — `{repo, labels[], issues[{…, sub_issues, blockers[], children[],
-parent}]}` with every relationship resolved to a `{repo, number, state}` ref
-(`fetch_board(repo)`) — and `apply_op(op)`, the one place the sweep's op
-vocabulary meets the network.
+shape** — `{repo, labels[], files[], issues[{…, sub_issues, blockers[],
+children[], parent}]}` with every relationship resolved to a
+`{repo, number, state}` ref (`fetch_board(repo)`) — and `apply_op(op)`, the
+one place the sweep's op vocabulary meets the network. `files[]` is the
+repo's tracked paths at HEAD, so the doctor resolves an issue's backticked
+paths from any repo without a clone.
 
 **`board.py`** — the enforcing seam for the board grammar `dag.py` assumes
 (funloops#9): sub-issue = epic membership, native blocked-by = ordering, the
 `epic` anchor is blocked-by every open child, `[labels]` rungs are exclusive,
-titles don't re-encode order a native edge already carries. Pure checks over
-the board snapshot (labels · epics · rungs · edges — private; the interface is two functions),
+titles don't re-encode order a native edge already carries, a runnable issue
+names a file for the pack's slice. Pure checks over the board snapshot
+(labels · epics · rungs · edges · paths — private; the interface is two functions),
 each yielding findings with a severity and — only where the fix is mechanical,
 never where it is a judgment (which rung, which track, is this epic done) — a
 sweep **op** (`create_label · delete_label · add_label · remove_label ·

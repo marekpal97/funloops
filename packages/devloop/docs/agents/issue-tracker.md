@@ -5,6 +5,7 @@ Issues and PRDs live as GitHub issues in whichever repo you are working in — `
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
+- **Name the files**: backtick the repo-relative path of every file the issue expects to touch — the loop's dispatch pack keys its repo map on those paths. `devloop board doctor` reports `path-missing` for a runnable issue that names none.
 - **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels.
 - **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
