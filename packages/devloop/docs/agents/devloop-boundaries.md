@@ -263,8 +263,7 @@ invocation.** It records the stages *this loop dispatched* — implementer,
 the judge, and future stages — as
 `{id, role, skill, outcome, fix_rounds_attributed}` plus the optional dispatch
 join keys (command doc §3), passed through verbatim. `skill` names the skill
-that ran the stage, empty when none did; it is a recorded fact, never a
-binding that selects the skill. The generic capture-all is
+that ran the stage, empty when none did. The generic capture-all is
 **parked**: it needs a new mechanism (a Skill-tool hook or transcript scraping)
 and has no live reader, and a capability ships with its consumer or not at all.
 *Unpark trigger:* a consumer that needs invocations the loop did not itself
