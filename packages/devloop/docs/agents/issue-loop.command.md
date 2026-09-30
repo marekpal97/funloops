@@ -577,9 +577,7 @@ evidence. If nothing shipped, say what unblocks the DAG (usually: merge loop PRs
 on user approval. §1d removes the implementer worktree the moment the PR is
 open, so record from the main checkout and name the shipped branch: the branch
 ref outlives its worktree, and `--branch` reads its commits and files there.
-Without `--branch` the verb records the main checkout's HEAD — the wrong branch,
-zero commits, no files. For each processed issue, assemble the deterministic
-half —
+For each processed issue, assemble the deterministic half —
 
 ```bash
 uv run --directory <repo-root> devloop trajectory <N> --branch <branch> \

@@ -452,14 +452,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_traj = sub.add_parser("trajectory", help="assemble a per-issue trajectory payload (memory feed)", parents=[common])
     p_traj.add_argument("number", type=int)
-    p_traj.add_argument("--cwd", default=".",
-                        help="the checkout to read git from: the implementer "
-                             "worktree, or the main checkout after teardown")
+    p_traj.add_argument("--cwd", default=".", help="the checkout to read git from")
     p_traj.add_argument("--base-ref", default="origin/main")
     p_traj.add_argument("--branch", default=None, metavar="REF",
-                        help="the branch to record; reads its commits and files "
-                             "even when its worktree is already gone. Omit to "
-                             "record the current checkout's HEAD branch.")
+                        help="the branch to record; defaults to the checkout's HEAD branch")
     p_traj.add_argument("--gates-json", required=True, help="file with the gate results list")
     p_traj.add_argument("--skills-json", default=None,
                         help="file with the stage-dispatch log: a list of "
@@ -640,13 +636,12 @@ def main(argv: list[str] | None = None) -> int:
         branch = args.branch or subprocess.run(
             ["git", "branch", "--show-current"], cwd=cwd,
             capture_output=True, text=True, check=True).stdout.strip()
-        ref = args.branch or "HEAD"
         commits = subprocess.run(
-            ["git", "log", "--oneline", f"{args.base_ref}..{ref}"],
+            ["git", "log", "--oneline", f"{args.base_ref}..{branch}"],
             cwd=cwd, capture_output=True, text=True, check=True,
         ).stdout.strip().splitlines()
         numstat = subprocess.run(
-            ["git", "diff", "--numstat", f"{args.base_ref}...{ref}"],
+            ["git", "diff", "--numstat", f"{args.base_ref}...{branch}"],
             cwd=cwd, capture_output=True, text=True, check=True,
         ).stdout
         gates = json.loads(Path(args.gates_json).read_text(encoding="utf-8"))

@@ -848,8 +848,8 @@ def test_trajectory_reads_a_branch_after_the_worktree_is_removed(tmp_path, monke
     worktree = tmp_path / "worktree"
     repo.mkdir()
 
-    def git(*argv: str) -> str:
-        return subprocess.run(["git", *argv], cwd=repo, check=True,
+    def git(*argv: str, cwd=repo) -> str:
+        return subprocess.run(["git", *argv], cwd=cwd, check=True,
                               capture_output=True, text=True).stdout
 
     git("init", "-q")
@@ -862,10 +862,8 @@ def test_trajectory_reads_a_branch_after_the_worktree_is_removed(tmp_path, monke
     git("worktree", "add", "-q", "-b", "loop/issue-52", str(worktree))
     for name, text in (("a.txt", "a\n"), ("b.txt", "b\n")):
         (worktree / name).write_text(text, encoding="utf-8")
-        subprocess.run(["git", "add", "-A"], cwd=worktree, check=True,
-                       capture_output=True)
-        subprocess.run(["git", "commit", "-qm", f"slice {name}"], cwd=worktree,
-                       check=True, capture_output=True)
+        git("add", "-A", cwd=worktree)
+        git("commit", "-qm", f"slice {name}", cwd=worktree)
     git("worktree", "remove", str(worktree))  # §1d teardown, before §3
     assert not worktree.exists() and git("rev-parse", "loop/issue-52").strip()
 
