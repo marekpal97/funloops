@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 EPIC_LABEL = "epic"
 RUNG_ROLES = ("needs-triage", "needs-info", "ready-for-agent", "ready-for-human",
-              "wontfix", "arch-proposal")
+              "review-light", "wontfix", "arch-proposal")
 # GitHub seeds every repo with these; none carries meaning on a loop board.
 BOILERPLATE_LABELS = ("good first issue", "help wanted", "invalid", "question", "duplicate")
 # Title-ordering prefixes such as W1a: / A3: / S2-pre: / QW:.

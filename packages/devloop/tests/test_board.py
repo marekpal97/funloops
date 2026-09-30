@@ -114,6 +114,21 @@ def test_rung_findings_only_op_is_needs_triage():
     assert [f["number"] for f in tracks] == [2] and "op" not in tracks[0]
 
 
+def test_triage_lane_label_counts_as_the_one_rung():
+    """A shipped issue carries its triage lane label alone; that label is a
+    rung, so the doctor reads one rung rather than a rung-less issue."""
+    yellow = _issue(1, labels=("review-light", "track:A"))
+    report = board.doctor([_board(yellow)], CFG, now=NOW)
+    assert _checks(report, "rung-missing") == []
+    assert _checks(report, "rung-contradictory") == []
+
+
+def test_two_triage_lane_labels_contradict():
+    b = _board(_issue(1, labels=("review-light", "ready-for-human", "track:A")))
+    contra = _checks(board.doctor([b], CFG, now=NOW), "rung-contradictory")
+    assert len(contra) == 1 and contra[0]["severity"] == "error"
+
+
 def test_track_check_only_where_the_repo_uses_tracks():
     b = _board(_issue(1, labels=("ready-for-agent",)), labels=list(board.REQUIRED_LABELS))
     assert _checks(board.doctor([b], CFG, now=NOW), "track-missing") == []
