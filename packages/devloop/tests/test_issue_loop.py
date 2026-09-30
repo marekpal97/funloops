@@ -838,6 +838,61 @@ def test_command_doc_section3_says_how_each_join_key_is_filled():
     assert "omit" in low and "never zeroed or blanked" in low
 
 
+def test_trajectory_reads_a_branch_after_the_worktree_is_removed(tmp_path, monkeypatch, capsys):
+    """Acceptance (#52): §1d removes the implementer worktree once the PR is
+    open, then §3 records the trajectory. The verb takes --branch and reads
+    that ref from the main checkout, so the payload still carries the loop
+    branch and its non-zero commit count, not the main checkout's HEAD.
+    Expected values are hand-written from the two commits made below."""
+    repo = tmp_path / "repo"
+    worktree = tmp_path / "worktree"
+    repo.mkdir()
+
+    def git(*argv: str) -> str:
+        return subprocess.run(["git", *argv], cwd=repo, check=True,
+                              capture_output=True, text=True).stdout
+
+    git("init", "-q")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "T")
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    base = git("rev-parse", "--abbrev-ref", "HEAD").strip()
+    git("worktree", "add", "-q", "-b", "loop/issue-52", str(worktree))
+    for name, text in (("a.txt", "a\n"), ("b.txt", "b\n")):
+        (worktree / name).write_text(text, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=worktree, check=True,
+                       capture_output=True)
+        subprocess.run(["git", "commit", "-qm", f"slice {name}"], cwd=worktree,
+                       check=True, capture_output=True)
+    git("worktree", "remove", str(worktree))  # §1d teardown, before §3
+    assert not worktree.exists() and git("rev-parse", "loop/issue-52").strip()
+
+    monkeypatch.setattr(github, "run", lambda args, cwd=None: json.dumps(
+        {"number": 52, "title": "branch after teardown", "labels": []}))
+    (tmp_path / "g.json").write_text("[]", encoding="utf-8")
+    rc = cli.main(["trajectory", "52", "--cwd", str(repo),
+                   "--branch", "loop/issue-52", "--base-ref", base,
+                   "--gates-json", str(tmp_path / "g.json"),
+                   "--outcome", "shipped"])
+    assert rc == 0
+    fm = json.loads(capsys.readouterr().out)["frontmatter"]
+    assert fm["branch"] == "loop/issue-52"
+    assert fm["commits"] == 2
+    assert fm["files_touched"] == ["a.txt", "b.txt"]
+
+
+def test_command_doc_section3_takes_the_branch_outside_the_worktree():
+    """Acceptance (#52): §3 records the trajectory after §1d removed the
+    implementer worktree, so its command runs outside that path and names the
+    branch to read — the worktree's absence cannot silently record HEAD."""
+    sec = " ".join(_command_doc_subsection("## 3.").split())
+    assert "--branch <branch>" in sec
+    assert "<repo-root>" in sec
+    assert "<worktree>" not in sec
+
+
 def test_trajectory_argparse_contract():
     """The trajectory subcommand exposes --skills-json (optional, default
     None) and --skill-centric (store_true, default False), so the
