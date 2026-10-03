@@ -12,12 +12,8 @@
 #
 # Read by the `devloop` rail (`uv run devloop config`) and by the /issue-loop
 # command (orchestration). Semantics: issue-loop.md. Per-run posture belongs on
-# the command line, not in edits to this file: every knob in
-# [loop]/[labels]/[tdd]/[triage] takes `--set [section.]key=value` for a
-# single run, and every [dispatch.<role>] key takes
-# `--set dispatch.<role>.<key>=<value>`. Gates are file-only by design — the
-# pipeline is a trust boundary you change in review-visible history, not a
-# per-run mood. A key the rail does not know is refused by name, on both paths.
+# the command line, not in edits to this file: `--set` and its sugar are
+# issue-loop.command.md §0's.
 
 [loop]
 max_issues_per_run = 3   # token guardrail: issues processed per invocation
@@ -25,8 +21,8 @@ max_fix_rounds = 2       # implement→gates→fix iterations before routing to 
 training_mode = true     # pause for human approval before push/PR; flip when trusted
 branch_prefix = "loop/issue-"
 require_green_baseline = true   # red suite on main → refuse to implement
-run_mode = "pass"        # pass: one frontier pass, every frontier issue at once | exhaust: re-plan until dry
-delivery = "pr-per-issue"  # pr-per-issue | stacked (one branch and one final PR per DAG component)
+run_mode = "pass"          # pass | exhaust (issue-loop.command.md §0)
+delivery = "pr-per-issue"  # pr-per-issue | stacked (issue-loop.command.md §0)
 
 [tdd]
 # auto: TDD is ENFORCED iff the per-run baseline probe is green.

@@ -65,10 +65,10 @@ def test_command_doc_drives_the_devloop_rail():
     """Every rail invocation goes through the packaged entry point. The old
     ``python scripts/issue_loop.py`` path does not exist in this repo, so a doc
     that still names it is a doc that cannot be followed."""
-    text = _doc(COMMAND_DOC)
+    text = _doc(COMMAND_DOC) + _doc(DOCS / "board-hygiene.md")
     assert "scripts/issue_loop.py" not in text
     # Source of truth: argparse. Every subcommand the rail exposes is shown
-    # being invoked through `devloop`.
+    # being invoked through `devloop`, in the command doc or the board doc.
     for name in _subcommands():
         assert f"devloop {name}" in text, name
 

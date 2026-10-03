@@ -12,7 +12,7 @@ Seams under test — the two the issue names:
    continuously (funloops#45, dec-2f8c2322, superseding dec-d79e8e7b's
    persona-as-splice-container); the persona is a sibling section for the
    implementer only. The command doc names exactly one splice point, and
-   the reading-the-ladder clause lives in the persona alone.
+   the persona does not restate rules 1 and 2.
 
 Sources of truth are the issue's acceptance criteria (≤ 40 lines, eight
 rules, no citation in any rule's text), dec-1746aec3's amendment convention
@@ -36,8 +36,8 @@ DOCS = cli.REPO_ROOT / "docs" / "agents"
 COMMAND_DOC = DOCS / "issue-loop.command.md"
 FUNLOOPS_ROOT = cli.REPO_ROOT.parents[1]
 
-# The former depth rider's most distinctive line — if it appears anywhere but
-# the persona, the reading-the-ladder clause survived as a second mechanism.
+# The former depth rider's most distinctive line, a restatement of rules 1
+# and 2 — if it appears in any packaged doc, the rules have a second home.
 LADDER_CLAUSE_PHRASE = "consolidate, not scatter"
 # AC3 verbatim: an issue/PR number, a bare 7-hex sha, or "PR " in a rule.
 CITATION = re.compile(r"#[0-9]{2,}|\b[0-9a-f]{7}\b|PR ")
@@ -193,16 +193,14 @@ def test_exactly_one_splice_point_in_the_command_doc():
     assert "extends" in naming[0] and "never replaces" in naming[0]
 
 
-def test_ladder_clause_lives_in_the_persona_alone():
-    """The reading-the-ladder clause is dissolved into the persona
-    (dec-d79e8e7b §3): no other packaged doc — the constitution included —
-    carries it, so there is one home and no rider."""
-    assert LADDER_CLAUSE_PHRASE in pack.body(cli.PACKAGE_PERSONA)
+def test_persona_does_not_restate_rules_1_and_2():
+    """Rules 1 and 2 live in the constitution alone: the persona's ladder
+    points at rule 2, and no packaged doc carries the old rider's line."""
+    persona = pack.body(cli.PACKAGE_PERSONA)
+    assert "Rule 2" in persona
+    assert "deepen the module you are in" not in persona
     for doc in DOCS.glob("*.md"):
-        if doc.name == "ponytail-persona.md":
-            continue
-        assert LADDER_CLAUSE_PHRASE not in doc.read_text(encoding="utf-8"), \
-            f"the ladder clause leaked into {doc.name}"
+        assert LADDER_CLAUSE_PHRASE not in doc.read_text(encoding="utf-8"), doc.name
 
 
 # ---------------------------------------------------------------------------

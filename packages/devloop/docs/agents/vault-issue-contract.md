@@ -21,16 +21,15 @@ of the record — **no field is written by two owners.**
 | Surface | Owns |
 |---|---|
 | tracker comments | run history, claims, the PR link |
-| PR body | one sentence per issue, gate table, demo line; findings in its one comment |
+| PR body | the change and its gate evidence; findings in its one comment |
 | trajectory note | how it went |
 | session note (`/wrap`) | cross-issue synthesis, decisions, insights |
 
 - **Tracker comments** own the *run history*: which run claimed the issue,
-  when, and the PR it shipped in — GitHub owns their state. Gate evidence
-  lands on the issue only when no PR exists (route to human).
-- **PR body** owns the *diff summary* (one sentence per issue), the gate
-  table and the demo line; the PR's one findings comment owns the
-  findings — the code-review view of the change.
+  when, and the PR it shipped in — GitHub owns their state.
+- **PR body** owns the *diff summary* and the gate evidence; the PR's one
+  findings comment owns the findings — the code-review view of the change.
+  Both formats are `issue-loop.command.md` §1d's.
 - **Trajectory note** (`type: note`, tag `loop-run`; assembled by
   `devloop trajectory`, payload shape in
   [`devloop-boundaries.md`](devloop-boundaries.md) §4) owns **how the work went** —
@@ -48,11 +47,11 @@ of the record — **no field is written by two owners.**
   register test that sorts every artifact: **run-bound semantic trace →
   trajectory; portable lesson → insight note, linked; enumerable fact →
   frontmatter key.**
-- **The semantic `trace` is the machine-readable half of the tracker's gate
-  evidence, not a second prose owner.** Its envelopes (`rounds[]`, `criteria[]`,
+- **The semantic `trace` is the machine-readable half of the PR's gate
+  evidence, not a second prose owner.** Its envelopes (`reviews[]`, `criteria[]`,
   `edge_cases[]`, `deviations[]`, `tdd`) carry the gate agents' own reports condensed
-  into structured frontmatter — the same evidence the tracker comments own as
-  prose, in a form a learner can join on. It duplicates neither the tracker's
+  into structured frontmatter — the same evidence the PR owns as prose, in a
+  form a learner can join on. It duplicates neither the PR's
   prose nor the trajectory body; counts (`flipped_by_round`) are
   filter/join keys, not signal.
 - **Session note** (`/wrap`) owns **cross-issue synthesis, decisions, and

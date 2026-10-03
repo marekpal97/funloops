@@ -2601,50 +2601,28 @@ def test_arch_proposal_input_context_is_thinkweave_native():
 _GATE_SPLIT_MARKER = "**The gate split"
 
 
-def test_gate_split_stated_exactly_once_where_gates_are_introduced():
-    """The gate split (command/diff EXECUTE in the rail; the judge is
-    orchestrator-dispatched and only recognised there) is stated
-    ONCE, in the gate-pipeline section of the command doc — never duplicated
-    across the loop docs."""
-    docs = sorted((cli.REPO_ROOT / "docs" / "agents").glob("*.md"))
-    hits = [p for p in docs if _GATE_SPLIT_MARKER in p.read_text(encoding="utf-8")]
-    assert [p.name for p in hits] == ["issue-loop.command.md"]
-
-    text = (cli.REPO_ROOT / "docs" / "agents" / "issue-loop.command.md").read_text(
-        encoding="utf-8"
-    )
-    # It lives inside §1c — where gates are introduced — not somewhere else.
-    start = text.index("### 1c. Gate pipeline")
-    end = text.index("\n### ", start + 1)
-    section = text[start:end]
-    assert _GATE_SPLIT_MARKER in section
-    assert "execute in the rail" in section.lower()
-    assert "never" in section.lower() and "executed by the rail" in section.lower()
-    # And it defers to the protocol spec rather than restating it.
-    assert "devloop-boundaries.md" in section
-    # The quoted refusal is the rail's ACTUAL string, not an approximation —
-    # the doc-vs-code pin that caught this doc quoting a truncated error.
-    # (Moves with the message when #94 relocates `check` out of the script.)
+def test_gate_split_has_one_home_in_the_gate_protocol():
+    """The gate split (command/diff execute in the rail; the judge is
+    orchestrator-dispatched and only validated there) is stated once, in the
+    boundary spec's Gate protocol. The command doc's gate section and the
+    semantics doc point at it instead of restating it."""
+    agents = cli.REPO_ROOT / "docs" / "agents"
+    hits = [p.name for p in sorted(agents.glob("*.md"))
+            if _GATE_SPLIT_MARKER in p.read_text(encoding="utf-8")]
+    assert hits == ["devloop-boundaries.md"]
+    spec = (agents / "devloop-boundaries.md").read_text(encoding="utf-8")
+    protocol = spec[spec.index("## 3. The Gate protocol"):spec.index("## 4. ")]
+    assert _GATE_SPLIT_MARKER in protocol
+    # The quoted refusal is the rail's ACTUAL string, not an approximation.
     refusal = "is LLM-judged — run it from the /issue-loop command, not the script"
-    assert refusal in " ".join(section.split())  # the doc wraps it across lines
-    assert refusal in (cli.REPO_ROOT / "devloop" / "cli.py").read_text(
-        encoding="utf-8"
-    )
-
-
-def test_extension_points_do_not_claim_the_rail_runs_judgment_kinds():
-    """Regression guard on the claim this issue corrected: `check` refuses a
-    judgment kind (rail line ~1321), it does not run it as a command. The
-    semantics doc must not say otherwise, and must point at the one statement
-    of the split instead of restating it."""
-    text = (cli.REPO_ROOT / "docs" / "agents" / "issue-loop.md").read_text(
-        encoding="utf-8"
-    )
-    assert "reports them as command-run" not in text
-    # The pointer that replaced it, anchored to the cross-reference itself —
-    # the bare filename appears elsewhere in this doc, so it proves nothing.
-    assert "gate-split" in text
-    assert "`issue-loop.command.md` §1c" in text
+    assert refusal in " ".join(protocol.split())
+    assert refusal in (cli.REPO_ROOT / "devloop" / "cli.py").read_text(encoding="utf-8")
+    gate = " ".join(_command_doc_subsection("### 1c.").split())
+    assert "`devloop-boundaries.md` §3" in gate
+    assert "LLM-judged" not in gate
+    semantics = (agents / "issue-loop.md").read_text(encoding="utf-8")
+    assert "reports them as command-run" not in semantics
+    assert "`devloop-boundaries.md` §3" in semantics
 
 
 # ---------------------------------------------------------------------------
@@ -2717,6 +2695,10 @@ def _command_doc_subsection(marker: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def _herdr_doc() -> str:
+    return (cli.REPO_ROOT / "docs" / "agents" / "herdr-transport.md").read_text(encoding="utf-8")
+
+
 def test_every_role_returns_by_the_file_its_dispatch_names_on_both_transports():
     """funloops#47 (dec-72c80057) then #65: the return file is the one return
     channel. §1b names it as the dispatch's third line, outside the worktree,
@@ -2727,9 +2709,11 @@ def test_every_role_returns_by_the_file_its_dispatch_names_on_both_transports():
     b = " ".join(_command_doc_subsection("### 1b.").split())  # reflow-safe
     assert "the pack plus three lines" in b and "return file path" in b
     assert "never inside the worktree" in b
+    assert "[`herdr-transport.md`](herdr-transport.md)" in b
+    herdr = " ".join(_herdr_doc().split())
     for token in ("herdr worktree create", "herdr agent start", "herdr agent prompt",
                   "`blocked`", "same agent name", "herdr worktree remove"):
-        assert token in b, token
+        assert token in herdr, token
     c = " ".join(_command_doc_subsection("### 1c.").split())
     assert "return file its dispatch names" in c and "either transport" in c
     assert "--return-json <return-file>" in c
@@ -2740,14 +2724,15 @@ def test_the_herdr_recipe_targets_the_repo_and_keeps_gate_roles_in_the_implement
     pane in the implementer's workspace instead of a new worktree, says the
     argv tail settles approval prompts, and treats a settled agent without a
     return file as a failure."""
-    b = " ".join(_command_doc_subsection("### 1b.").split())  # reflow-safe
+    assert "the implementer's worktree path" in " ".join(
+        _command_doc_subsection("### 1b.").split())
+    herdr = " ".join(_herdr_doc().split())
     for token in ("herdr worktree create --cwd <repo-root>",
                   "herdr pane split <implementer-pane-id>",
-                  "the implementer's worktree path",
                   "who answers the harness's approval prompts",
                   "keys that trust on `<repo-root>`",
                   "A settled agent with no return file failed"):
-        assert token in b, token
+        assert token in herdr, token
 
 
 def test_the_template_shows_an_unattended_herdr_tail_per_harness():
@@ -2789,7 +2774,7 @@ def test_issue_comments_carry_no_gate_table():
     assert 'run <run-id>: PR <pr-url>"' in stacked
     routed = " ".join(_command_doc_subsection("### 1c.").split())
     assert 'routed to human at <sha>. <gate evidence table>"' in routed
-    assert "the one issue comment that carries a gate table" in routed
+    assert "The one exception is §1c's route-to-human comment" in ship
 
 
 def test_pr_body_carries_each_fact_once():
@@ -2809,14 +2794,12 @@ def test_pr_body_carries_each_fact_once():
     assert "`Findings: see comment` or `Findings: none`" in ship
     assert "no notes addressed to the orchestrator" in ship
     stacked = " ".join(_command_doc_subsection("### 1e.").split())
-    assert "each fact once, and nothing else" in stacked
+    assert "Its body is §1d's, with the stack's shape" in stacked
+    assert "each fact once, and nothing else" not in stacked  # one home: §1d
     assert "one sentence per issue" in stacked
-    assert "not its title, no heading, no paragraph" in stacked
     assert "one gate table for the stack, one row per issue and one column per gate" in stacked
     assert "no per-issue tables" in stacked
-    assert "`Findings: see comment` or `Findings: none`" in stacked
     assert "`Not included` line only when part of the DAG remains" in stacked
-    assert "no `###` per issue, no orchestrator notes" in stacked
     # Titles: the issue title, or the epic/root title plus the issue numbers.
     assert '--title "<issue title>"' in ship
     assert "the issue numbers in parentheses" in stacked
@@ -2836,8 +2819,8 @@ def test_findings_are_one_pr_comment_after_pr_open():
     ship = " ".join(raw.split())
     assert "findings once" in ship
     assert "`none`/`note`/`problem`" in ship  # the signals table's severity values
-    assert "the observation first, then the rule number or the exercised path" in ship
-    assert "No hedge and no self-retraction" in ship
+    assert "A finding that breaks §1c's sentence rule" in ship
+    assert "the observation first" not in ship.lower()  # one home: the §1c brief
     assert "is dropped, not softened" in ship
     assert "already filed as an issue is the issue number alone" in ship
     assert "A PR with no findings and no deviations gets no comment" in ship

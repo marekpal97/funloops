@@ -128,7 +128,7 @@ never where it is a judgment (which rung, which track, is this epic done) — a
 sweep **op** (`create_label · delete_label · add_label · remove_label ·
 retitle · add_blocker`). `doctor()` runs them all; `plan_sweep()` turns a
 report into the deduped, ordered op list `board sweep --apply` replays.
-Conventions text: `issue-loop.command.md` §Board hygiene.
+Conventions text: `board-hygiene.md`.
 
 **`pack.py`** — the dispatch pack (funloops#28, #45, #46, #47; dec-f12457eb,
 dec-fd12489d, dec-d2de831e, dec-2f8c2322, dec-e6561edc, dec-72c80057): `Issue`, `Posture`,
@@ -160,9 +160,9 @@ of the command doc, the same rule §3 states for judgment kinds.
 
 ## 3. The Gate protocol
 
-A gate is a config entry (`loop.toml [[gates]]`) with a `kind`. The protocol's
-structural claim: **every kind has exactly one verb, and which verb it has
-states which plane runs it.**
+A gate is a config entry (`loop.toml [[gates]]`) with a `kind`.
+**The gate split** is the protocol's structural claim: every kind has exactly
+one verb, and which verb it has states which plane runs it.
 
 - **Deterministic kinds** (`command`, `diff`) — the rail *executes*:
   `execute(gate_cfg, ctx) -> GateResult`, where ctx is the worktree cwd (+
@@ -191,9 +191,10 @@ JUDGMENT = {"judge": validate_judge}
 ```
 
 The `check` subcommand dispatches **only** through `DETERMINISTIC`; any other
-kind — judgment-side or typo — gets the existing "LLM-judged — run it from
-the /issue-loop command" error (previously an `else` branch; the registry
-promotes it from error-message prose to structure, byte-identical output).
+kind — judgment-side or typo — gets the error `gate kind '<k>' is LLM-judged
+— run it from the /issue-loop command, not the script` (previously an `else`
+branch; the registry promotes it from error-message prose to structure,
+byte-identical output).
 The `validate` subcommand (#99) dispatches **only** through `JUDGMENT`, and
 the two registries are pinned disjoint + covering the shipped pipeline.
 `check --issue N` (dec-e267d040) is the same verb's second form: every
