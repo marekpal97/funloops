@@ -11,7 +11,6 @@ empty on a real verdict.
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -23,9 +22,9 @@ _NOT_FOUND = (127, 9009)
 
 
 def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict:
-    """Run one command gate. ``base_ref`` is unused and keeps the executors'
-    shared signature. ``expect`` is a substring stdout must carry to pass; a
-    command the shell cannot find is named in the summary."""
+    """Run one command gate; exit 0 passes. ``base_ref`` is unused and keeps
+    the executors' shared signature. A command the shell cannot find is named
+    in the summary."""
     timeout_sec = gate.get("timeout_sec", 900)
     try:
         proc = subprocess.run(
@@ -47,17 +46,13 @@ def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict
             "detail": "",
         }
     tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[-30:])
-    expect = gate.get("expect", "")
-    found = expect in proc.stdout
     summary = f"`{gate['cmd']}` exited {proc.returncode}"
-    if expect:
-        summary += f"; stdout {'contains' if found else 'lacks'} {expect!r}"
     if proc.returncode in _NOT_FOUND and proc.stderr.strip():
         summary += f" — {proc.stderr.strip().splitlines()[-1]}"
     return {
         "id": gate["id"],
         "kind": "command",
-        "passed": proc.returncode == 0 and found,
+        "passed": proc.returncode == 0,
         "summary": summary,
         "detail": tail,
     }
@@ -68,17 +63,11 @@ def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict
 # result is the rail's, so the orchestrator cannot soften a red line into prose.
 
 _VERIFY_LINE = re.compile(r"^\s*(?:[-*]\s+(?:\[[ xX]\]\s+)?)?verify:\s*(.+?)\s*$")
-# The number is anchored so `--issue 400` never reads as 40.
-_ISSUE_TOKEN = re.compile(r"""--issue\s*=?\s*["']?(\d+)\b""")
-# The chain of issues whose lines are running, comma-joined so child
-# processes see it: the fixed-point guard.
-VERIFY_ENV = "DEVLOOP_VERIFY_ISSUE"
 
 
-def parse_verify_lines(body: str) -> list[tuple[str, str]]:
-    """``[(command, expected_stdout_substring)]`` in body order, ``""`` when
-    a line carries no ``=>``. A line inside a ``` fence does not parse. The
-    last `` => `` splits."""
+def parse_verify_lines(body: str) -> list[str]:
+    """The body's ``verify:`` commands in body order, backticks stripped. A
+    line inside a ``` fence does not parse."""
     lines, fenced = [], False
     for line in body.splitlines():
         if line.lstrip().startswith("```"):
@@ -86,44 +75,14 @@ def parse_verify_lines(body: str) -> list[tuple[str, str]]:
             continue
         if fenced or not (m := _VERIFY_LINE.match(line)):
             continue
-        text = m.group(1).removeprefix("`").removesuffix("`")
-        cmd, sep, expect = text.rpartition(" => ")
-        lines.append((cmd.strip(), expect.strip()) if sep else (text.strip(), ""))
+        lines.append(m.group(1).removeprefix("`").removesuffix("`").strip())
     return lines
 
 
-def run_verify_lines(number: int, body: str, cwd: Path) -> dict:
-    """Run an issue's verify lines: ``{issue, results: [GateResult…], summary}``,
-    one result per line as ``verify:<k>``. A line that re-enters an issue
-    already in ``VERIFY_ENV`` is excluded and counted; an issue entered twice
-    over is one red result naming the cycle."""
-    chain = [int(n) for n in os.environ.get(VERIFY_ENV, "").split(",") if n.strip()]
-    if chain.count(number) >= 2:
-        cycle = " → ".join(str(n) for n in [*chain, number])
-        return {"issue": number, "summary": "recursive verify: " + cycle,
-                "results": [{"id": "verify:cycle", "kind": "command", "passed": False,
-                             "summary": f"recursive verify: {cycle}", "detail": ""}]}
-    parsed = parse_verify_lines(body)
-    lines = [(k, c, e) for k, (c, e) in enumerate(parsed, 1)
-             if not any(int(n) in chain for n in _ISSUE_TOKEN.findall(c))]
-    excluded = len(parsed) - len(lines)
-    prev = os.environ.get(VERIFY_ENV)
-    os.environ[VERIFY_ENV] = ",".join(str(n) for n in [*chain, number])
-    try:
-        results = [run_command_gate({"id": f"verify:{k}", "kind": "command",
-                                     "cmd": cmd, "expect": expect}, cwd)
-                   for k, cmd, expect in lines]
-    finally:
-        if prev is None:
-            del os.environ[VERIFY_ENV]
-        else:
-            os.environ[VERIFY_ENV] = prev
-    passed = sum(r["passed"] for r in results)
-    summary = (f"{passed}/{len(results)} verify lines passed" if results
-               else "no verify lines")
-    if excluded:
-        summary += f"; {excluded} self-referential line(s) excluded (fixed point)"
-    return {"issue": number, "results": results, "summary": summary}
+def verify_gates(body: str) -> list[dict]:
+    """One command gate per verify line, ``verify:<k>`` counting from 1."""
+    return [{"id": f"verify:{k}", "kind": "command", "cmd": cmd}
+            for k, cmd in enumerate(parse_verify_lines(body), 1)]
 
 
 def evaluate_diff_gate(gate: dict, numstat: str) -> dict:

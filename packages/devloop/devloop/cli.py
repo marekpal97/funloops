@@ -14,7 +14,8 @@ Subcommands:
                an unknown or deleted key is refused by name); --diff-lines N
                names the dispatch tier a diff of N changed lines takes
   check      — run one deterministic gate (kind: command | diff) and emit JSON;
-               --issue N runs the issue's `verify:` lines as command gates
+               --issue N runs the command gates, then the issue's `verify:`
+               lines, as one result list
   validate   — validate a judgment gate's subagent return (kind: judge |
                simplify) against its schema; rejects for a re-ask
   prime      — assemble prior-trajectory prime context for an issue at claim
@@ -53,8 +54,9 @@ from devloop.gates import (
     GATE_KEYS,
     JUDGMENT,
     reject,
-    run_verify_lines,
+    run_command_gate,
     validate,
+    verify_gates,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -397,7 +399,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     what = p_check.add_mutually_exclusive_group(required=True)
     what.add_argument("--gate", help="a command | diff gate id from loop.toml")
     what.add_argument("--issue", type=int, metavar="N",
-                      help="run issue N's verify: lines as command gates")
+                      help="run the command gates, then issue N's verify: lines, as one list")
     p_check.add_argument("--cwd", default=".")
     p_check.add_argument("--base-ref", default="origin/main")
 
@@ -563,13 +565,16 @@ def main(argv: list[str] | None = None) -> int:
             body = json.loads(github.run(["issue", "view", str(args.issue),
                                           "--json", "body"], cwd=cwd))["body"]
         except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError) as e:
-            # Exit 2, not 1: exit 1 would read as "a verify line is red".
+            # Exit 2, not 1: exit 1 would read as "a check is red".
             detail = (e.stderr or "").strip() if hasattr(e, "stderr") else str(e)
             print(json.dumps({"error": f"cannot read issue #{args.issue}: {detail}"}))
             return 2
-        result = run_verify_lines(args.issue, body, cwd)
-        print(json.dumps(result, indent=2))
-        return 0 if all(r["passed"] for r in result["results"]) else 1
+        checks = [g for g in cfg["gates"] if g["kind"] == "command"] + verify_gates(body)
+        results = [run_command_gate(g, cwd) for g in checks]
+        passed = sum(r["passed"] for r in results)
+        print(json.dumps({"issue": args.issue, "results": results,
+                          "summary": f"{passed}/{len(results)} passed"}, indent=2))
+        return 0 if passed == len(results) else 1
     elif args.cmd in ("check", "validate"):
         gate = next((g for g in cfg["gates"] if g["id"] == args.gate), None)
         if gate is None:

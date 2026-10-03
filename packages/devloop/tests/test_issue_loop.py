@@ -197,14 +197,14 @@ def test_command_gate_timeout_is_a_result_not_a_traceback(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# verify rail (#40, dec-2f5bf66a) — an issue body's `verify:` lines run as
-# per-issue command gates. Two seams: the pure parse (body → (command,
-# expected-stdout) pairs) and `check --issue`'s JSON stdout + exit code with
-# the gh fetch replaced by a fixture body.
+# verify rail (dec-e267d040) — `check --issue N` runs the configured command
+# gates, then the issue body's `verify:` lines, as one result list. A verify
+# line is a shell command; exit 0 passes. Two seams: the pure parse (body →
+# commands) and `check --issue`'s JSON stdout + exit code with the gh fetch
+# replaced by a fixture body and the host config by a tmp repo.
 
-# The grammar in the wild (issues #28/#39/#40): a checklist item, the command
-# backticked, an optional ` => <text>` INSIDE the backticks. The prose lines
-# mention `verify:` too and must NOT parse.
+# The grammar in the wild: a checklist item, the command backticked. The
+# prose lines mention `verify:` too and must NOT parse.
 VERIFY_BODY = """\
 ## What to build
 A criterion written as `verify: <command>` is executed by the rail.
@@ -218,50 +218,70 @@ A documented example is not a criterion:
 ## Acceptance criteria
 - [ ] AC1: prose only — stays with the judge
 - [x] verify: `! test -f packages/devloop/devloop/codemap.py`
-- [ ] verify: `uv run devloop pack 28 --role implementer => Project Structure`
+- [ ] verify: `echo a => b`
 * verify: `grep -qE 'map(\\.notes)?\\.json$' x`
-verify: `uv run devloop check --issue 25 --cwd . => no verify lines`
 """
 
 
 def test_parse_verify_lines_takes_the_checklist_grammar():
+    """One command per line; ` => ` is part of the command, never a stdout clause."""
     assert gates.parse_verify_lines(VERIFY_BODY) == [
-        ("! test -f packages/devloop/devloop/codemap.py", ""),
-        ("uv run devloop pack 28 --role implementer", "Project Structure"),
-        ("grep -qE 'map(\\.notes)?\\.json$' x", ""),
-        ("uv run devloop check --issue 25 --cwd .", "no verify lines"),
+        "! test -f packages/devloop/devloop/codemap.py",
+        "echo a => b",
+        "grep -qE 'map(\\.notes)?\\.json$' x",
     ]
     assert gates.parse_verify_lines("no runnable criteria here") == []
 
 
 PY = f'"{sys.executable}" -c'
 
+# A host whose pipeline is one command gate and one diff gate.
+CHECK_HOST = (f'[[gates]]\nid = "diff-guard"\nkind = "diff"\n'
+              f'[[gates]]\nid = "tests"\nkind = "command"\ncmd = \'{PY} "print(1)"\'\n')
+
+
+def _host_config(tmp_path, monkeypatch, text):
+    """A host repo whose docs/agents/loop.toml is ``text``, as the cwd."""
+    (tmp_path / ".git").mkdir()
+    d = tmp_path / "docs" / "agents"
+    d.mkdir(parents=True)
+    (d / "loop.toml").write_text(text, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
 
 def _issue_body(monkeypatch, body: str) -> None:
     """The gh seam: `check --issue` reads the body exactly as `pack` does."""
-    monkeypatch.delenv(gates.VERIFY_ENV, raising=False)
     monkeypatch.setattr(github, "run", lambda args, cwd=None: json.dumps({"body": body}))
 
 
-def test_verify_rail_one_passing_one_failing_line(tmp_path, monkeypatch, capsys):
-    """AC1: exactly two GateResults, one passed and one failed, the failed one
-    naming its command; the verb exits 1 because a line is red."""
-    failing = f'{PY} "import sys; sys.exit(3)"'
-    _issue_body(monkeypatch, f"- [ ] verify: `{PY} \"print(1)\"`\n- [ ] verify: `{failing}`\n")
+def test_check_issue_runs_the_command_gates_then_the_verify_lines(tmp_path, monkeypatch, capsys):
+    """One call, one list: the tests gate, then one result per verify line;
+    the diff gate is not a command gate and stays out. A red line exits 1."""
+    _host_config(tmp_path, monkeypatch, CHECK_HOST)
+    _issue_body(monkeypatch, "- [ ] verify: `true`\n- [ ] verify: `false`\n")
     rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
     out = json.loads(capsys.readouterr().out)
     assert rc == 1
     assert out["issue"] == 7
     assert [(r["id"], r["kind"], r["passed"]) for r in out["results"]] == [
-        ("verify:1", "command", True), ("verify:2", "command", False)]
-    assert failing in out["results"][1]["summary"]
-    assert set(out["results"][1]) >= {"id", "kind", "passed", "summary", "detail"}
-    assert out["summary"] == "1/2 verify lines passed"
+        ("tests", "command", True), ("verify:1", "command", True), ("verify:2", "command", False)]
+    assert "`false`" in out["results"][2]["summary"]
+    assert set(out["results"][2]) >= {"id", "kind", "passed", "summary", "detail"}
+    assert out["summary"] == "2/3 passed"
+
+
+def test_verify_line_passes_on_exit_zero_alone(tmp_path, monkeypatch, capsys):
+    """No stdout clause: a line that prints `x => y` and exits 0 is green."""
+    _host_config(tmp_path, monkeypatch, "")
+    _issue_body(monkeypatch, "- [ ] verify: `echo hello => nope`\n")
+    assert cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["results"][0]["passed"] is True
 
 
 def test_verify_rail_missing_binary_is_named_never_skipped(tmp_path, monkeypatch, capsys):
-    """AC2: a command absent from PATH is a FAILED result whose summary names
-    the binary (the shell's 127 / cmd.exe's 9009 'not found' line)."""
+    """A command absent from PATH is a FAILED result whose summary names the
+    binary (the shell's 127 / cmd.exe's 9009 'not found' line)."""
+    _host_config(tmp_path, monkeypatch, "")
     _issue_body(monkeypatch, "- [ ] verify: `devloop-no-such-binary-xq --flag`\n")
     rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
     out = json.loads(capsys.readouterr().out)
@@ -270,85 +290,12 @@ def test_verify_rail_missing_binary_is_named_never_skipped(tmp_path, monkeypatch
     assert "devloop-no-such-binary-xq" in out["results"][0]["summary"]
 
 
-def test_verify_rail_expected_stdout_substring(tmp_path, monkeypatch, capsys):
-    """` => <text>` requires the text in stdout — exit 0 alone is not a pass."""
-    _issue_body(monkeypatch, f"- [ ] verify: `{PY} \"print('hello')\" => hello`\n"
-                             f"- [ ] verify: `{PY} \"print('hello')\" => nope`\n")
-    rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
-    out = json.loads(capsys.readouterr().out)
-    assert rc == 1
-    assert [r["passed"] for r in out["results"]] == [True, False]
-    assert "nope" in out["results"][1]["summary"]
-
-
-def test_verify_rail_with_no_lines_says_so_and_exits_zero(tmp_path, monkeypatch, capsys):
+def test_check_issue_with_no_gates_and_no_lines_exits_zero(tmp_path, monkeypatch, capsys):
+    _host_config(tmp_path, monkeypatch, "")
     _issue_body(monkeypatch, "- [ ] AC1: prose only\n")
     rc = cli.main(["check", "--issue", "25", "--cwd", str(tmp_path)])
-    out = json.loads(capsys.readouterr().out)
     assert rc == 0
-    assert out == {"issue": 25, "results": [], "summary": "no verify lines"}
-
-
-SELF_REF_BODY = (f"- [ ] verify: `{PY} \"print(1)\"`\n"
-                 f"- [ ] verify: `\"{sys.executable}\" -m devloop check --issue 7 --cwd . >/dev/null`\n")
-
-
-def _fake_gh(tmp_path, monkeypatch, bodies: dict[int, str]) -> None:
-    """A `gh` on PATH for child processes: `issue view N --json body` replays
-    the fixture body for N (a sh launcher — see the skipif on its users)."""
-    cases = "".join(f"  {n}) cat <<'GH'\n{json.dumps({'body': b})}\nGH\n;;\n"
-                    for n, b in bodies.items())
-    fake = tmp_path / "gh"
-    fake.write_text(f"#!/bin/sh\ncase \"$3\" in\n{cases}esac\n", encoding="utf-8")
-    fake.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
-
-
-@pytest.mark.skipif(os.name == "nt", reason="sh launcher for the fake gh; >/dev/null")
-def test_verify_rail_self_referential_line_is_a_fixed_point(tmp_path, monkeypatch, capsys):
-    """Outer run: the self-referential line really re-enters the verb in a
-    child process (gh faked on PATH) and passes iff the other line passes."""
-    _fake_gh(tmp_path, monkeypatch, {7: SELF_REF_BODY})
-    _issue_body(monkeypatch, SELF_REF_BODY)
-    rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
-    out = json.loads(capsys.readouterr().out)
-    assert rc == 0
-    assert [(r["id"], r["passed"]) for r in out["results"]] == [
-        ("verify:1", True), ("verify:2", True)]
-    assert out["summary"] == "2/2 verify lines passed"
-
-
-def test_verify_rail_nested_run_excludes_every_spelling_of_the_chain(tmp_path, monkeypatch):
-    """Gates seam: with issues 7 and 8 already running, lines naming either —
-    however the token is spelled — are excluded; `--issue 70` is not 7."""
-    body = (f"- verify: `x check --issue \"7\" --cwd .`\n"
-            f"- verify: `x check --issue=8`\n"
-            f"- verify: `x check --issue  7`\n"
-            f"- verify: `{PY} \"print(1)\" --issue 70`\n")
-    monkeypatch.setenv(gates.VERIFY_ENV, "7,8")
-    out = gates.run_verify_lines(8, body, tmp_path)
-    assert [(r["id"], r["passed"]) for r in out["results"]] == [("verify:4", True)]
-    assert out["summary"] == ("1/1 verify lines passed; 3 self-referential line(s) "
-                              "excluded (fixed point)")
-    assert os.environ[gates.VERIFY_ENV] == "7,8"   # restored, not overwritten
-
-
-@pytest.mark.skipif(os.name == "nt", reason="sh launcher for the fake gh")
-def test_verify_rail_cycle_the_token_match_cannot_see_ends_red(tmp_path, monkeypatch, capsys):
-    """Backstop: 7 → 8 → 7 spelled through a shell variable slips the token
-    match, so the chain itself stops it — one red result naming the cycle,
-    never another process."""
-    line = f"- verify: `N={{n}}; \"{sys.executable}\" -m devloop check --issue $N --cwd .`\n"
-    bodies = {7: line.format(n=8), 8: line.format(n=7)}
-    _fake_gh(tmp_path, monkeypatch, bodies)
-    _issue_body(monkeypatch, bodies[7])
-    rc = cli.main(["check", "--issue", "7", "--cwd", str(tmp_path)])
-    out = json.loads(capsys.readouterr().out)
-    assert rc == 1
-    assert out["results"][0]["passed"] is False
-    # the innermost result names the chain; every level re-escapes its
-    # child's JSON, so only the arrow-free prefix is stable to assert on
-    assert "recursive verify: 7" in out["results"][0]["detail"]
+    assert json.loads(capsys.readouterr().out) == {"issue": 25, "results": [], "summary": "0/0 passed"}
 
 
 def test_verify_rail_gh_failure_is_the_error_rung(tmp_path, monkeypatch, capsys):
@@ -1164,15 +1111,6 @@ SMALL_TIER = (
     '[dispatch.small.judge]\nmodel = "sonnet"\neffort = "low"\n'
     '[dispatch.small.simplify]\nmodel = "sonnet"\n'
 )
-
-
-def _host_config(tmp_path, monkeypatch, text):
-    """A host repo whose docs/agents/loop.toml is ``text``, as the cwd."""
-    (tmp_path / ".git").mkdir()
-    d = tmp_path / "docs" / "agents"
-    d.mkdir(parents=True)
-    (d / "loop.toml").write_text(text, encoding="utf-8")
-    monkeypatch.chdir(tmp_path)
 
 
 def test_load_config_keeps_the_small_tier_as_declared_beside_the_base_table(tmp_path):
@@ -3562,7 +3500,7 @@ def test_parse_verify_lines_ignores_demo_lines():
     executes it."""
     body = ("- [ ] demo: run `uv run devloop config`; stdout names the judge gate\n"
             "- [ ] verify: `uv run pytest packages/devloop -q`\n")
-    assert gates.parse_verify_lines(body) == [("uv run pytest packages/devloop -q", "")]
+    assert gates.parse_verify_lines(body) == ["uv run pytest packages/devloop -q"]
 
 
 def test_standing_orders_require_running_every_demo_on_the_final_commit():
