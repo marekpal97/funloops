@@ -1,7 +1,6 @@
 {
   "loop": {
     "max_issues_per_run": 3,
-    "max_parallel": 1,
     "max_fix_rounds": 2,
     "training_mode": true,
     "branch_prefix": "loop/issue-",
@@ -34,9 +33,6 @@
     },
     "judge": {
       "transport": "agent-tool"
-    },
-    "simplify": {
-      "transport": "agent-tool"
     }
   },
   "gates": [
@@ -60,22 +56,8 @@
     {
       "id": "judge",
       "kind": "judge",
-      "required": true,
-      "threshold": "all"
-    },
-    {
-      "id": "simplify",
-      "kind": "simplify",
-      "required": false,
-      "skill": "ponytail-review",
-      "rerun": [
-        "tests",
-        "judge"
-      ],
-      "revert_note": "⚠ simplify-reverted",
-      "min_diff_lines": 50
+      "required": true
     }
   ],
-  "tier": "base",
   "constitution": []
 }

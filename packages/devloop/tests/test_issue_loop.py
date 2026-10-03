@@ -373,50 +373,13 @@ def test_load_config_merges_file(tmp_path):
     assert cfg["gates"][0]["id"] == "tests"
 
 
-# ---------------------------------------------------------------------------
-# simplify gate (issue #58) — ponytail over-engineering trim, applying gate
-
-
 def test_gate_pipeline_order_is_pinned():
-    """The full pipeline order is a contract: diff-guard → tests → judge →
-    simplify. The cheap deterministic gates run first; the one judge stage
-    (dec-2d4bc03d, dec-611cbd8a) follows; simplify runs LAST so it only ever
-    shrinks an already-verified diff. No map gate (dec-fd12489d)."""
+    """The full pipeline order is a contract: diff-guard → tests → judge.
+    The cheap deterministic gates run first; the one judge stage follows and
+    is the last. No map gate, no simplify gate."""
     cfg = cli.load_config()
     ids = [g["id"] for g in cfg["gates"]]
-    assert ids == ["diff-guard", "tests", "judge", "simplify"]
-
-
-def test_simplify_gate_shape():
-    """The simplify gate is a non-required LLM/orchestrator kind whose
-    'failure' mode is a revert (never a pipeline block): it re-runs the
-    verification gates on the simplified diff and, if either goes red, ships
-    the pre-simplify diff with the revert note."""
-    cfg = cli.load_config()
-    gate = next(g for g in cfg["gates"] if g["id"] == "simplify")
-    assert gate["kind"] == "simplify"
-    # required=false: simplify can never fail the pipeline — its failure ships
-    # the pre-simplify diff (documented in issue-loop.command.md §1c-simplify).
-    assert gate["required"] is False
-    # It re-verifies the shrunk diff against the tests gate alone
-    # (dec-0ab8ab6b): no second judge over a diff the judge already passed.
-    assert gate["rerun"] == ["tests"]
-    template = cli.load_config(cli.REPO_ROOT / "docs" / "agents" / "loop.toml.template")
-    assert next(g for g in template["gates"] if g["id"] == "simplify")["rerun"] == ["tests"]
-    assert "simplify-reverted" in gate["revert_note"]
-    # The delete-list comes from the vendored ponytail-review skill.
-    assert gate["skill"] == "ponytail-review"
-
-
-def test_check_rejects_simplify_as_orchestrator_kind(tmp_path, capsys):
-    """`check` only executes deterministic kinds (command/diff). An unknown /
-    LLM-judged kind like simplify must be PASSED THROUGH — surfaced with the
-    same 'run it from the command' error as acceptance/review, not rejected by
-    the loader (which refuses only kinds outside the registries, by name)."""
-    rc = cli.main(["check", "--gate", "simplify", "--cwd", str(tmp_path)])
-    assert rc == 2
-    err = json.loads(capsys.readouterr().out)
-    assert "LLM-judged" in err["error"]
+    assert ids == ["diff-guard", "tests", "judge"]
 
 
 # test_committed_hooks_carry_no_ponytail_entries stayed in thinkweave: it reads
@@ -700,11 +663,11 @@ def test_skill_row_names_the_skill_that_ran_the_stage():
     is passed through verbatim, and a dispatch that ran no skill defaults to
     "". Expected values are hand-written from the issue's criterion."""
     payload = _trajectory_with_skills([
-        {"id": "simplify", "role": "simplify", "skill": "ponytail-review"},
+        {"id": "judge", "role": "judge", "skill": "code-review"},
         {"id": "implementer", "role": "implementer"},
     ])
     assert [(s["id"], s["skill"]) for s in payload["frontmatter"]["skills"]] == [
-        ("simplify", "ponytail-review"),
+        ("judge", "code-review"),
         ("implementer", ""),
     ]
 
@@ -712,7 +675,6 @@ def test_skill_row_names_the_skill_that_ran_the_stage():
 DISPATCH_KEYS = {
     "transport": "agent-tool", "harness": "claude-code", "model": "claude-opus-5",
     "effort": "high", "session_ref": "sess-01ABC", "duration_sec": 412, "tokens": 183_000,
-    "tier": "small",
 }
 
 
@@ -725,11 +687,12 @@ def _trajectory_with_skills(skills):
 
 
 def test_skill_record_carries_the_dispatch_join_keys_verbatim():
-    """A stage record with all eight dispatch join keys lands in frontmatter
-    with every value unchanged; the five contracted fields stay beside them."""
+    """A stage record with all seven dispatch join keys lands in frontmatter
+    with every value unchanged; the five contracted fields stay beside them.
+    A `tier` key is no join key any more and is dropped."""
     payload = _trajectory_with_skills([
         {"id": "implementer", "role": "implementer", "skill": "code-review",
-         "outcome": "shipped", "fix_rounds_attributed": 1, **DISPATCH_KEYS},
+         "outcome": "shipped", "fix_rounds_attributed": 1, **DISPATCH_KEYS, "tier": "small"},
     ])
     assert payload["frontmatter"]["skills"] == [
         {"id": "implementer", "role": "implementer", "skill": "code-review",
@@ -742,7 +705,6 @@ def test_skill_record_carries_the_dispatch_join_keys_verbatim():
     ({"duration_sec": True}, "skills[0].duration_sec", "True"),
     ({"transport": "carrier-pigeon"}, "skills[0].transport", "'carrier-pigeon'"),
     ({"model": 5}, "skills[0].model", "5"),
-    ({"tier": "tiny"}, "skills[0].tier", "'tiny'"),
 ])
 def test_wrong_typed_join_key_is_rejected_with_its_field_path(bad, path, shown):
     """A wrong-typed join key raises, and each reason names the offending field
@@ -1009,7 +971,6 @@ def test_load_config_without_dispatch_resolves_every_role_to_the_agent_tool(tmp_
     assert cfg["dispatch"] == {
         "implementer": {"transport": "agent-tool"},
         "judge": {"transport": "agent-tool"},
-        "simplify": {"transport": "agent-tool"},
     }
 
 
@@ -1029,7 +990,7 @@ def test_dispatch_override_via_set_sets_one_key_of_one_role(tmp_path):
                                'dispatch.judge.args=["--model", "opus"]'])
     assert cfg["dispatch"]["judge"] == {
         "transport": "agent-tool", "harness": "codex", "args": ["--model", "opus"]}
-    assert cfg["dispatch"]["simplify"] == {"transport": "agent-tool"}
+    assert cfg["dispatch"]["implementer"] == {"transport": "agent-tool"}
 
 
 def test_dispatch_refuses_an_unknown_key_by_name_on_both_paths(tmp_path):
@@ -1081,129 +1042,12 @@ def test_template_carries_the_dispatch_table_with_every_key_and_no_host_value():
     for key in ("transport", "harness", "model", "effort", "args", "posture"):
         assert f"{key} = " in text, key
     dispatch = cli.load_config(template_path)["dispatch"]
-    assert set(dispatch) == {"implementer", "judge", "simplify"}
+    assert set(dispatch) == {"implementer", "judge"}
     for role, entry in dispatch.items():
         assert entry["transport"] == "agent-tool", role
         assert not {"harness", "model", "effort", "args"} & set(entry), role
     assert dispatch["implementer"]["posture"] == "writer"
     assert dispatch["judge"]["posture"] == "reader"
-
-
-# --- [dispatch.small] — a size tier over the judgment roles ------------------
-# Below a diff-size threshold the small tier's model/effort override the base
-# table for judge and simplify. The implementer runs before any diff exists,
-# so it always reads the base table.
-
-SMALL_TIER = (
-    '[dispatch.implementer]\nmodel = "opus"\n'
-    '[dispatch.judge]\nmodel = "opus"\neffort = "high"\n'
-    '[dispatch.small]\nmax_diff_lines = 200\n'
-    '[dispatch.small.judge]\nmodel = "sonnet"\neffort = "low"\n'
-    '[dispatch.small.simplify]\nmodel = "sonnet"\n'
-)
-
-
-def test_load_config_keeps_the_small_tier_as_declared_beside_the_base_table(tmp_path):
-    p = tmp_path / "loop.toml"
-    p.write_text(SMALL_TIER, encoding="utf-8")
-    cfg = cli.load_config(p)
-    assert cfg["dispatch"]["small"] == {
-        "max_diff_lines": 200,
-        "judge": {"model": "sonnet", "effort": "low"},
-        "simplify": {"model": "sonnet"},
-    }
-    assert cfg["dispatch"]["judge"] == {
-        "transport": "agent-tool", "model": "opus", "effort": "high"}
-
-
-@pytest.mark.parametrize("lines,tier,judge,simplify", [
-    (199, "small", {"model": "sonnet", "effort": "low"}, {"model": "sonnet"}),
-    (200, "small", {"model": "sonnet", "effort": "low"}, {"model": "sonnet"}),  # at the threshold
-    (201, "base", {"model": "opus", "effort": "high"}, {}),
-])
-def test_config_diff_lines_picks_the_tier_for_the_judgment_roles_only(
-        tmp_path, monkeypatch, capsys, lines, tier, judge, simplify):
-    """At or under max_diff_lines the small tier's values override the base
-    table for judge and simplify; above it the base table stands. The
-    implementer keeps its base entry under every count."""
-    _host_config(tmp_path, monkeypatch, SMALL_TIER)
-    assert cli.main(["config", "--diff-lines", str(lines)]) == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["tier"] == tier
-    assert out["dispatch"]["judge"] == {"transport": "agent-tool", **judge}
-    assert out["dispatch"]["simplify"] == {"transport": "agent-tool", **simplify}
-    assert out["dispatch"]["implementer"] == {"transport": "agent-tool", "model": "opus"}
-
-
-def test_config_without_a_count_is_the_base_tier(tmp_path, monkeypatch, capsys):
-    """No --diff-lines (the implementer's dispatch, before any diff exists):
-    the base table, named as such."""
-    _host_config(tmp_path, monkeypatch, SMALL_TIER)
-    assert cli.main(["config"]) == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["tier"] == "base"
-    assert out["dispatch"]["judge"]["model"] == "opus"
-
-
-def test_config_diff_lines_without_a_small_tier_is_base(tmp_path, monkeypatch, capsys):
-    _host_config(tmp_path, monkeypatch, '[dispatch.judge]\nmodel = "opus"\n')
-    assert cli.main(["config", "--diff-lines", "0"]) == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["tier"] == "base"
-    assert "small" not in out["dispatch"]
-    assert out["dispatch"]["judge"]["model"] == "opus"
-
-
-@pytest.mark.parametrize("text,message", [
-    ('[dispatch.small]\nmax_diff_lines = -1\n', "dispatch.small.max_diff_lines"),
-    ('[dispatch.small]\nmax_diff_lines = "many"\n', "dispatch.small.max_diff_lines"),
-    ('[dispatch.small]\nmax_diff_lines = true\n', "dispatch.small.max_diff_lines"),
-    ('[dispatch.small.judge]\nmodel = "x"\n', "dispatch.small.max_diff_lines"),  # no threshold
-    ('[dispatch.small]\nmax_diff_lines = 10\nbogus = 1\n', "unknown key 'dispatch.small.bogus'"),
-    ('[dispatch.small]\nmax_diff_lines = 10\n[dispatch.small.implementer]\nmodel = "x"\n',
-     "unknown key 'dispatch.small.implementer'"),
-    ('[dispatch.small]\nmax_diff_lines = 10\n[dispatch.small.judge]\ntransport = "herdr"\n',
-     "unknown key 'dispatch.small.judge.transport'"),
-    ('[dispatch.small]\nmax_diff_lines = 10\n[dispatch.small.judge]\nmodel = 4\n',
-     "dispatch.small.judge.model"),
-])
-def test_small_tier_is_refused_by_name_when_malformed(tmp_path, text, message):
-    """The threshold is a required non-negative int; the tier carries only the
-    judgment roles, each with model, effort or args; anything else is named."""
-    p = tmp_path / "loop.toml"
-    p.write_text(text, encoding="utf-8")
-    with pytest.raises(ValueError, match=message):
-        cli.load_config(p)
-
-
-def test_small_tier_via_set_works_like_the_base_table(tmp_path):
-    cfg = cli.apply_overrides(cli.load_config(tmp_path / "nope.toml"), [
-        "dispatch.small.max_diff_lines=120", "dispatch.small.judge.model=sonnet"])
-    assert cfg["dispatch"]["small"] == {"max_diff_lines": 120, "judge": {"model": "sonnet"}}
-    p = tmp_path / "loop.toml"
-    p.write_text(SMALL_TIER, encoding="utf-8")
-    cfg = cli.apply_overrides(cli.load_config(p), ["dispatch.small.max_diff_lines=50"])
-    assert cfg["dispatch"]["small"]["max_diff_lines"] == 50
-    assert cfg["dispatch"]["small"]["judge"] == {"model": "sonnet", "effort": "low"}
-
-
-@pytest.mark.parametrize("spec,message", [
-    ("dispatch.small.judge.model=sonnet", "dispatch.small.max_diff_lines"),  # no threshold
-    ("dispatch.small.implementer.model=x", "unknown key 'dispatch.small.implementer'"),
-    ("dispatch.small.max_diff_lines=-5", "dispatch.small.max_diff_lines"),
-])
-def test_small_tier_via_set_is_refused_by_name_when_malformed(tmp_path, spec, message):
-    with pytest.raises(ValueError, match=message):
-        cli.apply_overrides(cli.load_config(tmp_path / "nope.toml"), [spec])
-
-
-def test_command_doc_picks_the_tier_from_diff_guard_and_records_it():
-    """§1c resolves the tier with the diff-guard count before dispatching the
-    judges and records it."""
-    gate = _command_doc_subsection("### 1c.")
-    assert "devloop config --diff-lines" in gate
-    assert "changed_lines" in gate[:gate.index("devloop config --diff-lines")]
-    assert "`tier`" in gate
 
 
 # --- deleted keys are rejected, named (issue #39 AC2, dec-cf8f0d33) ---------
@@ -1218,6 +1062,8 @@ DELETED_SCALARS = [
     ("triage", "green_enabled", "false"),
     ("triage", "green_max_diff_lines", "150"),
     ("triage", "green_requires_first_try", "true"),
+    ("loop", "max_parallel", "1"),
+    ("triage", "red_min_diff_lines", "800"),
 ]
 
 
@@ -1243,6 +1089,7 @@ def test_load_config_rejects_the_deleted_dispatch_persona_key(tmp_path):
     ("diff", "max_changed_lines", "2000"),
     ("judge", "block_on", '["critical", "major"]'),
     ("judge", "smells_baseline", "true"),
+    ("judge", "threshold", '"all"'),
 ])
 def test_load_config_rejects_deleted_gate_keys_naming_them(tmp_path, kind, key, value):
     """Gate entries are checked against what their kind's verb reads; a deleted
@@ -1255,6 +1102,7 @@ def test_load_config_rejects_deleted_gate_keys_naming_them(tmp_path, kind, key, 
 
 @pytest.mark.parametrize("entry,kind", [
     ('kind = "review"\nblock_on = ["major"]', "'review'"),  # pre-#39 gate, stale keys
+    ('kind = "simplify"\nmin_diff_lines = 50', "'simplify'"),  # the deleted stage
     ('cmd = "true"', "None"),                               # no kind: config error, not KeyError
 ])
 def test_load_config_rejects_stale_or_missing_gate_kind(tmp_path, entry, kind):
@@ -1262,6 +1110,17 @@ def test_load_config_rejects_stale_or_missing_gate_kind(tmp_path, entry, kind):
     p.write_text(f'[[gates]]\nid = "g"\n{entry}\n', encoding="utf-8")
     with pytest.raises(ValueError, match=rf"unknown kind {kind} at gates\[0\]"):
         cli.load_config(p)
+
+
+def test_the_deleted_small_tier_is_refused_by_name(tmp_path, capsys):
+    """`[dispatch.small]` is no tier any more: its threshold is an unknown
+    dispatch key, and `config --diff-lines` is gone."""
+    p = tmp_path / "loop.toml"
+    p.write_text("[dispatch.small]\nmax_diff_lines = 200\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown key 'dispatch.small.max_diff_lines'"):
+        cli.load_config(p)
+    with pytest.raises(SystemExit):
+        cli.build_arg_parser().parse_args(["config", "--diff-lines", "10"])
 
 
 def test_config_verb_names_the_deleted_key_and_exits_2(tmp_path, capsys, monkeypatch):
@@ -1802,21 +1661,6 @@ def test_prime_serves_file_anchored_decisions_without_any_trajectory(tmp_path, c
 # --- Review round 1 (issue #85) — hardening the prime v2 seams --------------
 
 
-def test_build_trajectory_trace_lines_delta_non_int_is_zero():
-    """`simplify.lines_delta` must degrade a malformed value (list/dict) to 0,
-    not escape as a TypeError — an uncaught TypeError would crash the trajectory
-    command (rc-1) instead of the clean ValueError rc-2 path. It is a count, so
-    the same coercion as every other filter/join key applies."""
-    payload = mint.build_trajectory(
-        {"number": 1, "title": "x", "labels": []},
-        branch="b", commits=[], numstat="", gates=[], fix_rounds=0,
-        outcome="shipped",
-        trace={"simplify": {"outcome": "applied", "lines_delta": [3],
-                            "cuts": [], "kept": []}},
-    )
-    assert payload["frontmatter"]["trace"]["simplify"]["lines_delta"] == 0
-
-
 def test_resolve_insights_only_serves_note_type(tmp_path):
     """builds_on could name a decision or session id; prime must NOT serve a
     non-note body as color — only `type='note'` insight notes are served, and a
@@ -2037,12 +1881,7 @@ def test_build_trajectory_round_trips_semantic_trace():
         {"id": "AC1", "verdict": "met", "flipped_by_round": 1},
         {"id": "AC2", "verdict": "met", "flipped_by_round": None},
     ]
-    assert trace["simplify"] == {
-        "outcome": "applied", "lines_delta": -12,
-        "cuts": [{"what": "existence test",
-                  "why": "eight siblings already guard existence"}],
-        "kept": [{"what": "budget-cap test", "why": "the only novel invariant"}],
-    }
+    assert "simplify" not in trace  # the deleted stage's envelope is dropped
     assert trace["edge_cases"] == ["empty concepts → no prime",
                                    "corrupt index → unprimed"]
     assert trace["tdd"] == {"red_confirmed": True}
@@ -2716,8 +2555,8 @@ _GATE_SPLIT_MARKER = "**The gate split"
 
 
 def test_gate_split_stated_exactly_once_where_gates_are_introduced():
-    """The gate split (command/diff EXECUTE in the rail; acceptance/review/
-    simplify are orchestrator-dispatched and only recognised there) is stated
+    """The gate split (command/diff EXECUTE in the rail; the judge is
+    orchestrator-dispatched and only recognised there) is stated
     ONCE, in the gate-pipeline section of the command doc — never duplicated
     across the loop docs."""
     docs = sorted((cli.REPO_ROOT / "docs" / "agents").glob("*.md"))
@@ -2810,9 +2649,7 @@ def test_issue_loop_doc_splices_persona_by_reference():
 
 
 # ---------------------------------------------------------------------------
-# Stack-tip simplify (issue #90): whole-branch ponytail review before PR-open,
-# reusing the existing simplify gate config; result lands in the trace as
-# `stack_simplify`, shaped by the same normalizer as per-slice `simplify`.
+# Command-doc sections
 
 
 def _command_doc_subsection(marker: str) -> str:
@@ -2984,118 +2821,9 @@ def test_persona_return_section_carries_the_three_sentence_rules():
         assert rule in ret.lower(), rule
 
 
-def test_stacked_ship_carries_stack_tip_simplify_before_pr_open():
-    """Acceptance: the command doc's ship step (§1e stacked delivery) carries
-    the stack-tip simplify pass — cumulative merge-base diff (origin/main...HEAD,
-    the whole branch) plus WHOLE-FILE contents of touched files for cross-slice
-    vision — and it runs BEFORE the branch is pushed / the single PR opens."""
-    sec = _command_doc_subsection("### 1e.")
-    low = sec.lower()
-    assert "stack-tip simplify" in low
-    assert "origin/main...HEAD" in sec
-    assert "whole-file" in low
-    # Ordering pin: the pass precedes push/PR-open in the end-of-run step.
-    assert low.index("stack-tip simplify") < low.index("push the branch")
-
-
-def test_stack_tip_simplify_reuses_existing_gate_semantics():
-    """Acceptance: keep-or-revert is the EXISTING simplify gate's — the doc
-    references the gate's `rerun` list and `revert_note`, and preserves the
-    snapshot + hard-reset revert path. A run whose slices individually passed
-    simplify can still receive cross-slice cuts at tip — stated, not implied."""
-    sec = _command_doc_subsection("### 1e.")
-    low = sec.lower()
-    assert "rerun" in low
-    assert "revert_note" in low or "simplify-reverted" in low
-    assert "reset --hard" in sec
-    # The recording instruction names the trace key the rail shapes.
-    assert "stack_simplify" in sec
-
-
-def test_simplify_reruns_tests_only_and_once_per_stack():
-    """funloops#55 (dec-0ab8ab6b): after the delete-list lands, only the tests
-    gate reruns — no judge after simplify in §1c's step 4 or in §1e's stack-tip
-    pass — and stacked delivery runs simplify once, at the tip, never per
-    slice. §3 says the per-slice `simplify` key is absent in stacked mode."""
-    c = _command_doc_subsection("### 1c.")
-    step = c[c.index("4. **Re-verify"):c.index("On a required-gate failure")]
-    assert "rerun" in step and "judge" not in step.lower()
-    e = _command_doc_subsection("### 1e.")
-    tip = e[e.lower().index("stack-tip simplify"):e.index("One PR at the end")]
-    assert "rerun" in tip and "judge" not in tip.lower()
-    assert "per-slice simplify" not in e
-    s3 = _command_doc_subsection("## 3.")
-    assert "absent" in s3 and "stacked" in s3 and "stack_simplify" in s3
-
-
-def test_pr_per_issue_ship_states_stack_tip_noop():
-    """The pr-per-issue ship step (§1d) states the applicability decision
-    explicitly: the per-slice simplify already ran at what IS the stack tip,
-    so there is no second pass — a documented no-op, not an ambiguity."""
-    sec = _command_doc_subsection("### 1d.")
-    low = sec.lower()
-    assert "stack-tip" in low
-    assert "no-op" in low
-
-
-def test_command_doc_section3_documents_stack_simplify_trace_key():
-    """§3's trace envelope documents the `stack_simplify` key so the recording
-    instruction in §1e has its schema stated where the envelope lives."""
-    assert "stack_simplify" in _command_doc_subsection("## 3.")
-
-
-def test_build_trajectory_shapes_stack_simplify_like_slice_simplify():
-    """Rail seam: a trace may carry BOTH the per-slice `simplify` and the
-    run-end `stack_simplify`; the latter is shaped through the same projection
-    (outcome/lines_delta/cuts/kept, bookkeeping keys dropped). Expected value
-    hand-written from the #85 envelope schema."""
-    payload = mint.build_trajectory(
-        {"number": 90, "title": "stack-tip simplify", "labels": []},
-        branch="loop/dag-88", commits=["a"], numstat="1\t0\tx.py\n",
-        gates=[], fix_rounds=0, outcome="shipped",
-        trace={
-            "simplify": {"outcome": "lean", "lines_delta": 0,
-                         "cuts": [], "kept": []},
-            "stack_simplify": {
-                "outcome": "applied", "lines_delta": -31,
-                "cuts": [{"what": "duplicated path-matcher",
-                          "why": "slice 3 re-rolled slice 1's helper",
-                          "note": "bookkeeping — dropped"}],
-                "kept": [{"what": "hand-rolled retrieval",
-                          "why": "load-bearing under the MCP-absent fallback"}],
-                "scratch": "dropped",
-            },
-        },
-    )
-    trace = payload["frontmatter"]["trace"]
-    assert trace["stack_simplify"] == {
-        "outcome": "applied", "lines_delta": -31,
-        "cuts": [{"what": "duplicated path-matcher",
-                  "why": "slice 3 re-rolled slice 1's helper"}],
-        "kept": [{"what": "hand-rolled retrieval",
-                  "why": "load-bearing under the MCP-absent fallback"}],
-    }
-    # The per-slice envelope is untouched by the sibling key.
-    assert trace["simplify"] == {"outcome": "lean", "lines_delta": 0,
-                                 "cuts": [], "kept": []}
-
-
-def test_build_trajectory_omits_stack_simplify_when_absent():
-    """pr-per-issue runs (and stacked runs whose tip pass said lean/never ran)
-    pass no stack_simplify — the key is omitted, never emitted empty."""
-    payload = mint.build_trajectory(
-        {"number": 91, "title": "x", "labels": []},
-        branch="b", commits=[], numstat="", gates=[],
-        fix_rounds=0, outcome="shipped",
-        trace={"simplify": {"outcome": "lean", "lines_delta": 0,
-                            "cuts": [], "kept": []}},
-    )
-    assert "stack_simplify" not in payload["frontmatter"]["trace"]
-
-
 # ---------------------------------------------------------------------------
 # Judgment-gate validators (issue #99, fused by #39 / dec-611cbd8a) — the rail
-# never EXECUTES judge / simplify; it validates what the orchestrator's
+# never EXECUTES the judge; it validates what the orchestrator's
 # subagent returned, rejecting a schema-violating return with per-field
 # reasons so the orchestrator re-asks instead of str()-coercing garbage
 # downstream.
@@ -3112,12 +2840,11 @@ def _met(*ids):
 def test_gate_registries_are_disjoint_and_cover_the_pipeline():
     """Every kind has exactly one verb (boundary spec §3): a kind is either
     executed by the rail or validated by it, never both, and the shipped gate
-    pipeline names no kind outside the two registries. Two judgment kinds:
-    acceptance+review collapsed into `judge` (no new kind, one fewer)."""
+    pipeline names no kind outside the two registries. One judgment kind."""
     assert not (set(gates.DETERMINISTIC) & set(gates.JUDGMENT))
     kinds = {g["kind"] for g in cli.load_config()["gates"]}
     assert kinds <= set(gates.DETERMINISTIC) | set(gates.JUDGMENT)
-    assert set(gates.JUDGMENT) == {"judge", "simplify"}
+    assert set(gates.JUDGMENT) == {"judge"}
 
 
 def test_validate_judge_all_met_passes_whatever_the_findings_say():
@@ -3146,19 +2873,6 @@ def test_validate_judge_one_not_met_fails_the_gate_without_rejecting():
     ], "findings": []})
     assert result["passed"] is False
     assert result["reasons"] == []
-
-
-def test_validate_judge_majority_threshold():
-    """threshold=majority: strictly more than half met (the knob stays)."""
-    gate = {**_gate("judge"), "threshold": "majority"}
-    payload = {"criteria": [
-        {"id": "AC1", "verdict": "met", "evidence": "e"},
-        {"id": "AC2", "verdict": "met", "evidence": "e"},
-        {"id": "AC3", "verdict": "not-met", "evidence": "e"},
-    ], "findings": []}
-    assert gates.validate(gate, payload)["passed"] is True
-    payload["criteria"][1]["verdict"] = "not-met"
-    assert gates.validate(gate, payload)["passed"] is False
 
 
 def test_validate_judge_rejects_unknown_verdict_naming_field_and_value():
@@ -3209,113 +2923,18 @@ def test_validate_judge_rejects_bad_or_missing_findings():
 def test_validate_rejects_non_object_payload_naming_the_payload():
     """A bare string / list pasted by mistake is rejected at the top level for
     every judgment kind — nothing downstream ever sees it."""
-    for kind in ("judge", "simplify"):
-        result = gates.validate(_gate(kind), ["not", "an", "object"])
-        assert result["passed"] is False
-        assert result["reasons"] == [
-            "payload: expected a JSON object, got list"]  # reported once, not per section
-
-
-def test_validate_simplify_accepts_the_trace_envelope():
-    """The simplify subagent returns the SAME envelope the trace stores
-    (`{outcome, cuts, kept, lines_delta}`) — one shape, validated at the seam
-    and carried into the trajectory unchanged."""
-    result = gates.validate(_gate("simplify"), {
-        "outcome": "applied", "lines_delta": -12,
-        "cuts": [{"what": "wrapper", "why": "one call site"}],
-        "kept": [{"what": "guard", "why": "trust boundary"}],
-    })
-    assert result["passed"] is True and result["reasons"] == []
-    assert "-12" in result["summary"]
-
-
-def test_validate_simplify_rejects_bad_fields():
-    """Reasons accumulate (no early exit): one malformed payload names every
-    offending field path."""
-    result = gates.validate(_gate("simplify"), {
-        "outcome": "shrunk", "lines_delta": "-12", "cuts": [{"what": "w"}], "kept": [],
-    })
+    result = gates.validate(_gate("judge"), ["not", "an", "object"])
     assert result["passed"] is False
-    assert any("outcome" in r and "shrunk" in r for r in result["reasons"])
-    assert any("lines_delta" in r for r in result["reasons"])
-    assert any("cuts[0].why" in r for r in result["reasons"])
-
-
-# --- the simplify size gate: min_diff_lines ---------------------------------
-
-
-@pytest.mark.parametrize("value", ["-1", '"40"', "true", "2.5"])
-def test_load_config_rejects_a_bad_min_diff_lines_naming_it(tmp_path, value):
-    """`min_diff_lines` on the simplify gate is a non-negative int; anything
-    else is refused by position and name, like every other gate key."""
-    p = tmp_path / "loop.toml"
-    p.write_text(f'[[gates]]\nid = "s"\nkind = "simplify"\nmin_diff_lines = {value}\n',
-                 encoding="utf-8")
-    with pytest.raises(ValueError, match=r"gates\[0\]\.min_diff_lines"):
-        cli.load_config(p)
-
-
-def test_min_diff_lines_is_simplify_only_and_absent_means_never_skip(tmp_path):
-    """Absent loads as 0 — no count is below 0, so the stage never skips; a set
-    value survives the load; the key belongs to the simplify kind alone."""
-    p = tmp_path / "loop.toml"
-    p.write_text('[[gates]]\nid = "s"\nkind = "simplify"\n', encoding="utf-8")
-    assert cli.load_config(p)["gates"][0]["min_diff_lines"] == 0
-    p.write_text('[[gates]]\nid = "s"\nkind = "simplify"\nmin_diff_lines = 40\n',
-                 encoding="utf-8")
-    assert cli.load_config(p)["gates"][0]["min_diff_lines"] == 40
-    p.write_text('[[gates]]\nid = "d"\nkind = "diff"\nmin_diff_lines = 40\n',
-                 encoding="utf-8")
-    with pytest.raises(ValueError, match=r"gates\[0\]\.min_diff_lines"):
-        cli.load_config(p)
-
-
-def test_shipped_configs_set_the_size_gate_as_the_issue_says():
-    """funloops' own loop.toml sets a threshold; the template carries the knob
-    commented, so a fresh host never skips until it opts in."""
-    assert _gate("simplify")["min_diff_lines"] > 0
-    template_path = cli.REPO_ROOT / "docs" / "agents" / "loop.toml.template"
-    template = cli.load_config(template_path)
-    assert next(g for g in template["gates"] if g["id"] == "simplify")["min_diff_lines"] == 0
-    assert "# min_diff_lines" in template_path.read_text(encoding="utf-8")
+    assert result["reasons"] == [
+        "payload: expected a JSON object, got list"]  # reported once, not per section
 
 
 def test_diff_gate_reports_the_changed_line_count_as_a_field():
-    """The count the size gate compares travels as a declared field, never as
+    """The changed-line count travels as a declared field, never as
     prose the orchestrator re-parses out of the summary. Binary rows count 0."""
     result = gates.evaluate_diff_gate({"id": "g", "forbidden_paths": []},
                                       "3\t1\ta.py\n2\t0\tb.py\n-\t-\timg.png\n")
     assert result["changed_lines"] == 6
-
-
-def test_validate_simplify_accepts_skipped_small():
-    result = gates.validate(_gate("simplify"), {
-        "outcome": "skipped-small", "lines_delta": 0, "cuts": [], "kept": []})
-    assert result["passed"] is True and result["reasons"] == []
-    assert "skipped-small" in result["summary"]
-
-
-def test_build_trajectory_round_trips_a_skipped_small_simplify():
-    """The skip records only its outcome; the trace shaping fills the rest of
-    the envelope with its empty values and the outcome survives verbatim."""
-    payload = mint.build_trajectory(
-        {"number": 17, "title": "size gate", "labels": []}, branch="loop/issue-17",
-        commits=["a"], numstat="1\t0\tx.py\n", gates=[], fix_rounds=0,
-        outcome="shipped", trace={"simplify": {"outcome": "skipped-small"}},
-    )
-    assert payload["frontmatter"]["trace"]["simplify"] == {
-        "outcome": "skipped-small", "lines_delta": 0, "cuts": [], "kept": []}
-
-
-def test_command_doc_describes_the_simplify_size_gate():
-    """§1c names the field compared (diff-guard's changed_lines), the trace
-    outcome and the PR-body line; §1e holds the cumulative diff to the same
-    threshold."""
-    c = _command_doc_subsection("### 1c.")
-    assert "min_diff_lines" in c and "changed_lines" in c
-    assert '"skipped-small"' in c and "simplify: skipped (" in c
-    e = _command_doc_subsection("### 1e.")
-    assert "min_diff_lines" in e and "cumulative" in e
 
 
 # --- the CLI seam -----------------------------------------------------------
@@ -3351,8 +2970,8 @@ def test_validate_cli_rejects_unparseable_json_as_a_re_ask(tmp_path, capsys):
     """A return that is not even JSON is the first thing worth re-asking for —
     rc 2 with a reason, not a traceback."""
     p = tmp_path / "return.json"
-    p.write_text("Lean already. Ship.", encoding="utf-8")
-    rc = cli.main(["validate", "--gate", "simplify", "--return-json", str(p)])
+    p.write_text("All criteria met.", encoding="utf-8")
+    rc = cli.main(["validate", "--gate", "judge", "--return-json", str(p)])
     assert rc == 2
     out = json.loads(capsys.readouterr().out)
     assert out["reasons"] and "JSON" in out["reasons"][0]
@@ -3413,7 +3032,7 @@ def test_validate_schemas_match_the_enums_the_command_doc_advertises():
     are the enums the rail accepts. Drift here is a silent re-ask loop."""
     section = (cli.REPO_ROOT / "docs" / "agents" / "issue-loop.command.md").read_text(
         encoding="utf-8")
-    for value in gates.VERDICTS + gates.SEVERITIES + gates.SIMPLIFY_OUTCOMES:
+    for value in gates.VERDICTS + gates.SEVERITIES:
         assert f'"{value}"' in section, value
 
 

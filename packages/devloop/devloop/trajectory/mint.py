@@ -8,9 +8,9 @@ from __future__ import annotations
 TRANSPORTS = ("agent-tool", "herdr", "headless-argv")
 DISPATCH_KEYS: dict[str, type] = {
     "transport": str, "harness": str, "model": str, "effort": str,
-    "session_ref": str, "duration_sec": int, "tokens": int, "tier": str,
+    "session_ref": str, "duration_sec": int, "tokens": int,
 }
-DISPATCH_CHOICES = {"transport": TRANSPORTS, "tier": ("base", "small")}
+DISPATCH_CHOICES = {"transport": TRANSPORTS}
 
 
 def _normalize_skill(entry: dict, where: str, reasons: list[str]) -> dict:
@@ -78,29 +78,6 @@ def _normalize_trace_criterion(entry: dict) -> dict:
     }
 
 
-def _normalize_trace_whatwhy(entry: dict) -> dict:
-    """Project one simplify cut or keep to ``{what, why}``."""
-    return {
-        "what": str(entry.get("what", "") or ""),
-        "why": str(entry.get("why", "") or ""),
-    }
-
-
-def _normalize_trace_simplify(section: dict) -> dict:
-    """Project one simplify envelope to ``{outcome, cuts, kept, lines_delta}``;
-    a malformed ``lines_delta`` degrades to 0."""
-    cuts = section.get("cuts")
-    kept = section.get("kept")
-    return {
-        "outcome": str(section.get("outcome", "") or ""),
-        "cuts": [_normalize_trace_whatwhy(c) for c in cuts if isinstance(c, dict)]
-                if isinstance(cuts, list) else [],
-        "kept": [_normalize_trace_whatwhy(c) for c in kept if isinstance(c, dict)]
-                if isinstance(kept, list) else [],
-        "lines_delta": _as_int_or_none(section.get("lines_delta")) or 0,
-    }
-
-
 def _normalize_trace(raw: object) -> dict:
     """Shape a trace object into its stored envelope. A non-dict raises;
     unknown keys are dropped and each section is projected to its known
@@ -115,10 +92,6 @@ def _normalize_trace(raw: object) -> dict:
     criteria = raw.get("criteria")
     if isinstance(criteria, list):
         out["criteria"] = [_normalize_trace_criterion(e) for e in criteria if isinstance(e, dict)]
-    for key in ("simplify", "stack_simplify"):
-        section = raw.get(key)
-        if isinstance(section, dict):
-            out[key] = _normalize_trace_simplify(section)
     for key in ("edge_cases", "deviations"):
         items = raw.get(key)
         if isinstance(items, list):

@@ -88,8 +88,7 @@ def verify_gates(body: str) -> list[dict]:
 def evaluate_diff_gate(gate: dict, numstat: str) -> dict:
     """Evaluate ``git diff --numstat`` output against ``forbidden_paths``
     (:func:`devloop.paths.match` forms). Size never blocks; the changed-line
-    count travels as ``changed_lines`` for the PR body and the simplify
-    gate's size threshold."""
+    count travels as ``changed_lines`` for the PR body and triage."""
     forbidden = gate.get("forbidden_paths", [])
     touched_forbidden, total = [], 0
     for line in numstat.strip().splitlines():
@@ -129,7 +128,6 @@ def run_diff_gate(gate: dict, cwd: Path, base_ref: str) -> dict:
 
 VERDICTS = ("met", "not-met")
 SEVERITIES = ("problem", "note")
-SIMPLIFY_OUTCOMES = ("applied", "reverted", "lean", "skipped-small")
 
 
 def reject(gate: dict, reasons: list[str]) -> dict:
@@ -184,9 +182,9 @@ def validate_judge(gate: dict, raw: dict) -> dict:
     """Validate a judge return: ``{criteria: [{id, verdict: met|not-met,
     evidence}], findings: [{severity: problem|note, finding}]}``.
 
-    The gate passes per ``threshold``: ``majority`` needs more than half met,
-    anything else reads as ``all``. ``findings`` never decides the verdict;
-    it may be empty but not missing, so silence never reads as a clean review.
+    The gate passes when every criterion is met. ``findings`` never decides
+    the verdict; it may be empty but not missing, so silence never reads as a
+    clean review.
     """
     reasons: list[str] = []
     verdicts = []
@@ -200,42 +198,21 @@ def validate_judge(gate: dict, raw: dict) -> dict:
         where = f"findings[{i}]"
         _text(entry, where, "finding", reasons)
         _enum(entry, where, "severity", SEVERITIES, reasons)
-    threshold = gate.get("threshold", "all")
     met = sum(v == "met" for v in verdicts)
-    passed = (met * 2 > len(verdicts) if threshold == "majority"
-              else met == len(verdicts))
-    return _verdict(gate, reasons, passed=passed,
-                    summary=(f"{met}/{len(verdicts)} criteria met (threshold: "
-                             f"{threshold}); {len(findings)} findings"))
-
-
-def validate_simplify(gate: dict, raw: dict) -> dict:
-    """Validate a simplify return: ``{outcome: applied|reverted|lean|
-    skipped-small, lines_delta, cuts[], kept[]}``. A schema-valid return
-    always passes; its failure mode is the revert."""
-    reasons: list[str] = []
-    outcome = _enum(raw, "payload", "outcome", SIMPLIFY_OUTCOMES, reasons)
-    delta = raw.get("lines_delta")
-    if isinstance(delta, bool) or not isinstance(delta, int):
-        reasons.append(f"payload.lines_delta: expected an int, got {delta!r}")
-    for key in ("cuts", "kept"):
-        for i, entry in _entries(raw, key, reasons, allow_empty=True):
-            _text(entry, f"{key}[{i}]", "what", reasons)
-            _text(entry, f"{key}[{i}]", "why", reasons)
-    return _verdict(gate, reasons, passed=True, summary=f"{outcome}: {delta} lines")
+    return _verdict(gate, reasons, passed=met == len(verdicts),
+                    summary=f"{met}/{len(verdicts)} criteria met; {len(findings)} findings")
 
 
 # `check` dispatches only through DETERMINISTIC; `validate` only through JUDGMENT.
 DETERMINISTIC = {"command": run_command_gate, "diff": run_diff_gate}
-JUDGMENT = {"judge": validate_judge, "simplify": validate_simplify}
+JUDGMENT = {"judge": validate_judge}
 
 # The keys each kind's verb reads beyond id/kind/required; the config loader
 # refuses any other key by name, so a deleted knob is never silently inert.
 GATE_KEYS = {
     "command": {"cmd", "timeout_sec"},
     "diff": {"forbidden_paths"},
-    "judge": {"threshold"},
-    "simplify": {"skill", "rerun", "revert_note", "min_diff_lines"},
+    "judge": set(),
 }
 COMMON_GATE_KEYS = {"id", "kind", "required"}
 

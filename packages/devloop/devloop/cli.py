@@ -11,13 +11,12 @@ Subcommands:
   claim    — claim an issue for a run (the assignee IS the claim)
   release  — drop the claim
   config     — print resolved loop config (defaults merged with loop.toml;
-               an unknown or deleted key is refused by name); --diff-lines N
-               names the dispatch tier a diff of N changed lines takes
+               an unknown or deleted key is refused by name)
   check      — run one deterministic gate (kind: command | diff) and emit JSON;
                --issue N runs the command gates, then the issue's `verify:`
                lines, as one result list
-  validate   — validate a judgment gate's subagent return (kind: judge |
-               simplify) against its schema; rejects for a re-ask
+  validate   — validate a judgment gate's subagent return (kind: judge)
+               against its schema; rejects for a re-ask
   prime      — assemble prior-trajectory prime context for an issue at claim
                time (reads the derived index read-only; always serves what
                it finds)
@@ -131,7 +130,6 @@ DEAD_VOCAB_NOTE = (
 DEFAULT_CONFIG: dict = {
     "loop": {
         "max_issues_per_run": 3,
-        "max_parallel": 1,
         "max_fix_rounds": 2,
         "training_mode": True,
         "branch_prefix": "loop/issue-",
@@ -166,20 +164,15 @@ DEFAULT_CONFIG: dict = {
 SECTIONS = ("loop", "labels", "tdd", "triage")
 
 # [dispatch]: which agent runs a role, one sub-table per role. A role IS its
-# entry: the loop's own three always resolve, and any other entry declares
+# entry: the loop's own two always resolve, and any other entry declares
 # one more. The rail checks shape only; a harness or model name is the host's
 # to get right. Absent keys mean the Agent tool, the session's model, no
 # argv tail.
-ROLES = ("implementer", "judge", "simplify")
+ROLES = ("implementer", "judge")
 DISPATCH_KEYS = ("posture", "transport", "harness", "model", "effort", "args")
 DISPATCH_CHOICES = {"transport": ("agent-tool", "herdr"), "posture": get_args(pack.Posture)}
 DISPATCH_DEFAULT = {"transport": "agent-tool"}
-# [dispatch.small]: the size tier. At or under max_diff_lines changed lines its
-# per-role model / effort / args lay over the base table for the judgment
-# roles. The implementer runs before any diff exists, so it never takes it.
-TIERED_ROLES = ("judge", "simplify")
-TIER_KEYS = ("model", "effort", "args")
-OVERRIDABLE = " | ".join((*SECTIONS, "dispatch.<role>", "dispatch.small"))
+OVERRIDABLE = " | ".join((*SECTIONS, "dispatch.<role>"))
 
 
 # ---------------------------------------------------------------------------
@@ -194,74 +187,30 @@ def _known_key(section: str, key: str) -> None:
         raise ValueError(f"unknown key '{section}.{key}' (known: {known})")
 
 
-def _checked_dispatch(role: str, entry: object, where: str = "dispatch",
-                      keys: tuple[str, ...] = DISPATCH_KEYS) -> dict:
+def _checked_dispatch(role: str, entry: object) -> dict:
     """Refuse by name a key a role's entry does not carry, or a value of the
     wrong shape: transport and posture take their declared values, args is a
     list of strings, the rest are strings."""
     if not isinstance(entry, dict):
-        raise ValueError(f"{where}.{role}: expected a table, got {entry!r}")
+        raise ValueError(f"dispatch.{role}: expected a table, got {entry!r}")
     for key, value in entry.items():
-        if key not in keys:
-            raise ValueError(f"unknown key '{where}.{role}.{key}' "
-                             f"(known: {', '.join(keys)})")
+        if key not in DISPATCH_KEYS:
+            raise ValueError(f"unknown key 'dispatch.{role}.{key}' "
+                             f"(known: {', '.join(DISPATCH_KEYS)})")
         choices = DISPATCH_CHOICES.get(key)
         if choices and value not in choices:
-            raise ValueError(f"{where}.{role}.{key}: expected "
+            raise ValueError(f"dispatch.{role}.{key}: expected "
                              f"{' | '.join(choices)}, got {value!r}")
         strings = value if isinstance(value, list) else [value]
         if isinstance(value, list) != (key == "args") or not all(isinstance(a, str) for a in strings):
             want = "a list of strings" if key == "args" else "a string"
-            raise ValueError(f"{where}.{role}.{key}: expected {want}, got {value!r}")
+            raise ValueError(f"dispatch.{role}.{key}: expected {want}, got {value!r}")
     return entry
-
-
-def _checked_small(entry: object) -> dict:
-    """Refuse by name a small-tier key that is neither the threshold nor a
-    judgment role, a role key outside model / effort / args, or a threshold
-    that is not a non-negative int."""
-    if not isinstance(entry, dict):
-        raise ValueError(f"dispatch.small: expected a table, got {entry!r}")
-    for key, value in entry.items():
-        if key == "max_diff_lines":
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError("dispatch.small.max_diff_lines: expected a "
-                                 f"non-negative int, got {value!r}")
-        elif key in TIERED_ROLES:
-            _checked_dispatch(key, value, where="dispatch.small", keys=TIER_KEYS)
-        else:
-            raise ValueError(f"unknown key 'dispatch.small.{key}' "
-                             f"(known: max_diff_lines, {', '.join(TIERED_ROLES)})")
-    return entry
-
-
-def _checked_tier(cfg: dict) -> dict:
-    """A declared small tier without its threshold would apply never and say
-    nothing; refuse it once the file and the overrides are both in."""
-    small = cfg["dispatch"].get("small")
-    if small is not None and "max_diff_lines" not in small:
-        raise ValueError("dispatch.small.max_diff_lines: required when the tier is declared")
-    return cfg
-
-
-def resolve_tier(cfg: dict, diff_lines: int | None) -> None:
-    """Name under ``tier`` the dispatch tier a diff of ``diff_lines`` takes and
-    lay the small tier's entries over the judgment roles when it applies. No
-    count, no small tier, or a count over ``max_diff_lines`` is ``base``; the
-    implementer reads the base table under every count."""
-    small = cfg["dispatch"].get("small")
-    applies = (small is not None and diff_lines is not None
-               and diff_lines <= small["max_diff_lines"])
-    cfg["tier"] = "small" if applies else "base"
-    if applies:
-        for role in TIERED_ROLES:
-            cfg["dispatch"][role].update(small.get(role, {}))
 
 
 def _checked_gates(gates: list[dict]) -> list[dict]:
     """Refuse by name a gate entry with an unknown kind or a key its kind's
-    verb does not read. The simplify gate's ``min_diff_lines`` is a
-    non-negative int; absent loads as 0, the threshold no count is below."""
+    verb does not read."""
     for i, gate in enumerate(gates):
         kind = gate.get("kind")
         if kind not in GATE_KEYS:
@@ -271,11 +220,6 @@ def _checked_gates(gates: list[dict]) -> list[dict]:
         for key in sorted(set(gate) - allowed):
             raise ValueError(f"unknown key 'gates[{i}].{key}' for kind '{kind}' "
                              f"(known: {', '.join(sorted(allowed))})")
-        if kind == "simplify":
-            floor = gate.setdefault("min_diff_lines", 0)
-            if isinstance(floor, bool) or not isinstance(floor, int) or floor < 0:
-                raise ValueError(f"gates[{i}].min_diff_lines: expected a "
-                                 f"non-negative int, got {floor!r}")
     return gates
 
 
@@ -294,11 +238,8 @@ def load_config(path: Path | None = None) -> dict:
                 continue
             if section == "dispatch":
                 for role, entry in values.items():
-                    if role == "small":
-                        cfg["dispatch"]["small"] = _checked_small(entry)
-                    else:
-                        checked = _checked_dispatch(role, entry)
-                        cfg["dispatch"].setdefault(role, dict(DISPATCH_DEFAULT)).update(checked)
+                    checked = _checked_dispatch(role, entry)
+                    cfg["dispatch"].setdefault(role, dict(DISPATCH_DEFAULT)).update(checked)
                 continue
             if section not in SECTIONS:
                 raise ValueError(
@@ -306,7 +247,7 @@ def load_config(path: Path | None = None) -> dict:
             for key in values:
                 _known_key(section, key)
             cfg[section].update(values)
-    return _checked_tier(cfg)
+    return cfg
 
 
 def parse_override(spec: str) -> tuple[str, str, object]:
@@ -328,21 +269,11 @@ def parse_override(spec: str) -> tuple[str, str, object]:
 
 def apply_overrides(cfg: dict, specs: list[str]) -> dict:
     """Apply per-run ``--set`` overrides after loop.toml. Only existing scalar
-    knobs, ``dispatch.<role>.<key>`` and ``dispatch.small[.<role>].<key>`` may
-    be overridden; gates are file-only."""
+    knobs and ``dispatch.<role>.<key>`` may be overridden; gates are file-only."""
     for spec in specs:
         section, key, value = parse_override(spec)
         if section == "dispatch":
             role, _, key = key.partition(".")
-            if role == "small":
-                sub, dot, leaf = key.partition(".")
-                checked = _checked_small({sub: {leaf: value}} if dot else {sub: value})
-                small = cfg["dispatch"].setdefault("small", {})
-                if dot:
-                    small.setdefault(sub, {}).update(checked[sub])
-                else:
-                    small.update(checked)
-                continue
             checked = _checked_dispatch(role, {key: value})
             cfg["dispatch"].setdefault(role, dict(DISPATCH_DEFAULT)).update(checked)
             continue
@@ -350,7 +281,7 @@ def apply_overrides(cfg: dict, specs: list[str]) -> dict:
             raise ValueError(f"--set section '{section}' not overridable ({OVERRIDABLE})")
         _known_key(section, key)
         cfg[section][key] = value
-    return _checked_tier(cfg)
+    return cfg
 
 
 def _split_csv(value: str | None) -> list[str]:
@@ -389,10 +320,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_release = sub.add_parser("release", help="release a claimed issue", parents=[common])
     p_release.add_argument("number", type=int)
 
-    p_config = sub.add_parser("config", help="print resolved config as JSON", parents=[common])
-    p_config.add_argument("--diff-lines", type=int, default=None, metavar="N",
-                          help="the diff-guard changed-line count: picks the dispatch "
-                               "tier; omit for the base table")
+    sub.add_parser("config", help="print resolved config as JSON", parents=[common])
 
     p_check = sub.add_parser(
         "check", help="run one deterministic gate, or an issue's verify: lines", parents=[common])
@@ -408,8 +336,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_validate.add_argument("--gate", required=True)
     p_validate.add_argument("--return-json", required=True,
                             help="file with the subagent's JSON return (schema per "
-                                 "kind: judge {criteria[], findings[]}, "
-                                 "simplify {outcome, lines_delta, cuts[], kept[]})")
+                                 "kind: judge {criteria[], findings[]})")
 
     p_prime = sub.add_parser("prime", help="assemble prior-trajectory prime context for an issue", parents=[common])
     p_prime.add_argument("number", type=int)
@@ -479,8 +406,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              "mirror into the trajectory note frontmatter")
     p_traj.add_argument("--trace-json", default=None,
                         help="file with the semantic execution trace: a JSON "
-                             "object {rounds[], criteria[], simplify, stack_simplify, "
-                             "edge_cases[], deviations[], tdd} "
+                             "object {rounds[], criteria[], edge_cases[], deviations[], tdd} "
                              "the orchestrator condenses from the gate agents' own reports. "
                              "Omit to leave the trace key out.")
     p_traj.add_argument("--fix-rounds", type=int, default=0)
@@ -529,7 +455,6 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.cmd == "config":
-        resolve_tier(cfg, args.diff_lines)
         # An "error" entry tells the orchestrator to stop, not to splice nothing.
         try:
             cfg["constitution"] = [str(p) for p in find_constitution()]
@@ -694,7 +619,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if failed else 0
     elif args.cmd == "pack":
         root = Path(args.cwd).resolve()
-        roles = [r for r in cfg["dispatch"] if r != "small"]
+        roles = list(cfg["dispatch"])
         posture = cfg["dispatch"].get(args.role, {}).get("posture")
         # A role no entry declares, an entry without a posture, a missing
         # rules file or persona: each is an error marker, never a pack shaped

@@ -8,8 +8,7 @@
 # Per-run posture belongs on the command line, not in edits to this file:
 # every knob in [loop]/[labels]/[tdd]/[triage] can be overridden for one run
 # via `--set [section.]key=value` (section defaults to loop), every
-# [dispatch.<role>] key via `--set dispatch.<role>.<key>=<value>` (the size
-# tier as `--set dispatch.small[.<role>].<key>=<value>`), with
+# [dispatch.<role>] key via `--set dispatch.<role>.<key>=<value>`, with
 # /issue-loop sugar `--stacked` and `--max-issues <n>`. Gates are file-only
 # by design.
 # The rail refuses a key it does not know — a typo or a knob the subtractive
@@ -17,14 +16,13 @@
 
 [loop]
 max_issues_per_run = 3   # token guardrail: issues processed per invocation
-max_parallel = 1         # frontier width dispatched concurrently (>1 = worktrees)
 max_fix_rounds = 2       # implement→gates→fix iterations before routing to human; the orchestrator never extends it
 training_mode = true     # pause for human approval before push/PR; flip when trusted
 branch_prefix = "loop/issue-"
 require_green_baseline = true   # red suite on main → refuse to implement (fix the baseline issue first)
 # run_mode distinguishes the two ways to run the loop:
-#   pass    — one pass over the current frontier. Unrelated issues (distinct
-#             DAG components) may run in parallel; stop when the pass ends.
+#   pass    — one pass over the current frontier, every frontier issue at
+#             once in its own worktree; stop when the pass ends.
 #   exhaust — whole-DAG chasing: after each shipped issue, re-plan and keep
 #             going while the frontier is non-empty. Advances only as fast
 #             as blockers close (= PRs merge), so it pairs with a human
@@ -33,8 +31,8 @@ run_mode = "pass"
 # delivery decides what a shipped issue looks like:
 #   pr-per-issue — every issue gets its own branch and draft PR; blockers
 #                  close on merge (small-PR discipline, review per slice).
-#   stacked      — for one scoped DAG (/issue-loop --dag N): all slices land
-#                  as stacked commits on ONE branch, no intermittent PRs;
+#   stacked      — each DAG component is one stack (/issue-loop --dag N): its
+#                  slices land as stacked commits on ONE branch, no intermittent PRs;
 #                  dependents proceed via plan --assume-done; a single draft
 #                  PR closes the whole set at the end. One review, no
 #                  merge-waits mid-DAG — the trade is a bigger diff to review.
@@ -81,8 +79,8 @@ watched_paths = ["*/docs/agents/*", "docs/agents/"]
 red_diff_lines = 800           # "big diff" → red (a human-lane signal, never a block)
 
 # ── Dispatch ──────────────────────────────────────────────────────────────
-# Which agent runs each role. A role IS its entry: implementer, judge and
-# simplify always resolve, and one more table here declares one more role
+# Which agent runs each role. A role IS its entry: implementer and judge
+# always resolve, and one more table here declares one more role
 # (`devloop pack --role <r>` takes any of them). Every key takes --set for
 # one run; the template lists them all. Absent keys mean the Agent
 # tool in the orchestrator's own session and model, with no argv tail.
@@ -94,14 +92,11 @@ transport = "agent-tool"    # agent-tool | herdr
 posture = "reader"
 transport = "agent-tool"
 
-[dispatch.simplify]
-posture = "reader"
-transport = "agent-tool"
-
 # ── Gate pipeline ─────────────────────────────────────────────────────────
 # Ordered. kinds: command | diff (deterministic, run by the rail)
-#                 judge | simplify (LLM-judged / orchestrated, run by the
-#                 command in fresh subagent contexts). Adding another
+#                 judge (LLM-judged, run by the command in a fresh
+#                 subagent context). `devloop check --issue <N>` runs every
+# command gate, then the issue's `verify:` lines, as one result list. Adding another
 # command/diff gate is config-only; a new *kind* needs a DETERMINISTIC entry
 # in devloop/gates.py (deterministic kinds) or a section in the /issue-loop
 # command (orchestrated kinds). A gate entry may carry only the keys its kind
@@ -124,25 +119,8 @@ timeout_sec = 1200
 
 # The one judgment stage: a fresh judge returns criteria[] verdicts against
 # the issue's acceptance criteria plus advisory findings[]. Fails iff a
-# criterion is not-met per `threshold`; findings never block.
+# criterion is not-met; findings never block.
 [[gates]]
 id = "judge"
 kind = "judge"
 required = true
-threshold = "all"        # all | majority — of the issue's acceptance criteria
-
-# simplify runs LAST and is safe by construction: it can only SHRINK an
-# already-verified diff. The orchestrator snapshots the tip, applies the
-# subagent's delete-list, re-runs `rerun`, and hard-resets to the snapshot if
-# it goes red — so required=false is literal: its failure mode is a revert,
-# not a block. Stacked delivery runs it once, at the stack tip (dec-0ab8ab6b).
-# It is the most expensive stage per line of benefit (a fresh subagent, then
-# a test run on any cut), so a diff below min_diff_lines skips it outright.
-[[gates]]
-id = "simplify"
-kind = "simplify"
-required = false
-skill = "ponytail-review"          # vendored under docs/agents/; host /simplify is the fallback
-rerun = ["tests"]                  # re-verify the shrunk diff against these gate ids, in order; no second judge
-revert_note = "⚠ simplify-reverted"  # PR-body note when the shrunk diff is discarded
-min_diff_lines = 50                # skip the stage when diff-guard counted fewer changed lines; 0 = never skip
