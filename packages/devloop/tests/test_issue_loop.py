@@ -3160,3 +3160,14 @@ def test_fix_round_reruns_and_rejudges_every_demo():
     assert "A fix round re-runs every `demo:` criterion on the new tip" in orders
     sec = " ".join(_command_doc_subsection("### 1c.").split())
     assert "the failed criteria plus every `demo:` criterion" in sec
+
+
+def test_issue_tracker_states_the_one_line_criterion_contract():
+    """The ticket contract the rail parses: one line per criterion, and a
+    verify line that never re-enters the rail."""
+    doc = " ".join((cli.REPO_ROOT / "docs" / "agents" / "issue-tracker.md")
+                   .read_text(encoding="utf-8").split())
+    assert ("Each acceptance criterion is one line: a `verify:` command, a `demo:` "
+            "scenario, or one prose sentence.") in doc
+    assert "A verify line never calls `devloop check`" in doc
+    assert "exit 0 passes" in doc

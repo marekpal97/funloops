@@ -32,3 +32,11 @@ Create a GitHub issue.
 ## When a skill says "fetch the relevant ticket"
 
 Run `gh issue view <number> --comments`.
+
+## The ticket contract: acceptance criteria
+
+Each acceptance criterion is one line: a `verify:` command, a `demo:` scenario, or one prose sentence. A criterion is never a paragraph, and a verify line is never restated in prose.
+
+- **`verify: <command>`** is one shell command, run from the worktree root; exit 0 passes. `devloop check --issue <N>` runs every verify line after the configured command gates. To match output, pipe it: `<command> | grep -q '<text>'`. A verify line never calls `devloop check`: the rail would run itself, and only the gate timeout would stop it.
+- **`demo: <scenario>`** names what the implementer runs, what a reader observes, and the artifact it saves. The judge scores it from that evidence.
+- **A prose criterion** is one sentence the judge checks against the code.
