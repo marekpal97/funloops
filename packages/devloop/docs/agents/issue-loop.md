@@ -143,13 +143,9 @@ Design rules baked in:
 - **Demo criteria put the live probe in the contract.** A `demo:` criterion
   is a prose scenario through the real entry point, naming its observable and
   the artifact that shows it. The implementer runs it on its final commit and
-  records the steps, the SHA and the artifacts in `<return file>.demo/`. The
-  judge scores it from that evidence alone and never re-runs it: no
-  evidence, or evidence on another SHA, is `not-met`; evidence that cannot
-  settle the observable is `uncertain`, which routes to a human with no fix
-  round. The verify rail ignores `demo:` lines. The loop never provisions the
-  credentials or harnesses a demo needs; a demo the environment cannot run
-  is not met.
+  records the evidence in `<return file>.demo/`; the judge scores it from that
+  evidence alone (§1c). The verify rail ignores `demo:` lines, and the loop
+  never provisions what a demo needs.
 - **Evidence the judge did not re-make.** A `verify:` criterion's verdict is
   the rail output the judge is handed, cited, never re-run. A prose
   criterion's evidence is something the judge ran against the code, never
