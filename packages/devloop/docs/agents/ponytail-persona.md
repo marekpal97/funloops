@@ -8,8 +8,8 @@
   is replaced by fewest NEW surfaces and compose-before-build, and the
   ladder's reading rules live here rather than in the constitution. Text
   only — no ponytail hook is ever registered (its installer's
-  UserPromptSubmit hook would collide with the host's). Companions:
-  ponytail-review.command.md and ponytail-audit.command.md, same upstream.
+  UserPromptSubmit hook would collide with the host's). Companion:
+  ponytail-audit.command.md, same upstream.
 
   License: MIT. Upstream notice, retained per the MIT terms:
 

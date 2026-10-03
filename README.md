@@ -82,18 +82,17 @@ changes the skills in five ways, each one something the loop consumes:
    cited ids into the dispatch pack.
 2. **One ticket shape.** `## What` (at most five sentences), `## Why` (at most
    three), `## Acceptance criteria`, `## Interfaces`, `## Blocked by`,
-   `## Decisions`. `to-tickets` defines the verify grammar the rail runs:
-   `verify: <command>` passes on exit 0, and ` => <substring>` also requires
-   that text in stdout. A criterion is a verify line wherever a command can
-   check it, and an observable the judge can cite where none can. A backticked
+   `## Decisions`. Each criterion is one line: a `verify: <command>` that
+   passes on exit 0, a `demo:` scenario, or one prose sentence (the contract
+   is in `issue-tracker.md`). A criterion is a verify line wherever a command
+   can check it, and an observable the judge can cite where none can. A backticked
    repo-relative path under Interfaces is what puts that file in the pack's map.
 3. **The board grammar.** Blocking edges are native issue dependencies, tickets
    are native sub-issues of their spec, and a spec carries the `epic` label,
    never a runnable rung. `devloop board doctor` enforces the same grammar.
 4. **Briefs in the same shape.** `triage` writes its agent brief into the issue
    body, in the ticket shape above, because the loop reads the body and never
-   the comments. `tdd` names the loop's simplify stage and lets the acceptance
-   criteria name the seams.
+   the comments. `tdd` lets the acceptance criteria name the seams.
 5. **Model-invocable.** The upstream `disable-model-invocation` flag is removed
    so the skills can be called from inside a larger prompt.
 

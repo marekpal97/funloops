@@ -135,10 +135,10 @@ def test_plan_runs_against_the_funloops_tracker():
 
 
 def test_memory_feed_blocks_are_marked_and_balanced():
-    """The prime splice, the trajectory feed, and the wrap-coverage note are
-    the three vault-dependent stretches; each is a marked block."""
+    """The prime splice, and the trajectory feed with the wrap-coverage note,
+    are the vault-dependent stretches; each is a marked block."""
     text = _doc(COMMAND_DOC)
-    assert text.count(EXT_OPEN) == text.count(EXT_CLOSE) >= 3
+    assert text.count(EXT_OPEN) == text.count(EXT_CLOSE) >= 2
     # The marker states the condition and the vault-less behavior, so a reader
     # who skips the block knows what they are skipping. Non-greedy to the
     # closing `-->` (a marker may contain `>`).

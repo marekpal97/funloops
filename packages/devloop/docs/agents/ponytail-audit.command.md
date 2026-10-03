@@ -38,10 +38,6 @@
   needed for interactive `/ponytail-audit` use, not for the slow loop's
   simplification axis.
 
-  COMPANION: ponytail-review (diff variant) lives at
-  docs/agents/ponytail-review.command.md — vendored at the same pinned sha for
-  issue #58's simplify gate.
-
   UPDATING: re-fetch upstream, re-pin the sha + fetch date above, and re-vendor
   the body verbatim. Do not hand-edit the body.
 -->

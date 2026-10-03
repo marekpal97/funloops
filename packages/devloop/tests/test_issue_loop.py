@@ -388,25 +388,6 @@ def test_gate_pipeline_order_is_pinned():
 # test_vendored_ponytail_audit_installs_no_hooks below.
 
 
-def test_vendored_ponytail_review_skill_present_with_provenance():
-    """The ponytail-review skill is vendored as dev tooling under docs/agents/
-    with pinned-upstream provenance (sha + source repo) and the machine-local
-    symlink wiring documented in-header (symlinks into .claude/commands/ are
-    not committed — mirrors how issue-loop.command.md is wired)."""
-    vendored = cli.REPO_ROOT / "docs" / "agents" / "ponytail-review.command.md"
-    assert vendored.exists()
-    text = vendored.read_text(encoding="utf-8")
-    # Provenance: the canonical upstream repo and the pinned commit sha.
-    assert "DietrichGebert/ponytail" in text
-    assert "16f29800fd2681bdf24f3eb4ccffe38be3baec6b" in text
-    # The wiring note (ln -s into .claude/commands/), since the symlink itself
-    # is machine-local and not committed.
-    assert ".claude/commands/" in text and "ln -s" in text
-    # The skill's actual delete-list vocabulary survived the vendoring.
-    for tag in ("delete:", "stdlib:", "yagni:", "shrink:"):
-        assert tag in text
-
-
 # ---------------------------------------------------------------------------
 # plan-distill (issue #72) — grill-fork → plan-time decisions doc-pinning.
 # The command is agent-facing docs; these pins assert the load-bearing rules
@@ -2383,8 +2364,8 @@ def test_triage_cli_non_object_signals_clean_error(tmp_path, capsys):
 
 def test_vendored_ponytail_audit_skill_present_with_provenance():
     """The ponytail-audit (whole-repo) skill is vendored as dev tooling under
-    docs/agents/ with the SAME pinned-upstream provenance as the #58
-    ponytail-review vendoring (sha + source repo + MIT notice), and the
+    docs/agents/ with pinned-upstream provenance (sha + source repo + MIT
+    notice), and the
     machine-local symlink wiring documented in-header (symlinks into
     .claude/commands/ are not committed)."""
     vendored = cli.REPO_ROOT / "docs" / "agents" / "ponytail-audit.command.md"
@@ -2748,8 +2729,8 @@ def test_issue_comments_carry_no_gate_table():
 def test_pr_body_carries_each_fact_once():
     """The PR body is a fixed shape and nothing else. pr-per-issue (§1d):
     `Closes`, one sentence on what the code now does, one gate table (gate |
-    verdict | summary) whose summary cells carry only what varies, the
-    simplify line, the findings line, the attribution. Stacked (§1e): one
+    verdict | summary) whose summary cells carry only what varies, the demo
+    line, the findings line, the attribution. Stacked (§1e): one
     table for the stack, one row per issue and one column per gate, no
     per-issue tables, one sentence per issue with no heading."""
     ship = " ".join(_command_doc_subsection("### 1d.").split())
@@ -2758,8 +2739,7 @@ def test_pr_body_carries_each_fact_once():
     assert "gate | verdict | summary" in ship
     assert "A summary cell carries only what varies" in ship
     assert "Never `no forbidden paths`, never `exited 0`, never the command text" in ship
-    assert ("`simplify: -<N> lines`, `simplify: lean`, `simplify: skipped (<n> lines < "
-            "min_diff_lines)`, or the gate's `revert_note`") in " ".join(ship.split())
+    assert "the gate table; the demo line; the findings line; the attribution block" in ship
     assert "`Findings: see comment` or `Findings: none`" in ship
     assert "no notes addressed to the orchestrator" in ship
     stacked = " ".join(_command_doc_subsection("### 1e.").split())
@@ -2796,7 +2776,6 @@ def test_findings_are_one_pr_comment_after_pr_open():
     assert "already filed as an issue is the issue number alone" in ship
     assert "A PR with no findings and no deviations gets no comment" in ship
     stacked = " ".join(_command_doc_subsection("### 1e.").split())
-    assert "stack-tip finding that restates a slice finding is dropped" in stacked
 
 
 def test_judge_brief_says_a_finding_is_one_sentence():
@@ -3133,7 +3112,7 @@ def test_command_doc_judge_prompt_scores_demo_and_verify_from_evidence():
 def test_command_doc_findings_comment_carries_deviations():
     sec = " ".join(_command_doc_subsection("### 1d.").split())
     assert sec.index("### deviation") < sec.index("### problem") < sec.index("### note")
-    assert "demo: <short sha> (pre-simplify)" in sec
+    assert "`demo: <short sha>`, the SHA the implementer's `demo.md` names" in sec
     assert "deviations" in _command_doc_subsection("## 3.")
 
 
@@ -3171,3 +3150,26 @@ def test_issue_tracker_states_the_one_line_criterion_contract():
             "scenario, or one prose sentence.") in doc
     assert "A verify line never calls `devloop check`" in doc
     assert "exit 0 passes" in doc
+
+
+def test_loop_docs_carry_no_simplify_stage_and_no_deleted_knob():
+    """The stage and the knobs leave the docs with the code."""
+    agents = cli.REPO_ROOT / "docs" / "agents"
+    assert not (agents / "ponytail-review.command.md").exists()
+    for name in ("issue-loop.command.md", "issue-loop.md", "loop.toml", "loop.toml.template"):
+        text = (agents / name).read_text(encoding="utf-8")
+        for gone in ("simplify", "max_parallel", "Parallel-safe", "dispatch.small",
+                     "--diff-lines", "majority", "uncertain", "pre-simplify"):
+            assert gone not in text, (name, gone)
+
+
+def test_command_doc_dispatches_the_frontier_at_once_and_checks_in_one_call():
+    """The DAG frontier is the parallel set; one rail call runs the command
+    gates and the verify lines."""
+    per_issue = " ".join(_command_doc_subsection("## 1.").split())
+    assert "every frontier issue at once, each in its own worktree" in per_issue
+    gate = " ".join(_command_doc_subsection("### 1c.").split())
+    assert "devloop check --issue <N>" in gate
+    assert "check --gate tests" not in gate
+    stacked = " ".join(_command_doc_subsection("### 1e.").split())
+    assert "each DAG component is one stack" in stacked

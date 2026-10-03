@@ -29,9 +29,7 @@ are skipped and nothing else changes.
 **The tracker is the DAG.** Since Pocock skills v1.1.0, `/to-tickets` and
 `/wayfinder` publish blocking as **GitHub-native issue dependencies** — the
 canonical, UI-visible representation — and since #95 that is the *only*
-representation the rail reads. The rest of the pipe header survives, because no
-native field expresses it: `Track: … | Wave: 2 | Parallel-safe: yes | Epic:
-#11`. Nothing else stores the graph; there is no plan file to rot. GitHub even
+representation the rail reads. Nothing else stores the graph; there is no plan file to rot. GitHub even
 maintains the live gate for us: `issue_dependencies_summary.blocked_by`
 counts open blockers natively, so an edge to a blocker outside this repo's
 snapshot still blocks (the plan warns which).
@@ -51,16 +49,13 @@ into the frontier for the next run. GitHub's own issue state machine *is*
 the DAG executor; the loop is stateless between runs (the Ralph principle:
 static prompt, evolving environment — here the environment is the tracker).
 
-**Two loops, one distinction: unrelated work vs one DAG.** `plan` computes
-the **weakly-connected components** of the open-issue graph (component id =
-smallest issue number in it). Two open issues in the same component belong
-to one DAG — order matters, so they are chased *sequentially*; issues in
-distinct components are unrelated by construction and safe to run in
-*parallel* (each implementer in its own worktree, `Parallel-safe:` hint
-still respected). `run_mode` names the two postures:
+**The DAG sets parallelism.** The frontier is the parallel set: an issue on
+it has no open blocker, so every frontier issue is dispatched at once, each
+in its own worktree. `plan` also computes the **weakly-connected components**
+of the open-issue graph (component id = smallest issue number in it); stacked
+delivery makes each component one stack. `run_mode` names the two postures:
 
-- **`pass`** — one pass over the frontier, breadth across components. The
-  "tackle unrelated issues in parallel" loop.
+- **`pass`** — one pass over the frontier, every frontier issue at once.
 - **`exhaust`** — re-plan after every shipped issue and keep chasing while
   the frontier is non-empty. The "keep working a whole DAG" loop. Honest
   physics under `pr-per-issue` delivery: blockers close on *merge*, so
@@ -82,15 +77,10 @@ exactly the config file's), and every key of a `[dispatch.<role>]` table with
 literal `args` tail and its `posture` (`writer` | `reader`) — is run posture,
 not gate semantics; `devloop config` prints the resolved table, one entry per
 role, and an absent key means the Agent tool in the orchestrator's own
-session. A role is its entry: the three the loop names always resolve, one
+session. A role is its entry: the two the loop names always resolve, one
 more table declares one more role, and `devloop pack --role <r>` shapes any
 of them by its `posture`. The rail checks shape only and never validates a
-harness or model name. An optional `[dispatch.small]` tier — `max_diff_lines` plus `model` /
-`effort` / `args` for `judge` and `simplify` — stands in for those two roles'
-base entries when the diff-guard count is at or under the threshold;
-`devloop config --diff-lines <n>` prints the `tier` (`base` | `small`) a
-count takes with the effective table, the implementer never takes it, and
-`--set dispatch.small.judge.model=…` works like the base table. `/issue-loop` adds sugar for the common pair — `--stacked` and
+harness or model name. `/issue-loop` adds sugar for the common pair — `--stacked` and
 `--max-issues <n>` — and threads the resolved `--set` flags through every
 rail invocation, so orchestrator and script share one effective config.
 Running one epic stacked is therefore
@@ -102,8 +92,8 @@ by editing the file in review-visible history, not a per-run mood.
 **Delivery is orthogonal to run_mode.** `delivery = pr-per-issue` (default)
 ships every issue as its own branch + draft PR — small-PR review discipline,
 merge-gated DAG advancement. `delivery = stacked` removes the mid-DAG
-merge-waits for a `--dag`-scoped run: all slices land as stacked commits on
-one branch, dependents unblock via `plan --assume-done <completed>` instead
+merge-waits: each DAG component is one stack, its slices land as stacked
+commits on one branch, dependents unblock via `plan --assume-done <completed>` instead
 of waiting for merges, and a single draft PR closes the whole set at the
 end. The trade is explicit: one review of a bigger diff instead of many
 small ones, and a review change to an early slice means reworking the stack
@@ -129,9 +119,8 @@ threshold) touches no code.
 | kind | judged by | what it checks |
 |---|---|---|
 | `diff` | rail (deterministic) | forbidden paths (no line cap) |
-| `command` | rail (deterministic) | any shell command; pass = exit 0 — the tests gate, and the issue's own `verify:` lines |
-| `judge` | fresh LLM judge | the one judgment stage: per-criterion verdicts against the issue's acceptance criteria (`threshold = all\|majority`) plus advisory findings that never block (dec-611cbd8a) |
-| `simplify` | fresh subagent (vendored ponytail-review) | over-engineering trim — the one **applying** gate. Runs last; `required = false`; shrinks the verified diff, re-runs the `rerun` gates (the tests gate), reverts to the pre-simplify tip if one goes red; skipped outright when diff-guard's `changed_lines` is below the gate's `min_diff_lines`; stacked delivery runs it once, at the stack tip |
+| `command` | rail (deterministic) | any shell command; pass = exit 0 — the tests gate; `check --issue <N>` runs every command gate, then the issue's own `verify:` lines, as one list |
+| `judge` | fresh LLM judge | the one judgment stage: per-criterion verdicts against the issue's acceptance criteria, all of which must be met, plus advisory findings that never block (dec-611cbd8a) |
 
 Design rules baked in:
 
@@ -167,14 +156,6 @@ Design rules baked in:
 - **Training mode.** `training_mode = true` stops before push/PR and
   presents the gate table for approval. Flip it off once a few runs have
   earned trust; the guardrail gates (`diff`, caps) stay.
-- **Simplify is safe by construction.** The one *applying* gate runs last,
-  after verification, and can only shrink an already-green diff. It re-runs
-  the `rerun` gates on the trim and reverts to the pre-simplify tip if one
-  goes red — so it never blocks shipping and never regresses behavior. Its
-  delete-list comes from the **vendored** `ponytail-review.command.md` beside
-  this file; ponytail's own plugin/hook installer is **never** run — its
-  `UserPromptSubmit` hook collides with other tooling's, so we vendor the skill
-  text only.
 
 ## The TDD contingency
 
@@ -201,8 +182,7 @@ implementer worktree — a deterministic baseline probe of origin/main.
 - **New deterministic check** → add a `[[gates]]` entry (config-only).
 - **New gate kind** (e.g. a benchmark-vs-baseline judge, a docs-drift
   checker) → one `DETERMINISTIC` entry in `devloop/gates.py` (deterministic) or one
-  subsection in the `/issue-loop` command (LLM-judged / orchestrated, like
-  `simplify`). `config` surfaces every configured kind, but `check` executes
+  subsection in the `/issue-loop` command (LLM-judged, like `judge`). `config` surfaces every configured kind, but `check` executes
   only the deterministic ones and refuses everything else — see the gate-split
   note in `issue-loop.command.md` §1c.
 - **Per-track policy** (e.g. stricter review on `track:B-core`) → gates grow

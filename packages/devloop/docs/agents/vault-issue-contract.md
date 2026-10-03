@@ -21,7 +21,7 @@ of the record — **no field is written by two owners.**
 | Surface | Owns |
 |---|---|
 | tracker comments | run history, claims, the PR link |
-| PR body | one sentence per issue, gate table, simplify line; findings in its one comment |
+| PR body | one sentence per issue, gate table, demo line; findings in its one comment |
 | trajectory note | how it went |
 | session note (`/wrap`) | cross-issue synthesis, decisions, insights |
 
@@ -29,7 +29,7 @@ of the record — **no field is written by two owners.**
   when, and the PR it shipped in — GitHub owns their state. Gate evidence
   lands on the issue only when no PR exists (route to human).
 - **PR body** owns the *diff summary* (one sentence per issue), the gate
-  table and the simplify line; the PR's one findings comment owns the
+  table and the demo line; the PR's one findings comment owns the
   findings — the code-review view of the change.
 - **Trajectory note** (`type: note`, tag `loop-run`; assembled by
   `devloop trajectory`, payload shape in
@@ -50,10 +50,10 @@ of the record — **no field is written by two owners.**
   frontmatter key.**
 - **The semantic `trace` is the machine-readable half of the tracker's gate
   evidence, not a second prose owner.** Its envelopes (`rounds[]`, `criteria[]`,
-  `simplify`, `edge_cases[]`, `deviations[]`, `tdd`) carry the gate agents' own reports condensed
+  `edge_cases[]`, `deviations[]`, `tdd`) carry the gate agents' own reports condensed
   into structured frontmatter — the same evidence the tracker comments own as
   prose, in a form a learner can join on. It duplicates neither the tracker's
-  prose nor the trajectory body; counts (`lines_delta`, `flipped_by_round`) are
+  prose nor the trajectory body; counts (`flipped_by_round`) are
   filter/join keys, not signal.
 - **Session note** (`/wrap`) owns **cross-issue synthesis, decisions, and
   insights**. Where an issue's resolution embodied a real architectural choice,
