@@ -173,7 +173,9 @@ states which plane runs it.**
   returns (#99's re-ask loop keys off the rejection). `judge` is the fused
   acceptance+review stage (funloops#39, dec-611cbd8a): its envelope carries
   `criteria[]` verdicts and `findings[]`, and only a criterion `not-met`
-  fails it. A gate entry may carry only the keys its kind reads
+  fails it; a `rule:<n>` criterion (rules 3, 6, 7, 8) must cite `file:line`.
+  Its shape posture (`validate --posture shape`) returns `{verdict, flow,
+  owns[], options[]}`, a failing case routing to a human. A gate entry may carry only the keys its kind reads
   (`GATE_KEYS`); the config loader refuses any other key by name.
 
 `GateResult` is a plain dict shape, not a class: `{id, kind, passed, summary,

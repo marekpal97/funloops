@@ -161,8 +161,15 @@ order: the issue — spliced once, here; never re-read into the prompt;
 `## Standing orders` — the implementer's orders and the codegraph drill-down,
 owned by `pack.py` and pinned by its golden. A `reader` pack (the judge, any
 reviewing role the host declares) is the same issue, rules and
-map, no persona and no standing orders — the rules are the shape standard its
-findings cite (§1c), the persona is not its business. `{"error": …}` instead
+map, no persona and no standing orders, plus `## Touched modules`: the full
+text of every file `--base-ref`...HEAD touches, its lines numbered for
+`file:line` citations. The rules are part of its contract (§1c); the persona
+is not its business. A `shape` pack (`--posture shape`, the judge's stack-tip
+pass, §1c) takes every issue of the stack (`devloop pack <N> <N2> …`): the
+issues, the rules, the touched modules, and `## Module edges` from codegraph,
+with no repo map. Without codegraph the edges block says, in one line, that
+the edges are missing; the module text still ships whole. A role's entry may
+list several postures; `--posture` picks one, and the first is the default. `{"error": …}` instead
 of a pack means the role has no entry or no posture, or the rules or the
 persona did not resolve: STOP and surface it —
 dispatching without the rules is the fail-open its own rule names. Amendments
@@ -274,14 +281,15 @@ is spent. A missing binary is red and named, never skipped.
 **The judge — the one LLM judgment stage.** `kind: judge` — dispatch a **fresh
 judge subagent** (a fresh agent, no implementation context) as
 `dispatch.judge` says, with the judge pack (`uv run --directory <worktree>
-devloop pack <N> --role judge`, §1b), `git diff origin/main...HEAD`, the
+devloop pack <N> --role judge --base-ref origin/main`, §1b), `git diff origin/main...HEAD`, the
 `check --issue` output, the implementer's evidence directory (`<return
 file>.demo/`, §1b) when the issue carries a `demo:` criterion, and its return
 file path (§1b: it writes the object below to that file, and that file is
 what you hand the rail). Tell it, verbatim:
 
-> The contract is the issue's acceptance criteria plus the Interfaces block's
-> intent. Judge the diff against that contract and nothing else. Return one
+> The contract is the issue's acceptance criteria, the Interfaces block's
+> intent, and rules 3, 6, 7 and 8 of the Rules section. Judge the diff and the
+> touched modules against that contract and nothing else. Return one
 > verdict per criterion, `"met"` or `"not-met"`, each with one line of
 > evidence. A criterion is not met when the code does not do what it says.
 > A `verify:` criterion takes its verdict from the `check --issue` output in this
@@ -301,6 +309,10 @@ what you hand the rail). Tell it, verbatim:
 > Code the diff changes that no longer works as the issue intends is `not-met`
 > too, even when no criterion names the case: return it as one more criterion
 > under the reserved id `intent`, and only when you have the failure in hand.
+> A violation of rule 3, 6, 7 or 8 in a touched module is `not-met` under the
+> reserved id `rule:<n>`, one entry per violation. Its evidence cites the
+> `file:line` from the Touched modules section and says what breaks the rule.
+> Rules 1 and 4 are not yours here, and no other rule blocks.
 > Every `not-met` names a command, a test, or output; without one it is not a
 > `not-met`, it is a finding. Everything else you notice
 > — a risk, a smell, a better design, an edge case outside the contract — is a
@@ -323,7 +335,9 @@ what you hand the rail). Tell it, verbatim:
 ```
 
 `evidence` and `finding` are never blank; `findings` may be empty, not absent.
-The rail accepts `intent` as it accepts any criterion id.
+The rail accepts `intent` as it accepts any criterion id. It accepts a
+`rule:<n>` id only for rules 3, 6, 7 and 8, and only with a `file:line` in its
+evidence; any other is schema-rejected.
 **Only a criterion `not-met` blocks.** Findings
 never do, whatever their severity: they go to the PR's findings comment and
 the triage lane (§1d) — never a fix round, never an issue.
@@ -341,6 +355,43 @@ the same agent with those reasons and a fresh return path (SendMessage on the
 Agent tool, `herdr agent prompt <name>` on herdr) — never hand-fix its return,
 never read a verdict out of a rejected one, never pass it on to `--gates-json`.
 A second rejection is a failed gate: route to human with the reasons.
+
+**The shape posture — rules 1 and 4 and every Interfaces block.** The judge
+takes a second posture once per stack tip of two or more slices (§1e), after
+the last slice passes its gates. Dispatch a fresh judge as `dispatch.judge`
+says, with the shape pack (`uv run --directory <worktree> devloop pack <N>
+<N2> … --role judge --posture shape --base-ref origin/main`, every completed
+issue of the stack) and its return file path. In `pr-per-issue` delivery no
+separate dispatch runs: the single per-slice judge carries both postures. Its
+dispatch adds this brief and a second return file for the shape object, and
+its pack is the reader pack, which already holds every touched module.
+Tell it, verbatim:
+
+> The contract is rules 1 and 4 of the Rules section and every Interfaces
+> block in the issues above. Judge the module structure of the touched
+> modules against that contract and nothing else. Return `"met"` when each
+> module deepens before it spreads, reads top-down with its plumbing below,
+> and owns what its Interfaces block declares. Otherwise return `"not-met"`
+> with a restructure case. `flow` states the current flow in at most five
+> lines and names each broken rule by number. `owns` says, per module, what
+> it should own. `options` gives one to three shape options, one sentence
+> each. Do not edit code. Return exactly this object:
+
+```json
+{"verdict": "not-met",
+ "flow": "<at most five lines naming rule 1 and/or 4>",
+ "owns": [{"module": "<path>", "owns": "<what it should own>"}],
+ "options": ["<shape option>"]}
+```
+
+A `met` return may leave `flow` empty and `owns` and `options` as empty lists.
+Validate it with `uv run devloop validate --gate judge --posture shape
+--return-json <return-file>`: exit `0` met, `1` a restructure case, `2`
+schema-rejected (re-ask once, as above). **A restructure case stops the run at
+the human.** It never starts a fix round. Route to human (the block below),
+the case as the comment's evidence: in stacked delivery on the DAG root
+issue, naming the branch and its tip sha, and no PR opens; in
+`pr-per-issue` on the issue, before the PR opens.
 
 **On a required-gate failure:** feed the evidence (gate id, summary, detail, the
 failed criteria with their evidence, the red verify lines) back to the
@@ -368,8 +419,9 @@ sentence under the table says what the fix rounds attempted.
 Then continue with the next frontier issue — one stuck issue must not stall the
 loop. **Three exits, no others:** **ship** (every criterion met, no findings);
 **ship with findings** (criteria met, findings in the PR's findings comment); **route
-to human** (a criterion stays `not-met` past `max_fix_rounds`, or a judge return
-stays schema-rejected after a re-ask).
+to human** (a criterion stays `not-met` past `max_fix_rounds`, a judge return
+stays schema-rejected after a re-ask, or the shape posture returns a
+restructure case).
 
 ### 1d. Ship
 
@@ -487,11 +539,16 @@ run to one component. Differences from the flow above:
   <tip-before-this-issue>` so the forbidden-paths check applies per slice; the
   tests gate always runs on the whole branch (earlier slices must stay green —
   that IS the stacking guarantee). The judge sees the per-issue diff (`git diff
-  <tip-before>...HEAD`).
+  <tip-before>...HEAD`), and its pack takes `--base-ref <tip-before>`.
 - **Tracker visibility without PRs.** After each issue passes, one line: `gh
   issue comment <N> --body "🤖 issue-loop run <run-id>: slice landed on
   loop/dag-<root> at <sha> — PR at end of run"`. No gate table: the evidence
   waits for the PR. Do NOT close the issue; do NOT open a PR yet.
+- **The shape posture at the tip.** When the stack holds two or more
+  completed slices, run §1c's shape posture over all of them before the PR.
+  A restructure case stops the run at the human: no PR opens, and the case
+  goes on the DAG root issue with the branch and its tip sha. A one-slice
+  stack takes the `pr-per-issue` form: its single judge carries both postures.
 - **One PR at the end** (DAG exhausted, cap hit, or an issue routed to human):
   push the branch and open a single draft PR. Its title is the epic title or
   the DAG root's title, then the issue numbers in parentheses; never clauses
@@ -550,7 +607,8 @@ prime context, or `--no-primed` when nothing was served (`primed: false`);
 omitting both keeps the pre-serving shape. `primed`/`served` are facts about
 the run, never an experiment arm. `--skills-json` is a list of `{id, role,
 skill, outcome, fix_rounds_attributed}` you write, one per stage dispatched
-(the implementer subagent, the judge — `kind: judge` gate — and any future
+(the implementer subagent, the judge — `kind: judge` gate — the judge's shape
+posture as one more entry, role `judge`, id `judge:shape`, and any future
 stage); `skill` names the skill that ran the stage, verbatim (`code-review` for a
 judge fork), empty when none ran; `fix_rounds_attributed` is how many fix rounds that stage caused
 (total: `--fix-rounds`). Omit it for `skills: []`; add `--skill-centric` when

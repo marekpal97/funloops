@@ -3245,3 +3245,15 @@ def test_validate_cli_takes_the_shape_posture(tmp_path, capsys):
                      "--return-json", str(case)]) == 1
     assert json.loads(capsys.readouterr().out)["reasons"] == []
     assert cli.main(["validate", "--gate", "judge", "--return-json", str(case)]) == 2
+
+
+def test_command_doc_names_the_rules_as_contract_and_routes_a_shape_case_to_human():
+    prompt = [ln.removeprefix("> ") for ln in _command_doc_subsection("### 1c.").splitlines()]
+    gate = " ".join(" ".join(prompt).split())
+    assert "the Interfaces block's intent, and rules 3, 6, 7 and 8 of the Rules section" in gate
+    assert "reserved id `rule:<n>`" in gate
+    assert "--posture shape" in gate
+    assert "A restructure case stops the run at the human." in gate
+    assert "the single per-slice judge carries both postures" in gate
+    stacked = " ".join(_command_doc_subsection("### 1e.").split())
+    assert "run §1c's shape posture over all of them before the PR" in stacked

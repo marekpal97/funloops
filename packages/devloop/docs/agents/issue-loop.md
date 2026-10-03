@@ -74,7 +74,8 @@ defaults to `loop`; values parse as TOML scalars, so the override language is
 exactly the config file's), and every key of a `[dispatch.<role>]` table with
 `--set dispatch.<role>.<key>=<value>`. Which agent runs a role — its
 `transport` (`agent-tool` | `herdr`), `harness`, `model`, `effort`, the
-literal `args` tail and its `posture` (`writer` | `reader`) — is run posture,
+literal `args` tail and its `posture` (`writer` | `reader` | `shape`, or a
+list of them) — is run posture,
 not gate semantics; `devloop config` prints the resolved table, one entry per
 role, and an absent key means the Agent tool in the orchestrator's own
 session. A role is its entry: the two the loop names always resolve, one
