@@ -77,7 +77,10 @@ transport = "agent-tool"    # agent-tool | herdr
 # args = ["--model", "opus"]  # literal argv tail after `--`; the host writes it
 
 [dispatch.judge]
-posture = "reader"
+# reader: the per-slice judge, its pack the touched modules in full.
+# shape: the stack-tip pass over every touched module and its edges
+# (`devloop pack <N...> --role judge --posture shape`).
+posture = ["reader", "shape"]
 transport = "agent-tool"
 
 # On herdr the agent runs in its own terminal, so nobody answers its approval
@@ -92,7 +95,7 @@ transport = "agent-tool"
 # Try a role on herdr for one run with
 # `--set dispatch.judge.transport=herdr --set dispatch.judge.harness=codex`.
 # [dispatch.judge]
-# posture = "reader"
+# posture = ["reader", "shape"]
 # transport = "herdr"
 # harness = "codex"
 # args = ["-s", "workspace-write", "-a", "never"]

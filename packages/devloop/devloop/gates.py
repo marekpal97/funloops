@@ -128,6 +128,12 @@ def run_diff_gate(gate: dict, cwd: Path, base_ref: str) -> dict:
 
 VERDICTS = ("met", "not-met")
 SEVERITIES = ("problem", "note")
+# The constitution rules a per-slice judge may block on; rules 1 and 4 are the
+# shape posture's, and the rest stay findings.
+BLOCKING_RULES = ("3", "6", "7", "8")
+_CITATION = re.compile(r"[\w./\\-]+\.\w+:\d+")
+SHAPE_FLOW_LINES = 5
+SHAPE_OPTIONS = (1, 3)
 
 
 def reject(gate: dict, reasons: list[str]) -> dict:
@@ -173,7 +179,7 @@ def _enum(entry: dict, where: str, key: str, allowed: tuple[str, ...],
           reasons: list[str]) -> str:
     value = entry.get(key)
     if value not in allowed:
-        reasons.append(f"{where}.{key}: {value!r} is not one of {' | '.join(allowed)}")
+        reasons.append(f"{where}.{key}: {value!r} is not one of {' | '.join(allowed)}".lstrip("."))
         return ""
     return value
 
@@ -182,9 +188,10 @@ def validate_judge(gate: dict, raw: dict) -> dict:
     """Validate a judge return: ``{criteria: [{id, verdict: met|not-met,
     evidence}], findings: [{severity: problem|note, finding}]}``.
 
-    The gate passes when every criterion is met. ``findings`` never decides
-    the verdict; it may be empty but not missing, so silence never reads as a
-    clean review.
+    The gate passes when every criterion is met. A ``rule:<n>`` criterion
+    names a blocking constitution rule and cites ``file:line`` in its
+    evidence. ``findings`` never decides the verdict; it may be empty but not
+    missing, so silence never reads as a clean review.
     """
     reasons: list[str] = []
     verdicts = []
@@ -192,6 +199,7 @@ def validate_judge(gate: dict, raw: dict) -> dict:
         where = f"criteria[{i}]"
         _text(entry, where, "id", reasons)
         _text(entry, where, "evidence", reasons)
+        _rule(entry, where, reasons)
         verdicts.append(_enum(entry, where, "verdict", VERDICTS, reasons))
     findings = _entries(raw, "findings", reasons, allow_empty=True)
     for i, entry in findings:
@@ -201,6 +209,48 @@ def validate_judge(gate: dict, raw: dict) -> dict:
     met = sum(v == "met" for v in verdicts)
     return _verdict(gate, reasons, passed=met == len(verdicts),
                     summary=f"{met}/{len(verdicts)} criteria met; {len(findings)} findings")
+
+
+def validate_shape(gate: dict, raw: dict) -> dict:
+    """Validate a shape-posture return: ``{verdict: met|not-met, flow, owns:
+    [{module, owns}], options: [str]}``. A ``not-met`` is a restructure case:
+    the flow in at most five lines, what each module should own, and one to
+    three shape options. It fails the gate for a human, never a fix round."""
+    reasons: list[str] = []
+    verdict = _enum(raw, "", "verdict", VERDICTS, reasons)
+    case = verdict == "not-met"
+    flow = raw.get("flow")
+    if not isinstance(flow, str) or (case and not flow.strip()):
+        reasons.append(f"flow: expected {'a non-empty' if case else 'a'} string, got {flow!r}")
+    elif len(flow.strip().splitlines()) > SHAPE_FLOW_LINES:
+        reasons.append(f"flow: expected at most {SHAPE_FLOW_LINES} lines, "
+                       f"got {len(flow.strip().splitlines())}")
+    for i, entry in _entries(raw, "owns", reasons, allow_empty=not case):
+        _text(entry, f"owns[{i}]", "module", reasons)
+        _text(entry, f"owns[{i}]", "owns", reasons)
+    options = raw.get("options")
+    low, high = SHAPE_OPTIONS
+    if not isinstance(options, list) or not (low if case else 0) <= len(options) <= high:
+        reasons.append(f"options: expected {low if case else 0} to {high} strings, got {options!r}")
+    else:
+        for i, option in enumerate(options):
+            if not isinstance(option, str) or not option.strip():
+                reasons.append(f"options[{i}]: expected a non-empty string, got {option!r}")
+    return _verdict(gate, reasons, passed=verdict == "met",
+                    summary="shape met" if verdict == "met" else "shape not-met: a restructure case")
+
+
+def _rule(entry: dict, where: str, reasons: list[str]) -> None:
+    """A ``rule:<n>`` id names a blocking rule and its evidence cites file:line."""
+    rid = entry.get("id")
+    if not isinstance(rid, str) or not rid.startswith("rule:"):
+        return
+    if rid.removeprefix("rule:") not in BLOCKING_RULES:
+        reasons.append(f"{where}.id: {rid!r} is not one of "
+                       f"{' | '.join('rule:' + n for n in BLOCKING_RULES)}")
+    if not _CITATION.search(str(entry.get("evidence", ""))):
+        reasons.append(f"{where}.evidence: a {rid} criterion cites file:line, "
+                       f"got {entry.get('evidence')!r}")
 
 
 # `check` dispatches only through DETERMINISTIC; `validate` only through JUDGMENT.
@@ -217,9 +267,10 @@ GATE_KEYS = {
 COMMON_GATE_KEYS = {"id", "kind", "required"}
 
 
-def validate(gate: dict, raw: object) -> dict:
-    """Validate one judgment gate's subagent return. A non-object is rejected
-    here; raises ``KeyError`` for a deterministic or unknown kind."""
+def validate(gate: dict, raw: object, posture: str = "reader") -> dict:
+    """Validate one judgment gate's subagent return; the ``shape`` posture
+    takes the shape schema. A non-object is rejected here; raises
+    ``KeyError`` for a deterministic or unknown kind."""
     if not isinstance(raw, dict):
         return reject(gate, [f"payload: expected a JSON object, got {type(raw).__name__}"])
-    return JUDGMENT[gate["kind"]](gate, raw)
+    return (validate_shape if posture == "shape" else JUDGMENT[gate["kind"]])(gate, raw)

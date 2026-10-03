@@ -1001,7 +1001,9 @@ def test_a_dispatch_entry_declares_a_role_on_both_paths(tmp_path):
 
 @pytest.mark.parametrize("entry", [
     'transport = "ssh"',        # not agent-tool | herdr
-    'posture = "editor"',       # not writer | reader
+    'posture = "editor"',       # not writer | reader | shape
+    'posture = ["reader", "editor"]',  # a list of postures holds only postures
+    "posture = []",             # an entry that names a posture names one at least
     'args = "--model opus"',    # the argv tail is a list, not one string
     "model = 4",                # a name, not a number
 ])
@@ -1028,7 +1030,7 @@ def test_template_carries_the_dispatch_table_with_every_key_and_no_host_value():
         assert entry["transport"] == "agent-tool", role
         assert not {"harness", "model", "effort", "args"} & set(entry), role
     assert dispatch["implementer"]["posture"] == "writer"
-    assert dispatch["judge"]["posture"] == "reader"
+    assert dispatch["judge"]["posture"] == ["reader", "shape"]  # the per-slice and stack-tip passes
 
 
 # --- deleted keys are rejected, named (issue #39 AC2, dec-cf8f0d33) ---------
@@ -3173,3 +3175,73 @@ def test_command_doc_dispatches_the_frontier_at_once_and_checks_in_one_call():
     assert "check --gate tests" not in gate
     stacked = " ".join(_command_doc_subsection("### 1e.").split())
     assert "each DAG component is one stack" in stacked
+
+
+# --- the judge's constitution contract and its shape posture -----------------
+
+
+def _rule(rid, evidence="fx/core.py:12 threads the same three arguments"):
+    return {"id": rid, "verdict": "not-met", "evidence": evidence}
+
+
+def test_validate_judge_accepts_a_cited_rule_criterion_as_blocking():
+    """A `rule:<n>` criterion for rules 3, 6, 7 and 8, cited by file and
+    line, is a real verdict: it fails the gate without a rejection."""
+    for n in (3, 6, 7, 8):
+        result = gates.validate(_gate("judge"), {
+            "criteria": [*_met("AC1"), _rule(f"rule:{n}")], "findings": []})
+        assert result["reasons"] == [], n
+        assert result["passed"] is False
+
+
+@pytest.mark.parametrize("rid", ["rule:1", "rule:4", "rule:2", "rule:9", "rule:x", "rule:"])
+def test_validate_judge_rejects_a_rule_id_outside_the_contract(rid):
+    result = gates.validate(_gate("judge"), {
+        "criteria": [*_met("AC1"), _rule(rid)], "findings": []})
+    assert result["reasons"] and f"criteria[1].id: {rid!r}" in result["reasons"][0]
+
+
+@pytest.mark.parametrize("evidence", ["builds a bare tuple in fx/core.py", "line 12 of core"])
+def test_validate_judge_rejects_a_rule_criterion_without_a_file_line_citation(evidence):
+    result = gates.validate(_gate("judge"), {
+        "criteria": [_rule("rule:3", evidence)], "findings": []})
+    assert result["reasons"] and "criteria[0].evidence" in result["reasons"][0]
+
+
+CASE = {"verdict": "not-met",
+        "flow": "rule 1: tasks.py has one consumer\nrule 4: the store reads bottom-up",
+        "owns": [{"module": "operations/tasks.py", "owns": "the Task object and its store"}],
+        "options": ["fold task_seam into tasks.py", "a Task object over the store"]}
+
+
+def test_validate_shape_passes_met_and_fails_a_restructure_case():
+    gate = _gate("judge")
+    met = gates.validate(gate, {"verdict": "met", "flow": "", "owns": [], "options": []},
+                         posture="shape")
+    assert met["passed"] is True and met["reasons"] == []
+    case = gates.validate(gate, CASE, posture="shape")
+    assert case["passed"] is False and case["reasons"] == []
+
+
+@pytest.mark.parametrize("change, field", [
+    ({"verdict": "maybe"}, "verdict"),
+    ({"flow": "1\n2\n3\n4\n5\n6"}, "flow"),
+    ({"flow": ""}, "flow"),
+    ({"owns": []}, "owns"),
+    ({"owns": [{"module": "a.py"}]}, "owns[0].owns"),
+    ({"options": []}, "options"),
+    ({"options": ["a", "b", "c", "d"]}, "options"),
+    ({"options": ["a", ""]}, "options[1]"),
+])
+def test_validate_shape_rejects_a_case_off_its_schema(change, field):
+    result = gates.validate(_gate("judge"), {**CASE, **change}, posture="shape")
+    assert result["reasons"] and any(r.startswith(field) for r in result["reasons"])
+
+
+def test_validate_cli_takes_the_shape_posture(tmp_path, capsys):
+    case = tmp_path / "shape.json"
+    case.write_text(json.dumps(CASE), encoding="utf-8")
+    assert cli.main(["validate", "--gate", "judge", "--posture", "shape",
+                     "--return-json", str(case)]) == 1
+    assert json.loads(capsys.readouterr().out)["reasons"] == []
+    assert cli.main(["validate", "--gate", "judge", "--return-json", str(case)]) == 2

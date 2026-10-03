@@ -2,9 +2,12 @@
 
 In order: the issue; the rules; the persona (writer posture only); the
 repo map from codegraph's CLI, a catalog tier and an issue-slice tier, any
-failure degrading to a marked block; the prime block and the run's trace
-when the host supplies them; the standing orders (writer posture only).
-The role is any ``[dispatch]`` entry; its ``posture`` picks the sections.
+failure degrading to a marked block; the touched modules in full (reader
+posture); the prime block and the run's trace when the host supplies them;
+the standing orders (writer posture only). The shape posture packs a stack:
+its issues, the rules, the touched modules, and codegraph's edges between
+them in place of the repo map. The role is any ``[dispatch]`` entry; its
+``posture`` picks the sections.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Literal, NamedTuple
 
-Posture = Literal["writer", "reader"]
+Posture = Literal["writer", "reader", "shape"]
 
 # Each tier renders at most this many lines; over it, the largest directories
 # fold first. Sized so the map fits under 2,000 chars of an 8,000-char pack.
@@ -30,24 +33,40 @@ class Issue(NamedTuple):
     body: str
 
 
-def compose(number: int, issue: Issue, role: str, posture: Posture, rules: list[str],
-            persona: str, codegraph: Codegraph, prime: str = "", trace: str = "") -> str:
+def compose(issues: dict[int, Issue], role: str, posture: Posture, rules: list[str],
+            persona: str, codegraph: Codegraph, touched: Touched | None = None,
+            prime: str = "", trace: str = "") -> str:
     """The pack text for one dispatch: ``role`` names it, ``posture`` shapes
-    it. An empty ``rules`` is refused; a codegraph failure renders the
-    degraded block, never an exception."""
+    it. Only a shape pack spans several issues; a reader or shape pack
+    carries ``touched``. Empty ``rules`` are refused; a codegraph failure
+    renders a degraded block, never an exception."""
     if not rules:
         raise ValueError("a pack carries the rules; none were resolved")
-    try:
-        repo_map = codegraph.repo_map(issue)
-    except CodegraphUnavailable as e:
-        repo_map = DEGRADED.format(reason=e)
-    writer = posture == "writer"
-    parts = [f"# Dispatch pack — issue #{number} ({role})",
-             f"## Issue\n\n{issue.title}\n\n{issue.body.strip()}",
-             "## Rules\n\n" + "\n\n".join(rules)]
+    if posture != "shape" and len(issues) != 1:
+        raise ValueError(f"a {posture} pack is one issue's, got {len(issues)}")
+    if posture != "writer" and touched is None:
+        raise ValueError(f"a {posture} pack carries the touched modules; none were resolved")
+    writer, shape = posture == "writer", posture == "shape"
+    numbers = ", ".join(f"#{n}" for n in issues)
+    parts = [f"# Dispatch pack — issue{'s' * (len(issues) > 1)} {numbers} "
+             f"({role}{', shape' * shape})"]
+    parts += [f"## Issue{f' #{n}' * shape}\n\n{issue.title}\n\n{issue.body.strip()}"
+              for n, issue in issues.items()]
+    parts.append("## Rules\n\n" + "\n\n".join(rules))
     if writer:
         parts.append(f"## Persona\n\n{persona}")
-    parts.append(repo_map)
+    if not shape:
+        try:
+            parts.append(codegraph.repo_map(next(iter(issues.values()))))
+        except CodegraphUnavailable as e:
+            parts.append(DEGRADED.format(reason=e))
+    if touched is not None:
+        parts.append(touched.render())
+    if shape:
+        try:
+            parts.append(codegraph.edges(list(touched.modules)))
+        except CodegraphUnavailable as e:
+            parts.append(EDGES_DEGRADED.format(reason=e))
     if prime.strip():
         parts.append(f"## Prior lessons\n\n{prime.strip()}")
     if trace.strip():
@@ -55,6 +74,46 @@ def compose(number: int, issue: Issue, role: str, posture: Posture, rules: list[
     if writer:
         parts.append(STANDING_ORDERS)
     return "\n\n".join(parts) + "\n"
+
+
+class Touched(NamedTuple):
+    """The files a range touches that HEAD still holds: each path's text, or
+    ``None`` when it is not UTF-8 text."""
+
+    base: str
+    modules: dict[str, str | None]
+
+    @classmethod
+    def since(cls, base: str, root: Path) -> Touched:
+        """The files ``base...HEAD`` touches in ``root``; a git failure raises
+        ``ValueError`` naming the range."""
+        proc = subprocess.run(["git", "diff", "--name-only", "--diff-filter=d", "-z",
+                               f"{base}...HEAD"], cwd=root, capture_output=True,
+                              text=True, check=False)
+        if proc.returncode != 0:
+            raise ValueError(f"git diff {base}...HEAD: {proc.stderr.strip()}")
+        modules: dict[str, str | None] = {}
+        for path in sorted(filter(None, proc.stdout.split("\0"))):
+            try:
+                modules[path] = root.joinpath(*parts(path)).read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                modules[path] = None
+        return cls(base, modules)
+
+    def render(self) -> str:
+        """``## Touched modules``: each file in full, its lines numbered."""
+        head = (f"## Touched modules\n\nEvery file `{self.base}...HEAD` touches, in "
+                "full, its lines numbered for `file:line` citations.")
+        if not self.modules:
+            return f"{head}\n\nThe range touches no file."
+        blocks = [head]
+        for path, text in self.modules.items():
+            if text is None:
+                blocks.append(f"### {path}\n\nNot UTF-8 text; not shown.")
+                continue
+            lines = [f"{i:>4}  {line}".rstrip() for i, line in enumerate(text.splitlines(), 1)]
+            blocks.append(f"### {path}\n\n```\n" + "\n".join(lines) + "\n```")
+        return "\n\n".join(blocks)
 
 
 class CodegraphUnavailable(Exception):
@@ -89,6 +148,14 @@ class Codegraph:
         return (f"## Repo map — tier 1: catalog\n\n{tree.catalog(self.root, LINE_BUDGET)}\n\n"
                 f"## Repo map — tier 2: issue slice\n\n"
                 + "\n\n".join(s.strip("\n") for s in slices if s.strip()))
+
+    def edges(self, paths: list[str]) -> str:
+        """``## Module edges``: each path's ``node`` block, its symbols and the
+        files that depend on it. Raises ``CodegraphUnavailable`` on any
+        failure."""
+        self.sync()
+        blocks = [self.node(p).strip("\n") for p in paths] or ["No module to map."]
+        return "## Module edges\n\n" + "\n\n".join(blocks)
 
     def sync(self) -> None:
         """``init -y`` when the index is absent, else ``sync``; both say nothing."""
@@ -324,6 +391,11 @@ No catalog or slice was spliced. Before editing, gather it yourself: the
 package layout (the tree of source files), the public surface of every module
 the issue touches (its top-level definitions and signatures), and their import
 neighbours (what they import, who imports them)."""
+
+EDGES_DEGRADED = """\
+## Module edges — DEGRADED (codegraph unavailable: {reason})
+
+The module text above is whole; the import and call edges between the modules are missing."""
 
 STANDING_ORDERS = """\
 ## Standing orders

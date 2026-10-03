@@ -89,7 +89,10 @@ posture = "writer"          # writer: persona + standing orders; reader: neither
 transport = "agent-tool"    # agent-tool | herdr
 
 [dispatch.judge]
-posture = "reader"
+# reader: the per-slice judge, its pack the touched modules in full.
+# shape: the stack-tip pass over every touched module and its edges
+# (`devloop pack <N...> --role judge --posture shape`).
+posture = ["reader", "shape"]
 transport = "agent-tool"
 
 # ── Gate pipeline ─────────────────────────────────────────────────────────

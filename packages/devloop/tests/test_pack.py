@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -44,14 +45,27 @@ FIX = Path(__file__).resolve().parent / "fixtures" / "pack"
 TITLE = "fx: run fmt over the catalog"  # hits two entry points, both under fx/
 
 
+def git(root: Path, *args: str) -> None:
+    subprocess.run(["git", "-c", "user.name=fx", "-c", "user.email=fx@example.com",
+                    "-c", "commit.gpgsign=false", *args],
+                   cwd=root, check=True, capture_output=True)
+
+
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
-    """The fixture tree in a repo of its own (the ``.git`` marker stops the
-    constitution walk), the packaged docs swapped for the fixture stand-ins,
-    and ``gh`` replaced by the fixture issue."""
+    """The fixture tree in a git repo of its own (the ``.git`` marker stops
+    the constitution walk): tag ``base`` holds the package's ``__init__.py``,
+    and HEAD adds ``core.py`` and ``helper.py``, the slice's touched modules.
+    The packaged docs are swapped for the fixture stand-ins, and ``gh`` is
+    replaced by the fixture issue."""
     root = tmp_path / "repo"
     shutil.copytree(FIX / "repo", root)
-    (root / ".git").mkdir()
+    git(root, "init", "-q")
+    git(root, "add", "fx/__init__.py")
+    git(root, "commit", "-qm", "base")
+    git(root, "tag", "base")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "slice")
     monkeypatch.setattr(cli, "PACKAGE_PERSONA", FIX / "persona.md")
     monkeypatch.setattr(cli, "PACKAGE_CONSTITUTION", FIX / "constitution.md")
     issue = json.dumps({"title": TITLE,
@@ -110,12 +124,14 @@ def test_pack_is_golden_and_byte_stable(repo, tmp_path, capsys, role, posture):
     persona. The posture is the role's `[dispatch]` entry's (funloops#65)."""
     binary, log = fake_codegraph(tmp_path)
     argv = ["pack", "7", "--role", role, "--cwd", str(repo),
-            "--codegraph-bin", str(binary)]
+            "--codegraph-bin", str(binary), "--base-ref", "base"]
     assert cli.main(argv) == 0
     first = capsys.readouterr().out
     assert first == (FIX / f"{role}.md").read_text(encoding="utf-8")
     assert ("## Persona" in first) is (posture == "writer")
     assert ("## Standing orders" in first) is (posture == "writer")
+    # the reader reads every module the slice touches in full, numbered
+    assert ("## Touched modules" in first) is (posture == "reader")
     # no index in a fresh worktree → init; then the tiers in order: the
     # catalog, the entry points (context as JSON), the spliced context, and
     # one node call per file the issue names (helper first: first mention wins)
@@ -132,7 +148,8 @@ def test_any_configured_role_packs_by_its_posture(repo, tmp_path, capsys):
     one whose entry names no posture, is an error marker and exit 2, never a
     pack shaped by a guess."""
     binary, _ = fake_codegraph(tmp_path)
-    argv = ["pack", "7", "--cwd", str(repo), "--codegraph-bin", str(binary)]
+    argv = ["pack", "7", "--cwd", str(repo), "--codegraph-bin", str(binary),
+            "--base-ref", "base"]
     assert cli.main([*argv, "--role", "reviewer",
                      "--set", "dispatch.reviewer.posture=reader"]) == 0
     judge = (FIX / "judge.md").read_text(encoding="utf-8")
@@ -327,3 +344,46 @@ def test_host_extension_files_land_under_their_headings(repo, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "## Prior lessons\n\nlesson: reuse fmt\n" in out
     assert "## Run trace\n\nround 1: red then green\n" in out
+
+
+def test_shape_pack_holds_the_stack_modules_and_their_edges(repo, tmp_path, capsys):
+    """The judge's shape posture over a stack of issues: every issue, the
+    rules, every touched module in full, and codegraph's edges per module —
+    no persona, no standing orders, no catalog."""
+    binary, log = fake_codegraph(tmp_path)
+    assert cli.main(["pack", "7", "8", "--role", "judge", "--posture", "shape",
+                     "--cwd", str(repo), "--codegraph-bin", str(binary),
+                     "--base-ref", "base"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("# Dispatch pack — issues #7, #8 (judge, shape)\n")
+    assert "## Issue #7\n" in out and "## Issue #8\n" in out
+    assert "## Rules" in out
+    assert "### fx/core.py\n" in out and "### fx/helper.py\n" in out
+    assert "  13  def run(x: int) -> str:\n" in out  # numbered for file:line citations
+    assert "### fx/__init__.py" not in out             # untouched since base
+    assert "## Module edges" in out and "no other indexed file depends on it" in out
+    for gone in ("## Persona", "## Standing orders", "tier 1"):
+        assert gone not in out
+    assert log.read_text().split() == ["init", "node", "node"]
+
+
+def test_shape_pack_without_codegraph_still_holds_every_module(repo, monkeypatch, capsys):
+    monkeypatch.setenv("CODEGRAPH_BIN", str(repo / "no-such-codegraph"))
+    assert cli.main(["pack", "7", "--role", "judge", "--posture", "shape",
+                     "--cwd", str(repo), "--base-ref", "base"]) == 0
+    out = capsys.readouterr().out
+    assert "### fx/core.py\n" in out and "### fx/helper.py\n" in out
+    edges = out[out.index("## Module edges"):]
+    assert "DEGRADED" in edges and "edges" in edges.splitlines()[2]
+    assert len(edges.strip().splitlines()) == 3  # the heading, a blank, one line
+
+
+@pytest.mark.parametrize("argv, needle", [
+    (["7", "8", "--role", "judge", "--base-ref", "base"], "one issue"),                  # reader packs one slice
+    (["7", "--role", "implementer", "--posture", "shape"], "posture"),  # not in its entry
+    (["7", "--role", "judge", "--base-ref", "no-such-ref"], "no-such-ref"),
+])
+def test_pack_refuses_what_it_cannot_shape(repo, tmp_path, capsys, argv, needle):
+    binary, _ = fake_codegraph(tmp_path)
+    assert cli.main(["pack", *argv, "--cwd", str(repo), "--codegraph-bin", str(binary)]) == 2
+    assert needle in json.loads(capsys.readouterr().out)["error"]

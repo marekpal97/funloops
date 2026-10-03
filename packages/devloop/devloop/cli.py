@@ -190,19 +190,21 @@ def _known_key(section: str, key: str) -> None:
 def _checked_dispatch(role: str, entry: object) -> dict:
     """Refuse by name a key a role's entry does not carry, or a value of the
     wrong shape: transport and posture take their declared values, args is a
-    list of strings, the rest are strings."""
+    list of strings, posture a string or a list of them, the rest are
+    strings."""
     if not isinstance(entry, dict):
         raise ValueError(f"dispatch.{role}: expected a table, got {entry!r}")
     for key, value in entry.items():
         if key not in DISPATCH_KEYS:
             raise ValueError(f"unknown key 'dispatch.{role}.{key}' "
                              f"(known: {', '.join(DISPATCH_KEYS)})")
+        strings = value if isinstance(value, list) else [value]
         choices = DISPATCH_CHOICES.get(key)
-        if choices and value not in choices:
+        if choices and not (strings and all(v in choices for v in strings)):
             raise ValueError(f"dispatch.{role}.{key}: expected "
                              f"{' | '.join(choices)}, got {value!r}")
-        strings = value if isinstance(value, list) else [value]
-        if isinstance(value, list) != (key == "args") or not all(isinstance(a, str) for a in strings):
+        listed = key == "args" or (key == "posture" and isinstance(value, list))
+        if isinstance(value, list) != listed or not all(isinstance(a, str) for a in strings):
             want = "a list of strings" if key == "args" else "a string"
             raise ValueError(f"dispatch.{role}.{key}: expected {want}, got {value!r}")
     return entry
@@ -337,6 +339,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_validate.add_argument("--return-json", required=True,
                             help="file with the subagent's JSON return (schema per "
                                  "kind: judge {criteria[], findings[]})")
+    p_validate.add_argument("--posture", default="reader", choices=("reader", "shape"),
+                            help="shape: the shape posture's return {verdict, flow, "
+                                 "owns[], options[]}")
 
     p_prime = sub.add_parser("prime", help="assemble prior-trajectory prime context for an issue", parents=[common])
     p_prime.add_argument("number", type=int)
@@ -426,11 +431,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
                               "remove_label, add_blocker, retitle, delete_label)")
 
     p_pack = sub.add_parser("pack", help="compose one dispatch's context and print it", parents=[common])
-    p_pack.add_argument("number", type=int)
+    p_pack.add_argument("number", type=int, nargs="+",
+                        help="the issue; the shape posture takes every issue of a stack")
     p_pack.add_argument("--role", default="implementer", metavar="ROLE",
                         help="any [dispatch] role; its posture shapes the pack — "
                              "writer: issue + rules + persona + repo map + standing "
-                             "orders; reader: issue + rules + repo map")
+                             "orders; reader: issue + rules + repo map + touched "
+                             "modules; shape: issues + rules + touched modules + "
+                             "module edges")
+    p_pack.add_argument("--posture", default=None, choices=get_args(pack.Posture),
+                        help="one of the role's postures (default: its first)")
+    p_pack.add_argument("--base-ref", default="origin/main",
+                        help="reader and shape: the touched modules are base-ref...HEAD's")
     p_pack.add_argument("--cwd", default=".",
                         help="the worktree to map (its .codegraph index is self-provisioned)")
     p_pack.add_argument("--codegraph-bin",
@@ -523,7 +535,7 @@ def main(argv: list[str] | None = None) -> int:
             # Non-JSON takes the rejection path, so the orchestrator re-asks.
             result = reject(gate, [f"payload: not valid JSON ({e})"])
         else:
-            result = validate(gate, raw)
+            result = validate(gate, raw, args.posture)
         print(json.dumps(result, indent=2))
         return 2 if result["reasons"] else (0 if result["passed"] else 1)
     elif args.cmd == "prime":
@@ -620,29 +632,34 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "pack":
         root = Path(args.cwd).resolve()
         roles = list(cfg["dispatch"])
-        posture = cfg["dispatch"].get(args.role, {}).get("posture")
-        # A role no entry declares, an entry without a posture, a missing
-        # rules file or persona: each is an error marker, never a pack shaped
-        # by a guess or dispatched without them.
+        declared = cfg["dispatch"].get(args.role, {}).get("posture")
+        postures = declared if isinstance(declared, list) else [declared] if declared else []
+        # A role no entry declares, a posture its entry does not carry, a
+        # missing rules file or persona, a range git cannot diff: each is an
+        # error marker, never a pack shaped by a guess or dispatched without them.
         if args.role not in roles:
             print(json.dumps({"error": f"unknown role '{args.role}' (known: {', '.join(roles)})"}))
             return 2
-        if posture is None:
+        posture = args.posture or (postures[0] if postures else None)
+        if posture not in postures:
             print(json.dumps({"error": f"dispatch.{args.role}.posture: required to shape "
-                                       f"the pack ({' | '.join(DISPATCH_CHOICES['posture'])})"}))
+                                       f"the pack, and {posture!r} is not among {postures} "
+                                       f"({' | '.join(DISPATCH_CHOICES['posture'])})"}))
             return 2
-        issue = pack.Issue(**json.loads(github.run(
-            ["issue", "view", str(args.number), "--json", "title,body"], cwd=root)))
+        issues = {n: pack.Issue(**json.loads(github.run(
+            ["issue", "view", str(n), "--json", "title,body"], cwd=root))) for n in args.number}
         try:
             rules = [pack.body(p) for p in find_constitution(root)]
             persona = pack.body(PACKAGE_PERSONA) if posture == "writer" else ""
-        except FileNotFoundError as exc:
+            touched = None if posture == "writer" else pack.Touched.since(args.base_ref, root)
+            text = pack.compose(
+                issues, args.role, posture, rules, persona,
+                pack.Codegraph(args.codegraph_bin, root), touched,
+                prime=Path(args.prime).read_text(encoding="utf-8") if args.prime else "",
+                trace=Path(args.trace).read_text(encoding="utf-8") if args.trace else "",
+            )
+        except (FileNotFoundError, ValueError) as exc:
             print(json.dumps({"error": str(exc)}))
             return 2
-        print(pack.compose(
-            args.number, issue, args.role, posture, rules, persona,
-            pack.Codegraph(args.codegraph_bin, root),
-            prime=Path(args.prime).read_text(encoding="utf-8") if args.prime else "",
-            trace=Path(args.trace).read_text(encoding="utf-8") if args.trace else "",
-        ), end="")
+        print(text, end="")
     return 0
