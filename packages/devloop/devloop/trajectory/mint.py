@@ -119,9 +119,10 @@ def _normalize_trace(raw: object) -> dict:
         section = raw.get(key)
         if isinstance(section, dict):
             out[key] = _normalize_trace_simplify(section)
-    edge_cases = raw.get("edge_cases")
-    if isinstance(edge_cases, list):
-        out["edge_cases"] = [str(x) for x in edge_cases if isinstance(x, str)]
+    for key in ("edge_cases", "deviations"):
+        items = raw.get(key)
+        if isinstance(items, list):
+            out[key] = [x for x in items if isinstance(x, str)]
     tdd = raw.get("tdd")
     if isinstance(tdd, dict):
         out["tdd"] = {"red_confirmed": bool(tdd.get("red_confirmed", False))}

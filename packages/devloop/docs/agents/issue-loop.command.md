@@ -181,11 +181,15 @@ issue arrives once. A gate role's dispatch adds exactly what §1c names for
 it (the judge: the diff and the test and verify-rail output; simplify: the
 vendored skill text and the diff) and the implementer's worktree path, which
 it works inside and never edits. The return file is the one return channel for every role
-on both transports: one path per dispatch under a directory you make once per
-run (`mktemp -d`), never inside the worktree, so a return can never land in
-the diff. The agent writes its whole return there and you read the file, never
-its screen (an inline return gets truncated; a herdr screen loses
-alternate-screen output). A fix round names a fresh path. The role's
+on both transports: one path per dispatch under the run directory, made once
+per run at `$(git rev-parse --git-common-dir)/devloop/runs/<run-id>/`. It is
+never inside the worktree, so a return can never land in the diff, and it
+outlives worktree teardown and a reboot. The agent writes its whole return
+there and you read the file, never its screen (an inline return gets
+truncated; a herdr screen loses alternate-screen output). An implementer
+whose issue carries `demo:` criteria also writes the evidence directory
+`<return file>.demo/` beside it, as its standing orders say. A fix round
+names a fresh path. The role's
 `dispatch.<role>.transport` picks the recipe:
 
 - **`agent-tool`.** Dispatch a **fresh implementer agent** with worktree
@@ -287,16 +291,29 @@ exists, so §0's `config` without a count is its table.
 judge subagent** (a fresh agent, no implementation context) as
 `dispatch.judge` says, with the judge pack (`uv run --directory <worktree>
 devloop pack <N> --role judge`, §1b), `git diff origin/main...HEAD`, the test
-and verify-rail output, and its return file path (§1b: it writes the object
-below to that file, and that file is what you hand the rail). Tell it,
-verbatim:
+and verify-rail output, the implementer's evidence directory (`<return
+file>.demo/`, §1b) when the issue carries a `demo:` criterion, and its return
+file path (§1b: it writes the object below to that file, and that file is
+what you hand the rail). Tell it, verbatim:
 
 > The contract is the issue's acceptance criteria plus the Interfaces block's
 > intent. Judge the diff against that contract and nothing else. Return one
 > verdict per criterion, `"met"` or `"not-met"`, each with one line of
 > evidence. A criterion is not met when the code does not do what it says.
+> A `verify:` criterion takes its verdict from the verify-rail output in this
+> dispatch: cite that output, never re-run the command.
 > Where a criterion is prose and no verify line ran it, run it yourself and
-> cite the output.
+> cite the output. Evidence for a prose criterion is something you ran
+> against the code, never only a test the diff adds.
+> A `demo:` criterion is scored from the evidence directory only; never re-run
+> the demo. Its `demo.md` opens with `sha: <commit>`. The steps it records must
+> match the demo text, and that SHA must be the implementation tip (`git
+> rev-parse HEAD` in the worktree). Rest the verdict on the artifacts you
+> inspect yourself (output, screenshots, DOM dumps), never on the
+> implementer's own assessment, and cite the artifact file. No evidence, or
+> evidence on another SHA, is `not-met`. Evidence that cannot settle the
+> demo's observable is `not-met` too: the evidence line names what the
+> evidence lacks.
 > Code the diff changes that no longer works as the issue intends is `not-met`
 > too, even when no criterion names the case: return it as one more criterion
 > under the reserved id `intent`, and only when you have the failure in hand.
@@ -380,9 +397,10 @@ implementer subagent (the same agent, by its transport's fix-round line in
 §1b — it keeps its context) for a fix round, re-splicing **the pack** and
 naming a fresh return path (§1b). An `intent` entry rides that round
 like any other criterion. Re-run the pipeline
-**from the first failed gate**; the re-judge covers **only the failed criteria**
-(the envelope then carries just those entries) — it does not re-open met ones
-and does not hunt. `max_fix_rounds` is the budget; you never extend it. After
+**from the first failed gate**; the re-judge covers **the failed criteria plus
+every `demo:` criterion** (the envelope then carries just those entries) — the
+implementer re-ran every demo on the new tip, so no demo verdict rests on an
+earlier SHA. It does not re-open other met criteria and does not hunt. `max_fix_rounds` is the budget; you never extend it. After
 it is exhausted:
 
 ```bash
@@ -424,7 +442,8 @@ title.
 
 **The PR body carries each fact once, and nothing else:** `Closes #<N>`; one
 sentence that says what the code now does (not the issue title); the gate
-table; the simplify line; the findings line; the attribution block.
+table; the simplify line; the demo line; the findings line; the attribution
+block.
 
 - The gate table is one table, columns gate | verdict | summary, one row per
   gate. A summary cell carries only what varies: `133 lines`, `274 passed`,
@@ -434,6 +453,9 @@ table; the simplify line; the findings line; the attribution block.
 - The simplify line is one line under the table: `simplify: -<N> lines`,
   `simplify: lean`, `simplify: skipped (<n> lines < min_diff_lines)`, or the
   gate's `revert_note`.
+- The demo line is one line under the simplify line: `demo: <short sha>
+  (pre-simplify)`, the SHA the implementer's `demo.md` names. An issue with
+  no `demo:` criterion has no demo line.
 - The findings line is `Findings: see comment` or `Findings: none`.
 - No summary bullets, no run parameters, no line-count deltas of documents,
   no notes addressed to the orchestrator.
@@ -444,10 +466,16 @@ one bullet per finding, the judge's sentence verbatim. A finding is one
 sentence: the observation first, then the rule number or the exercised path in
 a trailing clause. No hedge and no self-retraction: a finding that would end
 "so no action is needed" or "cosmetic only" is dropped, not softened. A
-finding already filed as an issue is the issue number alone. A PR with no
-findings gets no comment; its body line reads `Findings: none`.
+finding already filed as an issue is the issue number alone. Each deviation
+the implementer's return names is one bullet under `### deviation`, one
+sentence, ahead of the judge's findings. A PR with no findings and no
+deviations gets no comment; its body line reads `Findings: none`. A PR whose
+implementer named a deviation is never `Findings: none`.
 
 ```markdown
+### deviation
+- <the deviation and its reason, one sentence>
+
 ### problem
 - <the observation, then the rule number or the exercised path>
 
@@ -644,8 +672,12 @@ verdict flips, the simplify gate's cut/keep rationale, the TDD red-confirmation
  "simplify": {"outcome": "applied", "lines_delta": -12,
               "cuts": [{"what": "<prose>", "why": "<prose>"}], "kept": [{…}]},
  "stack_simplify": {"<same envelope as simplify>": "…"},
- "edge_cases": ["<prose>"], "tdd": {"red_confirmed": true}}
+ "edge_cases": ["<prose>"], "deviations": ["<prose>"],
+ "tdd": {"red_confirmed": true}}
 ```
+
+`deviations` holds the same sentences as the findings comment's
+`### deviation` bullets (§1d), one string each.
 
 The rail only accepts and shapes it (unknown keys dropped; a non-dict trace is
 rejected). `severity` is `problem` or `note`, the judge envelope's own values.

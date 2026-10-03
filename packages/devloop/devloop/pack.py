@@ -351,6 +351,14 @@ here is stated once.
   the worktree root. Paste each result in your return.
 - Use the code you changed the way the issue describes. If it does not do
   what the issue says, fix it or report the criterion as not met.
+- Run every `demo:` criterion on your final commit, by script or by driving
+  a tool, and record it in `<return file>.demo/demo.md`: first line
+  `sha: <full commit sha>`, then one section per demo with the steps taken
+  (commands verbatim, or an action log) and the artifact file names. Save
+  the artifacts beside it as files the judge can read: text output,
+  screenshots, DOM dumps, transcripts. A fix round re-runs every `demo:`
+  criterion on the new tip and rewrites `demo.md`. A demo the environment
+  cannot run is not met: name the missing capability in your return.
 - Test at seams governs the tests you commit, not what you may run. Run
   whatever you need to convince yourself.
 - **Test at seams.** Test only at the seams the issue names (its acceptance
@@ -362,9 +370,10 @@ here is stated once.
 - Commit in slice-sized increments on the branch named in the dispatch.
   Do NOT push, do NOT open a PR, do NOT close or label anything — the
   orchestrator owns the control plane.
-- Return: worktree path, branch, files touched, test commands run, any deviation
-  from the issue's declared shapes with its reason, and any acceptance criterion
-  you believe is NOT yet met (honesty over green-washing). Write the whole
+- Return: worktree path, branch, files touched, test commands run, each
+  deviation from the issue's declared shapes as one sentence with its reason,
+  and any acceptance criterion you believe is NOT yet met (honesty over
+  green-washing). Write the whole
   return to the return file the dispatch names; the orchestrator reads that
   file, never your screen.
 

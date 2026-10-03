@@ -50,7 +50,7 @@ of the record — **no field is written by two owners.**
   frontmatter key.**
 - **The semantic `trace` is the machine-readable half of the tracker's gate
   evidence, not a second prose owner.** Its envelopes (`rounds[]`, `criteria[]`,
-  `simplify`, `edge_cases[]`, `tdd`) carry the gate agents' own reports condensed
+  `simplify`, `edge_cases[]`, `deviations[]`, `tdd`) carry the gate agents' own reports condensed
   into structured frontmatter — the same evidence the tracker comments own as
   prose, in a form a learner can join on. It duplicates neither the tracker's
   prose nor the trajectory body; counts (`lines_delta`, `flipped_by_round`) are
