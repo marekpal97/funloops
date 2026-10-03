@@ -105,8 +105,9 @@ here is stated once.
   `sha: <full commit sha>`, then one section per demo with the steps taken
   (commands verbatim, or an action log) and the artifact file names. Save
   the artifacts beside it as files the judge can read: text output,
-  screenshots, DOM dumps, transcripts. A demo the environment cannot run is
-  not met: name the missing capability in your return.
+  screenshots, DOM dumps, transcripts. A fix round re-runs every `demo:`
+  criterion on the new tip and rewrites `demo.md`. A demo the environment
+  cannot run is not met: name the missing capability in your return.
 - Test at seams governs the tests you commit, not what you may run. Run
   whatever you need to convince yourself.
 - **Test at seams.** Test only at the seams the issue names (its acceptance

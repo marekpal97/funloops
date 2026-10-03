@@ -311,8 +311,9 @@ what you hand the rail). Tell it, verbatim:
 > rev-parse HEAD` in the worktree). Rest the verdict on the artifacts you
 > inspect yourself (output, screenshots, DOM dumps), never on the
 > implementer's own assessment, and cite the artifact file. No evidence, or
-> evidence on another SHA, is `not-met`. When the artifacts cannot settle the
-> demo's observable, return `"uncertain"` for it.
+> evidence on another SHA, is `not-met`. Evidence that cannot settle the
+> demo's observable is `not-met` too: the evidence line names what the
+> evidence lacks.
 > Code the diff changes that no longer works as the issue intends is `not-met`
 > too, even when no criterion names the case: return it as one more criterion
 > under the reserved id `intent`, and only when you have the failure in hand.
@@ -339,10 +340,7 @@ what you hand the rail). Tell it, verbatim:
 
 `evidence` and `finding` are never blank; `findings` may be empty, not absent.
 The rail accepts `intent` as it accepts any criterion id.
-**Only a criterion `not-met` or `uncertain` blocks.** An `uncertain` runs no
-fix round: route the issue to human at once (the block below), with the
-judge's evidence line and the evidence directory's `demo.md` in the comment.
-Findings
+**Only a criterion `not-met` blocks.** Findings
 never do, whatever their severity: they go to the PR's findings comment and
 the triage lane (§1d) — never a fix round, never an issue.
 
@@ -353,11 +351,10 @@ acting on it, on either transport — `uv run devloop validate --gate <id>
 --return-json <return-file>`. The rail emits the same `GateResult` the
 deterministic gates emit, plus `reasons`, and exits `0` — schema-valid and
 **passed** (judge: no criterion
-`not-met` per the gate's `threshold`, `all` or `majority`, and none
-`uncertain`); `1` — schema-valid and **failed**: a real verdict, run a fix
-round per the failure flow below (an `uncertain` routes to human instead); `2`
+`not-met` per the gate's `threshold`, `all` or `majority`); `1` — schema-valid
+and **failed**: a real verdict, run a fix round per the failure flow below; `2`
 — **schema-rejected**: `reasons` names each offending field path and value
-(`criteria[1].verdict: 'probably' is not one of met | not-met | uncertain`). **Re-ask**
+(`criteria[1].verdict: 'probably' is not one of met | not-met`). **Re-ask**
 the same agent with those reasons and a fresh return path (SendMessage on the
 Agent tool, `herdr agent prompt <name>` on herdr) — never hand-fix its return,
 never read a verdict out of a rejected one, never pass it on to `--gates-json`.
@@ -400,9 +397,10 @@ implementer subagent (the same agent, by its transport's fix-round line in
 §1b — it keeps its context) for a fix round, re-splicing **the pack** and
 naming a fresh return path (§1b). An `intent` entry rides that round
 like any other criterion. Re-run the pipeline
-**from the first failed gate**; the re-judge covers **only the failed criteria**
-(the envelope then carries just those entries) — it does not re-open met ones
-and does not hunt. `max_fix_rounds` is the budget; you never extend it. After
+**from the first failed gate**; the re-judge covers **the failed criteria plus
+every `demo:` criterion** (the envelope then carries just those entries) — the
+implementer re-ran every demo on the new tip, so no demo verdict rests on an
+earlier SHA. It does not re-open other met criteria and does not hunt. `max_fix_rounds` is the budget; you never extend it. After
 it is exhausted:
 
 ```bash
@@ -419,8 +417,8 @@ sentence under the table says what the fix rounds attempted.
 Then continue with the next frontier issue — one stuck issue must not stall the
 loop. **Three exits, no others:** **ship** (every criterion met, no findings);
 **ship with findings** (criteria met, findings in the PR's findings comment); **route
-to human** (a criterion stays `not-met` past `max_fix_rounds`, a criterion is
-`uncertain`, or a judge return stays schema-rejected after a re-ask).
+to human** (a criterion stays `not-met` past `max_fix_rounds`, or a judge return
+stays schema-rejected after a re-ask).
 
 ### 1d. Ship
 

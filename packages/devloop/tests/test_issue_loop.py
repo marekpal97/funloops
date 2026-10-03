@@ -3586,7 +3586,6 @@ def test_command_doc_judge_prompt_scores_demo_and_verify_from_evidence():
     assert "evidence directory" in sec
     assert "never re-run" in sec
     assert "never only a test the diff adds" in sec
-    assert '"uncertain"' in sec
     assert "another SHA" in sec
 
 
@@ -3597,14 +3596,26 @@ def test_command_doc_findings_comment_carries_deviations():
     assert "deviations" in _command_doc_subsection("## 3.")
 
 
-def test_validate_judge_accepts_uncertain_as_a_verdict_that_does_not_pass():
-    """An `uncertain` demo verdict is schema-valid (rc 1, never a re-ask) and
-    the summary names it, so the orchestrator routes to human, not a fix."""
+def test_validate_judge_has_no_third_verdict():
+    """The judge's verdicts are `met` and `not-met`: an `uncertain` is a
+    schema rejection (rc 2, a re-ask), never a verdict."""
+    assert gates.VERDICTS == ("met", "not-met")
     result = gates.validate(_gate("judge"), {"criteria": [
-        {"id": "AC1", "verdict": "met", "evidence": "e"},
-        {"id": "AC2", "verdict": "uncertain",
-         "evidence": "screenshot.png shows the page but not the toast"},
-    ], "findings": []})
-    assert result["reasons"] == []
-    assert result["passed"] is False
-    assert "1 uncertain" in result["summary"]
+        {"id": "AC1", "verdict": "uncertain", "evidence": "e"}], "findings": []})
+    assert result["reasons"] == [
+        "criteria[0].verdict: 'uncertain' is not one of met | not-met"]
+
+
+def test_command_doc_judge_prompt_makes_unsettled_demo_evidence_not_met():
+    prompt = [ln.removeprefix("> ") for ln in _command_doc_subsection("### 1c.").splitlines()]
+    sec = " ".join(" ".join(prompt).split())
+    assert "uncertain" not in sec
+    assert "cannot settle the demo's observable is `not-met`" in sec
+    assert "names what the evidence lacks" in sec
+
+
+def test_fix_round_reruns_and_rejudges_every_demo():
+    orders = " ".join(pack.STANDING_ORDERS.split())
+    assert "A fix round re-runs every `demo:` criterion on the new tip" in orders
+    sec = " ".join(_command_doc_subsection("### 1c.").split())
+    assert "the failed criteria plus every `demo:` criterion" in sec
