@@ -64,6 +64,17 @@ def fetch_labels(number: int) -> list[str]:
         return []
 
 
+def fetch_parent(repo: str, number: int) -> dict | None:
+    """The issue's native sub-issue parent as its REST item, or ``None`` when
+    it has none (gh's 404); any other gh failure raises."""
+    try:
+        return json.loads(run(["api", f"repos/{repo}/issues/{number}/parent"]))
+    except subprocess.CalledProcessError as e:
+        if "404" in (e.stderr or ""):
+            return None
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Board snapshot — the richer shape `devloop.board` checks
 
@@ -117,10 +128,8 @@ def fetch_board(repo: str) -> dict:
                 issue["blockers"] = _refs(f"repos/{repo}/issues/{n}/dependencies/blocked_by")
             if issue["sub_issues"].get("total", 0):
                 issue["children"] = _refs(f"repos/{repo}/issues/{n}/sub_issues")
-            try:
-                issue["parent"] = _ref(json.loads(run(["api", f"repos/{repo}/issues/{n}/parent"])))
-            except subprocess.CalledProcessError:
-                issue["parent"] = None  # 404: no parent
+            parent = fetch_parent(repo, n)
+            issue["parent"] = _ref(parent) if parent else None
         issues.append(issue)
     labels = run(["api", "--paginate", "--jq", ".[].name", f"repos/{repo}/labels?per_page=100"])
     return {"repo": repo, "labels": [l for l in labels.splitlines() if l], "issues": issues}

@@ -411,7 +411,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              "mirror into the trajectory note frontmatter")
     p_traj.add_argument("--trace-json", default=None,
                         help="file with the semantic execution trace: a JSON "
-                             "object {rounds[], criteria[], edge_cases[], deviations[], tdd} "
+                             "object {reviews[], criteria[], edge_cases[], deviations[], tdd} "
                              "the orchestrator condenses from the gate agents' own reports. "
                              "Omit to leave the trace key out.")
     p_traj.add_argument("--fix-rounds", type=int, default=0)
@@ -577,6 +577,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "trajectory":
         cwd = Path(args.cwd).resolve()
         issue = json.loads(github.run(["api", f"repos/{{owner}}/{{repo}}/issues/{args.number}"]))
+        parent = github.fetch_parent("{owner}/{repo}", args.number)
         branch = args.branch or subprocess.run(
             ["git", "branch", "--show-current"], cwd=cwd,
             capture_output=True, text=True, check=True).stdout.strip()
@@ -600,6 +601,7 @@ def main(argv: list[str] | None = None) -> int:
                 issue, branch=branch, commits=commits, numstat=numstat, gates=gates,
                 fix_rounds=args.fix_rounds, outcome=args.outcome,
                 pr_url=args.pr_url, run_id=args.run_id,
+                epic_url=parent["html_url"] if parent else "",
                 skills=skills, skill_centric=args.skill_centric,
                 primed=args.primed, served=served, trace=trace,
             )

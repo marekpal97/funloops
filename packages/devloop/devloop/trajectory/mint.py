@@ -5,12 +5,16 @@ Internal to this file: the trace normalizers and the skill projection.
 
 from __future__ import annotations
 
+from typing import get_args
+
+from devloop.pack import Posture
+
 TRANSPORTS = ("agent-tool", "herdr", "headless-argv")
 DISPATCH_KEYS: dict[str, type] = {
-    "transport": str, "harness": str, "model": str, "effort": str,
+    "posture": str, "transport": str, "harness": str, "model": str, "effort": str,
     "session_ref": str, "duration_sec": int, "tokens": int,
 }
-DISPATCH_CHOICES = {"transport": TRANSPORTS}
+DISPATCH_CHOICES = {"transport": TRANSPORTS, "posture": get_args(Posture)}
 
 
 def _normalize_skill(entry: dict, where: str, reasons: list[str]) -> dict:
@@ -57,7 +61,7 @@ def _as_int_or_none(value: object) -> int | None:
         return None
 
 
-def _normalize_trace_round(entry: dict) -> dict:
+def _normalize_trace_review(entry: dict) -> dict:
     """Project one review round to ``{gate, finding, severity, disposition,
     fixed_by}``."""
     return {
@@ -86,9 +90,9 @@ def _normalize_trace(raw: object) -> dict:
     if not isinstance(raw, dict):
         raise ValueError("trace must be a JSON object")
     out: dict = {}
-    rounds = raw.get("rounds")
-    if isinstance(rounds, list):
-        out["rounds"] = [_normalize_trace_round(e) for e in rounds if isinstance(e, dict)]
+    reviews = raw.get("reviews")
+    if isinstance(reviews, list):
+        out["reviews"] = [_normalize_trace_review(e) for e in reviews if isinstance(e, dict)]
     criteria = raw.get("criteria")
     if isinstance(criteria, list):
         out["criteria"] = [_normalize_trace_criterion(e) for e in criteria if isinstance(e, dict)]
@@ -105,6 +109,7 @@ def _normalize_trace(raw: object) -> dict:
 def build_trajectory(issue: dict, *, branch: str, commits: list[str],
                      numstat: str, gates: list[dict], fix_rounds: int,
                      outcome: str, pr_url: str = "", run_id: str = "",
+                     epic_url: str = "",
                      skills: list[dict] | None = None,
                      skill_centric: bool = False,
                      primed: bool | None = None,
@@ -112,7 +117,8 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
                      trace: dict | None = None) -> dict:
     """Assemble the deterministic half of a per-issue trajectory note as a
     weave_create-shaped payload: the mechanical facts in frontmatter, the body
-    a skeleton the orchestrator fills.
+    a skeleton the orchestrator fills. ``epic_url`` is the issue's sub-issue
+    parent, empty when it has none.
 
     ``skills`` is the stage-dispatch log, ``[{id, role, skill, outcome,
     fix_rounds_attributed}]``, each entry optionally carrying the dispatch
@@ -133,6 +139,7 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
     frontmatter = {
         "issue": issue["number"],
         "issue_url": issue.get("html_url", ""),
+        "epic_url": epic_url,
         "pr_url": pr_url,
         "run_id": run_id,
         "branch": branch,

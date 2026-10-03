@@ -703,6 +703,7 @@ def test_wrong_typed_join_key_is_rejected_with_its_field_path(bad, path, shown):
 def test_trajectory_verb_prints_join_key_reasons(tmp_path, monkeypatch, capsys):
     """The rail surfaces a rejected skills-json as `{error, reasons}` and exits
     2, so the orchestrator sees each field path, not one joined string."""
+    monkeypatch.setattr(github, "fetch_parent", lambda repo, number: None)
     monkeypatch.setattr(github, "run", lambda args, cwd=None: json.dumps(
         {"number": 14, "title": "join keys", "labels": []}))
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
@@ -763,6 +764,7 @@ def test_trajectory_reads_a_branch_after_the_worktree_is_removed(tmp_path, monke
     git("worktree", "remove", str(worktree))  # §1d teardown, before §3
     assert not worktree.exists() and git("rev-parse", "loop/issue-52").strip()
 
+    monkeypatch.setattr(github, "fetch_parent", lambda repo, number: None)
     monkeypatch.setattr(github, "run", lambda args, cwd=None: json.dumps(
         {"number": 52, "title": "branch after teardown", "labels": []}))
     (tmp_path / "g.json").write_text("[]", encoding="utf-8")
@@ -775,6 +777,68 @@ def test_trajectory_reads_a_branch_after_the_worktree_is_removed(tmp_path, monke
     assert fm["branch"] == "loop/issue-52"
     assert fm["commits"] == 2
     assert fm["files_touched"] == ["a.txt", "b.txt"]
+
+
+def _trajectory_cli(tmp_path, monkeypatch, parent):
+    """Run the trajectory verb with gh faked: the issue item for the issue
+    endpoint, ``parent`` (a REST item, or ``None`` for gh's 404) for the
+    parent endpoint."""
+    def fake_run(args, cwd=None):
+        if args[-1].endswith("/parent"):
+            if parent is None:
+                raise subprocess.CalledProcessError(
+                    1, args, stderr="gh: Not Found (HTTP 404)")
+            return json.dumps(parent)
+        return json.dumps({"number": 88, "title": "one home per fact", "labels": [],
+                           "html_url": "https://github.com/o/r/issues/88"})
+    monkeypatch.setattr(github, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a, 0, stdout="", stderr=""))
+    (tmp_path / "g.json").write_text("[]", encoding="utf-8")
+    return cli.main(["trajectory", "88", "--cwd", str(tmp_path), "--branch", "loop/dag-89",
+                     "--gates-json", str(tmp_path / "g.json"), "--outcome", "shipped"])
+
+
+def test_trajectory_payload_carries_the_sub_issue_parent_as_epic_url(tmp_path, monkeypatch, capsys):
+    """A run lands on its epic's task: the payload's `epic_url` is the
+    native sub-issue parent's URL, and empty when the issue has no parent."""
+    assert _trajectory_cli(tmp_path, monkeypatch, {
+        "number": 89, "html_url": "https://github.com/o/r/issues/89"}) == 0
+    assert json.loads(capsys.readouterr().out)["frontmatter"]["epic_url"] == \
+        "https://github.com/o/r/issues/89"
+    assert _trajectory_cli(tmp_path, monkeypatch, None) == 0
+    assert json.loads(capsys.readouterr().out)["frontmatter"]["epic_url"] == ""
+
+
+def test_fetch_parent_raises_on_a_failure_that_is_not_a_missing_parent(monkeypatch):
+    """Only gh's 404 means "no parent"; any other failure raises, so a
+    network error never records a run as epic-less."""
+    def boom(args, cwd=None):
+        raise subprocess.CalledProcessError(1, args, stderr="HTTP 502: Bad Gateway")
+    monkeypatch.setattr(github, "run", boom)
+    with pytest.raises(subprocess.CalledProcessError):
+        github.fetch_parent("o/r", 88)
+
+
+def test_stage_row_carries_its_posture():
+    """The shape pass is role `judge`, posture `shape`: a stage row keeps a
+    posture the pack knows, and a posture it does not know is rejected."""
+    payload = _trajectory_with_skills([
+        {"id": "judge:shape", "role": "judge", "outcome": "met", "posture": "shape"}])
+    assert payload["frontmatter"]["skills"][0]["posture"] == "shape"
+    with pytest.raises(ValueError) as exc:
+        _trajectory_with_skills([{"id": "judge", "role": "judge", "posture": "simplify"}])
+    assert exc.value.args[0].startswith("skills[0].posture:")
+
+
+def test_trace_rounds_key_is_now_reviews():
+    """The judge/fix rounds travel as `reviews`; the old `rounds` key is
+    dropped, so a task note never says "rounds" at two levels."""
+    payload = mint.build_trajectory(
+        {"number": 3, "title": "x", "labels": []}, branch="b", commits=[], numstat="",
+        gates=[], fix_rounds=0, outcome="shipped",
+        trace={"rounds": [{"gate": "judge"}], "reviews": [{"gate": "judge"}]})
+    assert set(payload["frontmatter"]["trace"]) == {"reviews"}
 
 
 def test_command_doc_section3_takes_the_branch_outside_the_worktree():
@@ -1821,7 +1885,7 @@ def _sample_trace() -> dict:
     """A hand-written semantic trace with prose-valued fields, carrying one
     extra orchestrator-bookkeeping key per level to prove projection drops it."""
     return {
-        "rounds": [
+        "reviews": [
             {"gate": "review", "finding": "standalone existence test duplicates "
              "the eight sibling guards", "severity": "note",
              "disposition": "accepted", "fixed_by": "dropped the redundant test",
@@ -1854,7 +1918,7 @@ def test_build_trajectory_round_trips_semantic_trace():
         gates=[], fix_rounds=1, outcome="shipped", trace=_sample_trace(),
     )
     trace = payload["frontmatter"]["trace"]
-    assert trace["rounds"] == [
+    assert trace["reviews"] == [
         {"gate": "review",
          "finding": "standalone existence test duplicates the eight sibling guards",
          "severity": "note", "disposition": "accepted",
