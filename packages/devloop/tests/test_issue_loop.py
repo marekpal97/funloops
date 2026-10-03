@@ -26,14 +26,6 @@ def test_blockers_are_the_native_edges():
     assert dag.blockers({}) == []
 
 
-def test_wave_and_parallel_safe():
-    body = "Track: A | Wave: 2 | Blocked-by: — | Parallel-safe: no | Epic: #11"
-    assert dag.parse_wave(body) == 2
-    assert dag.parse_parallel_safe(body) is False
-    assert dag.parse_wave("no header") is None
-    assert dag.parse_parallel_safe("no header") is True  # default: don't serialize the loop
-
-
 # ---------------------------------------------------------------------------
 # compute_frontier
 
@@ -146,17 +138,15 @@ def test_components_ignore_closed_issues():
     assert comp[2] != comp[3]
 
 
-def test_frontier_wave_ordering_and_limit():
-    issues = [
-        _issue(5, body="Wave: 2"),
-        _issue(6, body="Wave: 1"),
-        _issue(7),  # no wave → sorts last
-        _issue(8, body="Wave: 1"),
-    ]
+def test_frontier_is_number_ordered_and_body_metadata_is_not_read():
+    """The DAG is the parallel set: an entry carries no wave or parallel-safe
+    hint, and `Wave:` in a body no longer reorders the frontier."""
+    issues = [_issue(6, body="Wave: 2 | Parallel-safe: no"), _issue(5), _issue(7, body="Wave: 1")]
     result = dag.compute_frontier(issues, CFG)
-    assert [e["number"] for e in result["frontier"]] == [6, 8, 5, 7]
+    assert [e["number"] for e in result["frontier"]] == [5, 6, 7]
+    assert set(result["frontier"][0]) == {"number", "title", "blockers", "component"}
     limited = dag.compute_frontier(issues, CFG, limit=2)
-    assert [e["number"] for e in limited["frontier"]] == [6, 8]
+    assert [e["number"] for e in limited["frontier"]] == [5, 6]
 
 
 def test_plan_reports_the_whole_frontier_not_the_run_cap(monkeypatch, capsys):
