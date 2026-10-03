@@ -377,13 +377,15 @@ Tell it, verbatim:
 > record's own constructors and checks beside the record, or a helper moved
 > to the one module its consumers share, deepen a module and do not break it.
 > For rule 4, read each touched module from its top. It breaks when the top
-> does not show the module's flow in a few short names, or when one module
-> holds several jobs as loose functions side by side. Fail the contract only
-> for a break a reader meets on the main flow. A smaller seam you would tidy
-> does not fail it: name it in `flow` under a `"met"` verdict. Return `"met"`
-> when each flow has one owning module that reads top-down and owns what its
-> Interfaces block declares. Otherwise return `"not-met"` with a restructure
-> case. `flow` states the current flow in at most five
+> does not show the module's flow in a few short names, when one module
+> holds several jobs as loose functions side by side, or when several
+> functions each re-spell the same main-flow steps instead of one name
+> owning them. The main flow is the path every route or verb of the stack
+> runs. Fail the contract for a break on the main flow. A seam off it does
+> not fail the contract: name it in `flow` under a `"met"` verdict. Return
+> `"met"` when the main flow has one owning module that reads top-down and
+> owns what its Interfaces block declares. Otherwise return `"not-met"` with
+> a restructure case. `flow` states the current flow in at most five
 > lines and names each broken rule by number. `owns` says, per module, what
 > it should own. `options` gives one to three shape options, one sentence
 > each. Do not edit code. Return exactly this object:
@@ -396,7 +398,7 @@ Tell it, verbatim:
 ```
 
 A `met` return may leave `flow` empty and `owns` and `options` as empty lists;
-its `flow` may name the smaller seams.
+its `flow` may name the seams off the main flow.
 Validate it with `uv run devloop validate --gate judge --posture shape
 --return-json <return-file>`: exit `0` met, `1` a restructure case, `2`
 schema-rejected (re-ask once, as above). **A restructure case stops the run at
