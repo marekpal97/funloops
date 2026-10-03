@@ -14,13 +14,15 @@ DISPATCH_CHOICES = {"transport": TRANSPORTS, "tier": ("base", "small")}
 
 
 def _normalize_skill(entry: dict, where: str, reasons: list[str]) -> dict:
-    """Project one stage-dispatch record to ``{id, role, outcome,
+    """Project one stage-dispatch record to ``{id, role, skill, outcome,
     fix_rounds_attributed}`` plus whichever dispatch join keys it carries,
-    verbatim; extra keys are dropped. A wrong-typed join key appends a
+    verbatim; extra keys are dropped. ``skill`` names the skill that ran the
+    stage, empty when none did. A wrong-typed join key appends a
     ``<where>.<key>: …`` reason instead of landing in the record."""
     out = {
         "id": entry.get("id", ""),
         "role": entry.get("role", ""),
+        "skill": entry.get("skill", ""),
         "outcome": entry.get("outcome", ""),
         "fix_rounds_attributed": int(entry.get("fix_rounds_attributed", 0) or 0),
     }
@@ -138,9 +140,10 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
     weave_create-shaped payload: the mechanical facts in frontmatter, the body
     a skeleton the orchestrator fills.
 
-    ``skills`` is the stage-dispatch log, ``[{id, role, outcome,
+    ``skills`` is the stage-dispatch log, ``[{id, role, skill, outcome,
     fix_rounds_attributed}]``, each entry optionally carrying the dispatch
-    join keys in ``DISPATCH_KEYS``; a wrong-typed key raises ``ValueError``
+    join keys in ``DISPATCH_KEYS``; ``skill`` names the skill that ran the
+    stage. A wrong-typed key raises ``ValueError``
     with one field-path reason per arg. ``skill_centric`` adds the
     ``skill-invocation`` tag. ``primed``/``served`` mirror the claim-time
     prime verdict; ``primed=None`` omits both keys. ``trace`` is stored under one ``trace``

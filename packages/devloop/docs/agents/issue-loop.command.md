@@ -589,11 +589,13 @@ the `served` ids the prime emitted) when this issue's implementer received
 prime context, or `--no-primed` when nothing was served (`primed: false`);
 omitting both keeps the pre-serving shape. `primed`/`served` are facts about
 the run, never an experiment arm. `--skills-json` is a list of `{id, role,
-outcome, fix_rounds_attributed}` you write, one per stage dispatched (the
-implementer subagent, the judge — `kind: judge` gate — and any future stage);
-`fix_rounds_attributed` is how many fix rounds that stage caused (total:
-`--fix-rounds`). Omit it for `skills: []`; add `--skill-centric` when the
-record is primarily about a skill invocation.
+skill, outcome, fix_rounds_attributed}` you write, one per stage dispatched
+(the implementer subagent, the judge — `kind: judge` gate — and any future
+stage); `skill` names the skill that ran the stage, verbatim (the vendored
+`ponytail-review` for the simplify gate, `code-review` for a judge fork), empty
+when none ran; `fix_rounds_attributed` is how many fix rounds that stage caused
+(total: `--fix-rounds`). Omit it for `skills: []`; add `--skill-centric` when
+the record is primarily about a skill invocation.
 
 Each entry may also carry the **dispatch join keys** — the facts that later
 answer which harness and model ran the stage and how it went. The rail passes

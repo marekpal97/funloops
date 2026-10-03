@@ -727,18 +727,20 @@ def test_build_trajectory_defaults_to_empty_skills():
 
 
 def test_build_trajectory_skills_shape():
-    """skills[] normalizes each dispatched stage into {id, role, outcome,
+    """skills[] normalizes each dispatched stage into {id, role, skill, outcome,
     fix_rounds_attributed}, preserving dispatch order, dropping extra keys,
-    and defaulting a missing attribution count to 0. The skill-centric flag
-    adds the [skill-invocation] tag. Expected values are hand-written from
-    the issue's frontmatter schema, not recomputed by the code under test."""
+    and defaulting a missing skill name to "" and a missing attribution count
+    to 0. The skill-centric flag adds the [skill-invocation] tag. Expected
+    values are hand-written from the issue's frontmatter schema, not
+    recomputed by the code under test."""
     issue = {"number": 56, "title": "Generalize the trajectory note", "labels": []}
     skills_log = [
         {"id": "implementer", "role": "implementer", "outcome": "shipped",
-         "fix_rounds_attributed": 0, "worktree": "/tmp/wt"},  # extra key dropped
-        {"id": "acceptance-judge", "role": "acceptance", "outcome": "not-met",
-         "fix_rounds_attributed": 2},
-        {"id": "code-reviewer", "role": "reviewer", "outcome": "passed"},  # no count → 0
+         "fix_rounds_attributed": 0, "worktree": "/tmp/wt"},  # extra key dropped, no skill
+        {"id": "acceptance-judge", "role": "acceptance", "skill": "code-review",
+         "outcome": "not-met", "fix_rounds_attributed": 2},
+        {"id": "code-reviewer", "role": "reviewer", "skill": "ponytail-review",
+         "outcome": "passed"},  # no count → 0
     ]
     payload = mint.build_trajectory(
         issue, branch="loop/dag-54", commits=["a"], numstat="1\t0\tx.py\n",
@@ -746,14 +748,28 @@ def test_build_trajectory_skills_shape():
         fix_rounds=2, outcome="shipped", skills=skills_log, skill_centric=True,
     )
     assert payload["frontmatter"]["skills"] == [
-        {"id": "implementer", "role": "implementer", "outcome": "shipped",
-         "fix_rounds_attributed": 0},
-        {"id": "acceptance-judge", "role": "acceptance", "outcome": "not-met",
-         "fix_rounds_attributed": 2},
-        {"id": "code-reviewer", "role": "reviewer", "outcome": "passed",
-         "fix_rounds_attributed": 0},
+        {"id": "implementer", "role": "implementer", "skill": "",
+         "outcome": "shipped", "fix_rounds_attributed": 0},
+        {"id": "acceptance-judge", "role": "acceptance", "skill": "code-review",
+         "outcome": "not-met", "fix_rounds_attributed": 2},
+        {"id": "code-reviewer", "role": "reviewer", "skill": "ponytail-review",
+         "outcome": "passed", "fix_rounds_attributed": 0},
     ]
     assert payload["tags"] == ["loop-run", "skill-invocation"]
+
+
+def test_skill_row_names_the_skill_that_ran_the_stage():
+    """Every skills-json row carries the skill that ran the stage: the name
+    is passed through verbatim, and a dispatch that ran no skill defaults to
+    "". Expected values are hand-written from the issue's criterion."""
+    payload = _trajectory_with_skills([
+        {"id": "simplify", "role": "simplify", "skill": "ponytail-review"},
+        {"id": "implementer", "role": "implementer"},
+    ])
+    assert [(s["id"], s["skill"]) for s in payload["frontmatter"]["skills"]] == [
+        ("simplify", "ponytail-review"),
+        ("implementer", ""),
+    ]
 
 
 DISPATCH_KEYS = {
@@ -773,14 +789,14 @@ def _trajectory_with_skills(skills):
 
 def test_skill_record_carries_the_dispatch_join_keys_verbatim():
     """A stage record with all eight dispatch join keys lands in frontmatter
-    with every value unchanged; the four contracted fields stay beside them."""
+    with every value unchanged; the five contracted fields stay beside them."""
     payload = _trajectory_with_skills([
-        {"id": "implementer", "role": "implementer", "outcome": "shipped",
-         "fix_rounds_attributed": 1, **DISPATCH_KEYS},
+        {"id": "implementer", "role": "implementer", "skill": "code-review",
+         "outcome": "shipped", "fix_rounds_attributed": 1, **DISPATCH_KEYS},
     ])
     assert payload["frontmatter"]["skills"] == [
-        {"id": "implementer", "role": "implementer", "outcome": "shipped",
-         "fix_rounds_attributed": 1, **DISPATCH_KEYS},
+        {"id": "implementer", "role": "implementer", "skill": "code-review",
+         "outcome": "shipped", "fix_rounds_attributed": 1, **DISPATCH_KEYS},
     ]
 
 
@@ -3447,10 +3463,10 @@ def test_skills_scope_is_settled_as_stage_dispatch_with_an_unpark_trigger():
     assert "every Skill invocation" in para  # names what it is NOT
     # The projection agrees: it is documented as the stage-dispatch shape.
     assert "stage" in mint._normalize_skill.__doc__
-    # And it still projects exactly the four contracted fields — the parking
+    # And it still projects exactly the five contracted fields — the parking
     # decision changes the prose, never the shipped shape.
     assert set(mint._normalize_skill({"id": "x", "extra": 1}, "skills[0]", [])) == {
-        "id", "role", "outcome", "fix_rounds_attributed"}
+        "id", "role", "skill", "outcome", "fix_rounds_attributed"}
 
 
 def test_boundary_doc_cli_surface_list_matches_the_parser():
