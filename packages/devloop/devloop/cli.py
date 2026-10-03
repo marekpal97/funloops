@@ -156,7 +156,7 @@ DEFAULT_CONFIG: dict = {
         "sensitive_paths": [],
         # Watched paths → at most yellow (skim, don't gate). Empty by default.
         "watched_paths": [],
-        "red_min_diff_lines": 800,     # "big diff" → red
+        "red_diff_lines": 800,     # "big diff" → red
     },
     "gates": [],
 }
@@ -450,7 +450,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_triage.add_argument("--signals-json", required=True,
                           help="file with the PR's signal set: {fix_rounds, "
                                "diff_lines, files_touched, tests_touched, "
-                               "review_severity, baseline_green, acceptance}")
+                               "review_severity, baseline_green}")
 
     p_traj = sub.add_parser("trajectory", help="assemble a per-issue trajectory payload (memory feed)", parents=[common])
     p_traj.add_argument("number", type=int)

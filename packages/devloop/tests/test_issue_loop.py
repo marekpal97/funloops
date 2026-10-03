@@ -2243,7 +2243,7 @@ TRIAGE_CFG = {
         "sources.yaml", "*schema*",
     ],
     "watched_paths": ["docs/agents/"],
-    "red_min_diff_lines": 800,
+    "red_diff_lines": 800,
 }
 
 
@@ -2257,7 +2257,6 @@ def _signals(**kw):
         "tests_touched": True,
         "review_severity": "note",
         "baseline_green": True,
-        "acceptance": "met",
     }
     base.update(kw)
     return base
@@ -2330,9 +2329,11 @@ def test_classify_problem_review_red():
     assert r["lane"] == "red" and any("problem" in x for x in r["reasons"])
 
 
-def test_classify_uncertain_acceptance_red():
-    assert triage.classify_pr(_signals(acceptance="uncertain"), TRIAGE_CFG)["lane"] == "red"
-    assert triage.classify_pr(_signals(acceptance="not-met"), TRIAGE_CFG)["lane"] == "red"
+def test_acceptance_is_not_a_triage_signal():
+    """The judge's verdict already blocks; triage neither requires nor reads it."""
+    assert "acceptance" not in _signals()
+    assert triage.classify_pr(_signals(), TRIAGE_CFG)["lane"] == "yellow"
+    assert triage.classify_pr(_signals(acceptance="uncertain"), TRIAGE_CFG)["reasons"] == []
 
 
 def test_red_lists_every_triggered_rule():
@@ -2373,8 +2374,8 @@ def test_classify_no_test_coverage_yellow():
 
 def test_thresholds_read_from_config():
     sig = _signals(diff_lines=200)
-    lenient = {**TRIAGE_CFG, "red_min_diff_lines": 800}
-    strict = {**TRIAGE_CFG, "red_min_diff_lines": 100}
+    lenient = {**TRIAGE_CFG, "red_diff_lines": 800}
+    strict = {**TRIAGE_CFG, "red_diff_lines": 100}
     assert triage.classify_pr(sig, lenient)["lane"] == "yellow"
     assert triage.classify_pr(sig, strict)["lane"] == "red"
 
@@ -2388,7 +2389,7 @@ def test_load_config_triage_defaults(tmp_path):
     # No path is sensitive until a host says so: the packaged rail cannot know
     # another repo's layout, and an inherited guess classifies the wrong files.
     assert t["sensitive_paths"] == []
-    assert isinstance(t["red_min_diff_lines"], int)
+    assert isinstance(t["red_diff_lines"], int)
 
 
 def test_repo_loop_toml_has_triage_section():
@@ -2402,9 +2403,9 @@ def test_repo_loop_toml_has_triage_section():
 def test_triage_override_via_set(tmp_path):
     cfg = cli.apply_overrides(
         cli.load_config(tmp_path / "nope.toml"),
-        ["triage.red_min_diff_lines=200"],
+        ["triage.red_diff_lines=200"],
     )
-    assert cfg["triage"]["red_min_diff_lines"] == 200
+    assert cfg["triage"]["red_diff_lines"] == 200
 
 
 def test_triage_override_rejects_unknown_key(tmp_path):
@@ -2428,7 +2429,7 @@ def test_triage_argparse_contract():
 def test_triage_cli_red_via_default_config(tmp_path, capsys):
     sig = tmp_path / "sig.json"
     sig.write_text(json.dumps({
-        "fix_rounds": 0, "diff_lines": 10, "files_touched": ["hooks/hooks.json"],
+        "fix_rounds": 0, "diff_lines": 900, "files_touched": ["hooks/hooks.json"],
         "tests_touched": True, "review_severity": "note", "baseline_green": True,
     }), encoding="utf-8")
     rc = cli.main(["triage", "59", "--signals-json", str(sig)])
@@ -2444,7 +2445,6 @@ def test_triage_cli_clean_pr_is_review_light(tmp_path, capsys):
         "fix_rounds": 0, "diff_lines": 10,
         "files_touched": ["src/thinkweave/core/foo.py", "tests/test_foo.py"],
         "tests_touched": True, "review_severity": "note", "baseline_green": True,
-        "acceptance": "met",
     }), encoding="utf-8")
     assert cli.main(["triage", "--signals-json", str(sig)]) == 0
     assert json.loads(capsys.readouterr().out)["label"] == "review-light"
@@ -2471,12 +2471,6 @@ def test_unrecognized_review_severity_is_red():
     assert any("high" in x for x in r["reasons"])
 
 
-def test_unrecognized_acceptance_is_red():
-    r = triage.classify_pr(_signals(acceptance="partial"), TRIAGE_CFG)
-    assert r["lane"] == "red"
-    assert any("partial" in x for x in r["reasons"])
-
-
 def test_missing_review_severity_is_red():
     r = triage.classify_pr(_signals_no("review_severity"), TRIAGE_CFG)
     assert r["lane"] == "red"
@@ -2497,24 +2491,17 @@ def test_non_bool_baseline_green_is_red():
     assert any("baseline_green" in x for x in r["reasons"])
 
 
-def test_missing_acceptance_is_red():
-    r = triage.classify_pr(_signals_no("acceptance"), TRIAGE_CFG)
-    assert r["lane"] == "red"
-    assert any("acceptance" in x for x in r["reasons"])
-
-
-def test_empty_signals_is_red_on_all_three_safety_keys():
+def test_empty_signals_is_red_on_both_safety_keys():
     r = triage.classify_pr({}, TRIAGE_CFG)
     assert r["lane"] == "red"
     joined = " | ".join(r["reasons"])
-    assert "baseline_green" in joined and "acceptance" in joined and "review_severity" in joined
+    assert "baseline_green" in joined and "review_severity" in joined
 
 
 def test_benign_absence_does_not_trip_red():
     # diff_lines / fix_rounds / files_touched absent is NOT a safety hole:
-    # with the three safety keys present and clean, the PR is a clean skim.
-    sig = {"tests_touched": True, "review_severity": "note",
-           "baseline_green": True, "acceptance": "met"}
+    # with the two safety keys present and clean, the PR is a clean skim.
+    sig = {"tests_touched": True, "review_severity": "note", "baseline_green": True}
     r = triage.classify_pr(sig, TRIAGE_CFG)
     assert r["lane"] == "yellow" and r["reasons"] == []
 

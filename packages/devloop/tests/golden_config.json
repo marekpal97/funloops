@@ -26,7 +26,7 @@
       "*schema*"
     ],
     "watched_paths": [],
-    "red_min_diff_lines": 800
+    "red_diff_lines": 800
   },
   "dispatch": {
     "implementer": {

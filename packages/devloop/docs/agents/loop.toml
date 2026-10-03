@@ -78,7 +78,7 @@ sensitive_paths = [
 # is the repo-root overlay (docs/agents/constitution.md), which the glob's
 # leading `*/` cannot reach.
 watched_paths = ["*/docs/agents/*", "docs/agents/"]
-red_min_diff_lines = 800       # "big diff" → red (a human-lane signal, never a block)
+red_diff_lines = 800           # "big diff" → red (a human-lane signal, never a block)
 
 # ── Dispatch ──────────────────────────────────────────────────────────────
 # Which agent runs each role. A role IS its entry: implementer, judge and
