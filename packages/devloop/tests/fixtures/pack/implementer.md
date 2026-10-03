@@ -96,8 +96,9 @@ here is stated once.
   returning, so the diff you hand back is the shortest one you understand.
   `verify:` lines are the issue author's — never add, edit, or satisfy one by
   changing what it checks.
-- Before returning, run the tests gate command and every `verify:` line from
-  the worktree root. Paste each result in your return.
+- Before returning, run `devloop check --issue <N>` (N is this pack's issue)
+  from the worktree root: one call runs the command gates and every `verify:`
+  line. Paste its result in your return.
 - Use the code you changed the way the issue describes. If it does not do
   what the issue says, fix it or report the criterion as not met.
 - Run every `demo:` criterion on your final commit, by script or by driving

@@ -3108,6 +3108,13 @@ def test_standing_orders_require_running_every_demo_on_the_final_commit():
     assert "missing capability" in orders
 
 
+def test_standing_orders_run_the_one_check_call_before_returning():
+    """One rail call replaces the separate tests and verify-line runs."""
+    orders = " ".join(pack.STANDING_ORDERS.split())
+    assert "Before returning, run `devloop check --issue <N>`" in orders
+    assert "every `verify:` line from the worktree root" not in orders
+
+
 def test_command_doc_run_directory_lives_under_the_git_common_dir():
     sec = " ".join(_command_doc_subsection("### 1b.").split())
     assert "mktemp" not in sec
