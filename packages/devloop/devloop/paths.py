@@ -1,8 +1,16 @@
-"""The three-form path matcher shared by triage and the diff gate."""
+"""Path primitives for the loop's prose readings: the three-form matcher
+shared by triage and the diff gate, and the backticked tokens an issue body
+names, shared by the pack's map and the board doctor's path check."""
 
 from __future__ import annotations
 
 import fnmatch
+import re
+
+
+def backticked(body: str) -> list[str]:
+    """Every backticked token in ``body``, first mention first, deduped."""
+    return list(dict.fromkeys(re.findall(r"`([^`\n]+)`", body)))
 
 
 def match(path: str, pattern: str) -> bool:

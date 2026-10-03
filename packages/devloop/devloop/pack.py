@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import ast
 import json
-import re
 import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Literal, NamedTuple
+
+from devloop import paths
 
 Posture = Literal["writer", "reader"]
 
@@ -303,9 +304,8 @@ def named_files(body: str, root: Path) -> list[str]:
     """Every backticked token in ``body`` that resolves to a file inside
     ``root``, first mention first, deduped. Symlinks are followed, so a link
     out of the repo does not count."""
-    found = [tok for tok in re.findall(r"`([^`\n]+)`", body)
-             if (root / tok).resolve().is_relative_to(root) and (root / tok).is_file()]
-    return list(dict.fromkeys(found))
+    return [tok for tok in paths.backticked(body)
+            if (root / tok).resolve().is_relative_to(root) and (root / tok).is_file()]
 
 
 def body(path: Path) -> str:

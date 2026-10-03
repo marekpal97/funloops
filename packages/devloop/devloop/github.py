@@ -85,10 +85,19 @@ def _refs(endpoint: str) -> list[dict]:
     return [_ref(json.loads(l)) for l in out.splitlines() if l.strip()]
 
 
+def _files(repo: str) -> list[str]:
+    """The repo's tracked paths at HEAD. A git tree lists blobs only, so the
+    board doctor can resolve an issue body's backticked tokens without a clone."""
+    out = run(["api", f"repos/{repo}/git/trees/HEAD?recursive=1",
+               "--jq", '[.tree[] | select(.type == "blob") | .path]'])
+    return json.loads(out or "[]")
+
+
 def fetch_board(repo: str) -> dict:
-    """One repo's board snapshot: the label set plus every issue with its
-    blockers, parent and children as ``{repo, number, state}`` refs. Only
-    open issues get the per-issue calls; cross-repo refs survive."""
+    """One repo's board snapshot: the label set, the repo's tracked file
+    paths, plus every issue with its blockers, parent and children as
+    ``{repo, number, state}`` refs. Only open issues get the per-issue calls;
+    cross-repo refs survive."""
     out = run(["api", "--paginate", "--jq", ".[]",
                f"repos/{repo}/issues?state=all&per_page=100"])
     issues = []
@@ -123,7 +132,8 @@ def fetch_board(repo: str) -> dict:
                 issue["parent"] = None  # 404: no parent
         issues.append(issue)
     labels = run(["api", "--paginate", "--jq", ".[].name", f"repos/{repo}/labels?per_page=100"])
-    return {"repo": repo, "labels": [l for l in labels.splitlines() if l], "issues": issues}
+    return {"repo": repo, "labels": [l for l in labels.splitlines() if l],
+            "files": _files(repo), "issues": issues}
 
 
 def apply_op(op: dict) -> None:

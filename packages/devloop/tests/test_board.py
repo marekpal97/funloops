@@ -12,10 +12,12 @@ CFG = {"labels": {"runnable": "ready-for-agent", "claimed": "agent-claimed",
 REPO = "o/r"
 NOW = datetime(2026, 8, 22, tzinfo=UTC)
 FULL_LABELS = [*board.REQUIRED_LABELS, "track:A"]
+# The tracked files a board snapshot carries, the path check's universe.
+FILES = ("src/app.py",)
 
 
 def _issue(number, title="Issue", labels=("ready-for-agent", "track:A"), state="OPEN",
-           body="", blockers=(), children=(), parent=None, sub=None,
+           body="`src/app.py`", blockers=(), children=(), parent=None, sub=None,
            updated="2026-08-21T00:00:00Z", assignees=()):
     return {
         "number": number, "title": title, "state": state,
@@ -31,8 +33,9 @@ def _ref(number, state="OPEN", repo=REPO):
     return {"repo": repo, "number": number, "state": state}
 
 
-def _board(*issues, labels=FULL_LABELS):
-    return {"repo": REPO, "labels": list(labels), "issues": list(issues)}
+def _board(*issues, labels=FULL_LABELS, files=FILES):
+    return {"repo": REPO, "labels": list(labels), "files": list(files),
+            "issues": list(issues)}
 
 
 def _checks(report, check):
@@ -170,6 +173,33 @@ def test_assigned_or_blocked_runnable_is_not_idle():
     assigned = _issue(1, updated="2026-07-01T00:00:00Z", assignees=[{"login": "x"}])
     blocked = _issue(2, updated="2026-07-01T00:00:00Z", blockers=[_ref(1)])
     assert _checks(board.doctor([_board(assigned, blocked)], CFG, now=NOW), "runnable-idle") == []
+
+
+# ---------------------------------------------------------------------------
+# paths — the pack keys its tier-2 slice on these
+
+
+def test_path_missing_warns_only_for_a_runnable_non_epic_issue():
+    bare = _issue(1, body="the pack's `named_files` falls back to the title")
+    epic = _issue(2, labels=("epic", "track:A"), body="")
+    plain = _issue(3, labels=("needs-triage",), body="")
+    named = _issue(4, body="touches `src/app.py`")
+    report = board.doctor([_board(bare, epic, plain, named)], CFG, now=NOW)
+    f = _checks(report, "path-missing")
+    assert [x["number"] for x in f] == [1]
+    assert f[0]["severity"] == "warn" and "op" not in f[0]
+
+
+def test_path_missing_silent_when_a_token_names_a_repo_file():
+    i = _issue(1, body="touches `src/` and `src/gone.py` but also `src/app.py`")
+    assert [f["number"] for f in _checks(
+        board.doctor([_board(i)], CFG, now=NOW), "path-missing")] == []
+
+
+def test_path_missing_warns_when_no_backticked_token_names_a_file():
+    i = _issue(1, body="touches `src/` and `src/gone.py`")
+    assert [f["number"] for f in _checks(
+        board.doctor([_board(i)], CFG, now=NOW), "path-missing")] == [1]
 
 
 # ---------------------------------------------------------------------------
