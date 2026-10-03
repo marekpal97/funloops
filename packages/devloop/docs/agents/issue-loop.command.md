@@ -370,15 +370,20 @@ Tell it, verbatim:
 > The contract is rules 1 and 4 of the Rules section and every Interfaces
 > block in the issues above. Judge the module structure of the touched
 > modules against that contract and nothing else. For rule 1, name each
-> domain concept the stack touches (a record, a lifecycle, a status rule)
-> and every module that holds its logic. One concept's logic spread over
-> several modules breaks rule 1, and so does a new module with one consumer;
-> adding no module does not by itself keep it. For rule 4, read each touched
-> module from its top. It breaks when the top does not show the module's
-> flow in a few short names, or when one module holds several jobs side by
-> side. Return `"met"` when each concept has one owning module, each module
-> reads top-down, and each owns what its Interfaces block declares.
-> Otherwise return `"not-met"` with a restructure case. `flow` states the current flow in at most five
+> domain concept the stack touches (a lifecycle, a status rule) and the
+> modules a reader must visit to follow it. Rule 1 breaks when one concept's
+> behaviour is split or re-derived across several modules, or when a new
+> module has one consumer; adding no module does not by itself keep it. A
+> record's own constructors and checks beside the record, or a helper moved
+> to the one module its consumers share, deepen a module and do not break it.
+> For rule 4, read each touched module from its top. It breaks when the top
+> does not show the module's flow in a few short names, or when one module
+> holds several jobs as loose functions side by side. Fail the contract only
+> for a break a reader meets on the main flow. A smaller seam you would tidy
+> does not fail it: name it in `flow` under a `"met"` verdict. Return `"met"`
+> when each flow has one owning module that reads top-down and owns what its
+> Interfaces block declares. Otherwise return `"not-met"` with a restructure
+> case. `flow` states the current flow in at most five
 > lines and names each broken rule by number. `owns` says, per module, what
 > it should own. `options` gives one to three shape options, one sentence
 > each. Do not edit code. Return exactly this object:
@@ -390,7 +395,8 @@ Tell it, verbatim:
  "options": ["<shape option>"]}
 ```
 
-A `met` return may leave `flow` empty and `owns` and `options` as empty lists.
+A `met` return may leave `flow` empty and `owns` and `options` as empty lists;
+its `flow` may name the smaller seams.
 Validate it with `uv run devloop validate --gate judge --posture shape
 --return-json <return-file>`: exit `0` met, `1` a restructure case, `2`
 schema-rejected (re-ask once, as above). **A restructure case stops the run at
