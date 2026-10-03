@@ -181,11 +181,15 @@ issue arrives once. A gate role's dispatch adds exactly what §1c names for
 it (the judge: the diff and the test and verify-rail output; simplify: the
 vendored skill text and the diff) and the implementer's worktree path, which
 it works inside and never edits. The return file is the one return channel for every role
-on both transports: one path per dispatch under a directory you make once per
-run (`mktemp -d`), never inside the worktree, so a return can never land in
-the diff. The agent writes its whole return there and you read the file, never
-its screen (an inline return gets truncated; a herdr screen loses
-alternate-screen output). A fix round names a fresh path. The role's
+on both transports: one path per dispatch under the run directory, made once
+per run at `$(git rev-parse --git-common-dir)/devloop/runs/<run-id>/`. It is
+never inside the worktree, so a return can never land in the diff, and it
+outlives worktree teardown and a reboot. The agent writes its whole return
+there and you read the file, never its screen (an inline return gets
+truncated; a herdr screen loses alternate-screen output). An implementer
+whose issue carries `demo:` criteria also writes the evidence directory
+`<return file>.demo/` beside it, as its standing orders say. A fix round
+names a fresh path. The role's
 `dispatch.<role>.transport` picks the recipe:
 
 - **`agent-tool`.** Dispatch a **fresh implementer agent** with worktree
@@ -287,16 +291,28 @@ exists, so §0's `config` without a count is its table.
 judge subagent** (a fresh agent, no implementation context) as
 `dispatch.judge` says, with the judge pack (`uv run --directory <worktree>
 devloop pack <N> --role judge`, §1b), `git diff origin/main...HEAD`, the test
-and verify-rail output, and its return file path (§1b: it writes the object
-below to that file, and that file is what you hand the rail). Tell it,
-verbatim:
+and verify-rail output, the implementer's evidence directory (`<return
+file>.demo/`, §1b) when the issue carries a `demo:` criterion, and its return
+file path (§1b: it writes the object below to that file, and that file is
+what you hand the rail). Tell it, verbatim:
 
 > The contract is the issue's acceptance criteria plus the Interfaces block's
 > intent. Judge the diff against that contract and nothing else. Return one
 > verdict per criterion, `"met"` or `"not-met"`, each with one line of
 > evidence. A criterion is not met when the code does not do what it says.
+> A `verify:` criterion takes its verdict from the verify-rail output in this
+> dispatch: cite that output, never re-run the command.
 > Where a criterion is prose and no verify line ran it, run it yourself and
-> cite the output.
+> cite the output. Evidence for a prose criterion is something you ran
+> against the code, never only a test the diff adds.
+> A `demo:` criterion is scored from the evidence directory only; never re-run
+> the demo. Its `demo.md` opens with `sha: <commit>`. The steps it records must
+> match the demo text, and that SHA must be the implementation tip (`git
+> rev-parse HEAD` in the worktree). Rest the verdict on the artifacts you
+> inspect yourself (output, screenshots, DOM dumps), never on the
+> implementer's own assessment, and cite the artifact file. No evidence, or
+> evidence on another SHA, is `not-met`. When the artifacts cannot settle the
+> demo's observable, return `"uncertain"` for it.
 > Code the diff changes that no longer works as the issue intends is `not-met`
 > too, even when no criterion names the case: return it as one more criterion
 > under the reserved id `intent`, and only when you have the failure in hand.
@@ -323,7 +339,10 @@ verbatim:
 
 `evidence` and `finding` are never blank; `findings` may be empty, not absent.
 The rail accepts `intent` as it accepts any criterion id.
-**Only a criterion `not-met` blocks.** Findings
+**Only a criterion `not-met` or `uncertain` blocks.** An `uncertain` runs no
+fix round: route the issue to human at once (the block below), with the
+judge's evidence line and the evidence directory's `demo.md` in the comment.
+Findings
 never do, whatever their severity: they go to the PR's findings comment and
 the triage lane (§1d) — never a fix round, never an issue.
 
@@ -334,10 +353,11 @@ acting on it, on either transport — `uv run devloop validate --gate <id>
 --return-json <return-file>`. The rail emits the same `GateResult` the
 deterministic gates emit, plus `reasons`, and exits `0` — schema-valid and
 **passed** (judge: no criterion
-`not-met` per the gate's `threshold`, `all` or `majority`); `1` — schema-valid
-and **failed**: a real verdict, run a fix round per the failure flow below; `2`
+`not-met` per the gate's `threshold`, `all` or `majority`, and none
+`uncertain`); `1` — schema-valid and **failed**: a real verdict, run a fix
+round per the failure flow below (an `uncertain` routes to human instead); `2`
 — **schema-rejected**: `reasons` names each offending field path and value
-(`criteria[1].verdict: 'probably' is not one of met | not-met`). **Re-ask**
+(`criteria[1].verdict: 'probably' is not one of met | not-met | uncertain`). **Re-ask**
 the same agent with those reasons and a fresh return path (SendMessage on the
 Agent tool, `herdr agent prompt <name>` on herdr) — never hand-fix its return,
 never read a verdict out of a rejected one, never pass it on to `--gates-json`.
@@ -399,8 +419,8 @@ sentence under the table says what the fix rounds attempted.
 Then continue with the next frontier issue — one stuck issue must not stall the
 loop. **Three exits, no others:** **ship** (every criterion met, no findings);
 **ship with findings** (criteria met, findings in the PR's findings comment); **route
-to human** (a criterion stays `not-met` past `max_fix_rounds`, or a judge return
-stays schema-rejected after a re-ask).
+to human** (a criterion stays `not-met` past `max_fix_rounds`, a criterion is
+`uncertain`, or a judge return stays schema-rejected after a re-ask).
 
 ### 1d. Ship
 
@@ -424,7 +444,8 @@ title.
 
 **The PR body carries each fact once, and nothing else:** `Closes #<N>`; one
 sentence that says what the code now does (not the issue title); the gate
-table; the simplify line; the findings line; the attribution block.
+table; the simplify line; the demo line; the findings line; the attribution
+block.
 
 - The gate table is one table, columns gate | verdict | summary, one row per
   gate. A summary cell carries only what varies: `133 lines`, `274 passed`,
@@ -434,6 +455,9 @@ table; the simplify line; the findings line; the attribution block.
 - The simplify line is one line under the table: `simplify: -<N> lines`,
   `simplify: lean`, `simplify: skipped (<n> lines < min_diff_lines)`, or the
   gate's `revert_note`.
+- The demo line is one line under the simplify line: `demo: <short sha>
+  (pre-simplify)`, the SHA the implementer's `demo.md` names. An issue with
+  no `demo:` criterion has no demo line.
 - The findings line is `Findings: see comment` or `Findings: none`.
 - No summary bullets, no run parameters, no line-count deltas of documents,
   no notes addressed to the orchestrator.
@@ -444,10 +468,16 @@ one bullet per finding, the judge's sentence verbatim. A finding is one
 sentence: the observation first, then the rule number or the exercised path in
 a trailing clause. No hedge and no self-retraction: a finding that would end
 "so no action is needed" or "cosmetic only" is dropped, not softened. A
-finding already filed as an issue is the issue number alone. A PR with no
-findings gets no comment; its body line reads `Findings: none`.
+finding already filed as an issue is the issue number alone. Each deviation
+the implementer's return names is one bullet under `### deviation`, one
+sentence, ahead of the judge's findings. A PR with no findings and no
+deviations gets no comment; its body line reads `Findings: none`. A PR whose
+implementer named a deviation is never `Findings: none`.
 
 ```markdown
+### deviation
+- <the deviation and its reason, one sentence>
+
 ### problem
 - <the observation, then the rule number or the exercised path>
 
@@ -644,8 +674,12 @@ verdict flips, the simplify gate's cut/keep rationale, the TDD red-confirmation
  "simplify": {"outcome": "applied", "lines_delta": -12,
               "cuts": [{"what": "<prose>", "why": "<prose>"}], "kept": [{…}]},
  "stack_simplify": {"<same envelope as simplify>": "…"},
- "edge_cases": ["<prose>"], "tdd": {"red_confirmed": true}}
+ "edge_cases": ["<prose>"], "deviations": ["<prose>"],
+ "tdd": {"red_confirmed": true}}
 ```
+
+`deviations` holds the same sentences as the findings comment's
+`### deviation` bullets (§1d), one string each.
 
 The rail only accepts and shapes it (unknown keys dropped; a non-dict trace is
 rejected). `severity` is `problem` or `note`, the judge envelope's own values.

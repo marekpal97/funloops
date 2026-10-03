@@ -168,7 +168,7 @@ def run_diff_gate(gate: dict, cwd: Path, base_ref: str) -> dict:
 # coerced, because a coerced value would put the judge's mistake in the
 # trajectory as fact.
 
-VERDICTS = ("met", "not-met")
+VERDICTS = ("met", "not-met", "uncertain")
 SEVERITIES = ("problem", "note")
 SIMPLIFY_OUTCOMES = ("applied", "reverted", "lean", "skipped-small")
 
@@ -222,11 +222,12 @@ def _enum(entry: dict, where: str, key: str, allowed: tuple[str, ...],
 
 
 def validate_judge(gate: dict, raw: dict) -> dict:
-    """Validate a judge return: ``{criteria: [{id, verdict: met|not-met,
-    evidence}], findings: [{severity: problem|note, finding}]}``.
+    """Validate a judge return: ``{criteria: [{id, verdict: met|not-met|
+    uncertain, evidence}], findings: [{severity: problem|note, finding}]}``.
 
     The gate passes per ``threshold``: ``majority`` needs more than half met,
-    anything else reads as ``all``. ``findings`` never decides the verdict;
+    anything else reads as ``all``; any ``uncertain`` fails it whatever the
+    threshold. ``findings`` never decides the verdict;
     it may be empty but not missing, so silence never reads as a clean review.
     """
     reasons: list[str] = []
@@ -243,11 +244,13 @@ def validate_judge(gate: dict, raw: dict) -> dict:
         _enum(entry, where, "severity", SEVERITIES, reasons)
     threshold = gate.get("threshold", "all")
     met = sum(v == "met" for v in verdicts)
-    passed = (met * 2 > len(verdicts) if threshold == "majority"
-              else met == len(verdicts))
+    uncertain = verdicts.count("uncertain")
+    passed = not uncertain and (met * 2 > len(verdicts) if threshold == "majority"
+                                else met == len(verdicts))
     return _verdict(gate, reasons, passed=passed,
-                    summary=(f"{met}/{len(verdicts)} criteria met (threshold: "
-                             f"{threshold}); {len(findings)} findings"))
+                    summary=(f"{met}/{len(verdicts)} criteria met"
+                             + (f", {uncertain} uncertain" if uncertain else "")
+                             + f" (threshold: {threshold}); {len(findings)} findings"))
 
 
 def validate_simplify(gate: dict, raw: dict) -> dict:

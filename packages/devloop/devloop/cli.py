@@ -478,7 +478,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_traj.add_argument("--trace-json", default=None,
                         help="file with the semantic execution trace: a JSON "
                              "object {rounds[], criteria[], simplify, stack_simplify, "
-                             "edge_cases[], tdd} "
+                             "edge_cases[], deviations[], tdd} "
                              "the orchestrator condenses from the gate agents' own reports. "
                              "Omit to leave the trace key out.")
     p_traj.add_argument("--fix-rounds", type=int, default=0)

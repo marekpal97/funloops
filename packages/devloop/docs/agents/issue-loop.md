@@ -140,6 +140,25 @@ Design rules baked in:
   scores exactly those criteria, not a generic "looks good". Nothing outside
   the contract can fail a PR; what the judge sees beyond it is a finding for
   the PR's findings comment and the triage lane.
+- **Demo criteria put the live probe in the contract.** A `demo:` criterion
+  is a prose scenario through the real entry point, naming its observable and
+  the artifact that shows it. The implementer runs it on its final commit and
+  records the steps, the SHA and the artifacts in `<return file>.demo/`. The
+  judge scores it from that evidence alone and never re-runs it: no
+  evidence, or evidence on another SHA, is `not-met`; evidence that cannot
+  settle the observable is `uncertain`, which routes to a human with no fix
+  round. The verify rail ignores `demo:` lines. The loop never provisions the
+  credentials or harnesses a demo needs; a demo the environment cannot run
+  is not met.
+- **Evidence the judge did not re-make.** A `verify:` criterion's verdict is
+  the rail output the judge is handed, cited, never re-run. A prose
+  criterion's evidence is something the judge ran against the code, never
+  only a test the diff adds.
+- **Evidence outlives the worktree.** Every dispatch, return file and
+  evidence directory of a run lives under
+  `$(git rev-parse --git-common-dir)/devloop/runs/<run-id>/`, outside every
+  worktree, so it survives teardown and a reboot. The implementer's declared
+  deviations reach the PR findings comment and the trajectory trace.
 - **Fresh context for judgment.** Reviewing in the implementer's session
   happens in the dumb zone; the judge sees only the issue, the diff, and the
   evidence.

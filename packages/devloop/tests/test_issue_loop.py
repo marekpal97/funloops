@@ -3042,7 +3042,7 @@ def test_findings_are_one_pr_comment_after_pr_open():
     assert "No hedge and no self-retraction" in ship
     assert "is dropped, not softened" in ship
     assert "already filed as an issue is the issue number alone" in ship
-    assert "A PR with no findings gets no comment" in ship
+    assert "A PR with no findings and no deviations gets no comment" in ship
     stacked = " ".join(_command_doc_subsection("### 1e.").split())
     assert "stack-tip finding that restates a slice finding is dropped" in stacked
 
@@ -3536,3 +3536,75 @@ def test_boundary_doc_cli_surface_list_matches_the_parser():
     sub = next(a for a in cli.build_arg_parser()._actions
                if isinstance(a, _argparse._SubParsersAction))
     assert documented == set(sub.choices)
+
+
+# ---------------------------------------------------------------------------
+# Demo criteria: the implementer runs the issue's demo, the judge scores it
+# from recorded evidence; deviations reach the findings comment and the trace.
+
+
+def test_build_trajectory_trace_carries_deviations_beside_edge_cases():
+    """The trace keeps a `deviations` list of strings beside `edge_cases`;
+    a non-string entry is dropped like an edge case's."""
+    payload = mint.build_trajectory(
+        {"number": 77, "title": "demo criteria", "labels": []},
+        branch="loop/issue-77", commits=[], numstat="", gates=[],
+        fix_rounds=0, outcome="shipped",
+        trace={"edge_cases": ["e"], "deviations": ["d", 3]},
+    )
+    trace = payload["frontmatter"]["trace"]
+    assert trace["edge_cases"] == ["e"]
+    assert trace["deviations"] == ["d"]
+
+
+def test_parse_verify_lines_ignores_demo_lines():
+    """A `demo:` criterion is the implementer's to run; the verify rail never
+    executes it."""
+    body = ("- [ ] demo: run `uv run devloop config`; stdout names the judge gate\n"
+            "- [ ] verify: `uv run pytest packages/devloop -q`\n")
+    assert gates.parse_verify_lines(body) == [("uv run pytest packages/devloop -q", "")]
+
+
+def test_standing_orders_require_running_every_demo_on_the_final_commit():
+    orders = " ".join(pack.STANDING_ORDERS.split())
+    assert "`demo:`" in orders
+    assert "final commit" in orders
+    assert "`<return file>.demo/demo.md`" in orders
+    assert "`sha: <full commit sha>`" in orders
+    assert "missing capability" in orders
+
+
+def test_command_doc_run_directory_lives_under_the_git_common_dir():
+    sec = " ".join(_command_doc_subsection("### 1b.").split())
+    assert "mktemp" not in sec
+    assert "$(git rev-parse --git-common-dir)/devloop/runs/<run-id>/" in sec
+    assert "<return file>.demo/" in sec
+
+
+def test_command_doc_judge_prompt_scores_demo_and_verify_from_evidence():
+    sec = " ".join(_command_doc_subsection("### 1c.").split())
+    assert "evidence directory" in sec
+    assert "never re-run" in sec
+    assert "never only a test the diff adds" in sec
+    assert '"uncertain"' in sec
+    assert "another SHA" in sec
+
+
+def test_command_doc_findings_comment_carries_deviations():
+    sec = " ".join(_command_doc_subsection("### 1d.").split())
+    assert sec.index("### deviation") < sec.index("### problem") < sec.index("### note")
+    assert "demo: <short sha> (pre-simplify)" in sec
+    assert "deviations" in _command_doc_subsection("## 3.")
+
+
+def test_validate_judge_accepts_uncertain_as_a_verdict_that_does_not_pass():
+    """An `uncertain` demo verdict is schema-valid (rc 1, never a re-ask) and
+    the summary names it, so the orchestrator routes to human, not a fix."""
+    result = gates.validate(_gate("judge"), {"criteria": [
+        {"id": "AC1", "verdict": "met", "evidence": "e"},
+        {"id": "AC2", "verdict": "uncertain",
+         "evidence": "screenshot.png shows the page but not the toast"},
+    ], "findings": []})
+    assert result["reasons"] == []
+    assert result["passed"] is False
+    assert "1 uncertain" in result["summary"]
