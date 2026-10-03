@@ -574,15 +574,21 @@ evidence. If nothing shipped, say what unblocks the DAG (usually: merge loop PRs
 ## 3. Feed the vault — write one trajectory note per processed issue
 
 **Optional host extension.** Runs unattended where a vault exists — do not gate
-on user approval. For each processed issue, assemble the deterministic half —
+on user approval. §1d removes the implementer worktree the moment the PR is
+open, so record from the main checkout and name the shipped branch: the branch
+ref outlives its worktree, and `--branch` reads its commits and files there.
+For each processed issue, assemble the deterministic half —
 
 ```bash
-uv run --directory <worktree> devloop trajectory <N> \
+uv run --directory <repo-root> devloop trajectory <N> --branch <branch> \
   --gates-json <results-file> --skills-json <dispatch-log> [--skill-centric] \
   [--primed | --no-primed] [--served-json <served-ids-file>] \
   [--trace-json <trace-file>] \
   --fix-rounds <R> --outcome <o> --pr-url <url> --run-id <run-id>
 ```
+
+`<branch>` is the branch §1d shipped: `<branch_prefix><N>`, or `loop/dag-<N>`
+in stacked mode.
 
 Mirror the §1b prime verdict: `--primed` with `--served-json` (a JSON list of
 the `served` ids the prime emitted) when this issue's implementer received
