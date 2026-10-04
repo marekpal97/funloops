@@ -146,14 +146,22 @@ def test_frontier_is_number_ordered_and_body_metadata_is_not_read():
     assert set(result["frontier"][0]) == {"number", "title", "blockers", "component"}
     limited = dag.compute_frontier(issues, CFG, limit=2)
     assert [e["number"] for e in limited["frontier"]] == [5, 6]
+    assert limited["deferred"] == [7]
 
 
-def test_plan_reports_the_whole_frontier_not_the_run_cap(monkeypatch, capsys):
+def test_plan_cuts_the_frontier_to_the_run_cap_and_mints_a_run_id(monkeypatch, capsys):
+    """The frontier is this run's: at most ``max_issues_per_run``, in number
+    order; the rest are named under ``deferred``, never hidden. ``--limit``
+    overrides the cap, and every plan carries a ``loop-<date>-<hex>`` run id."""
     monkeypatch.setattr(github, "fetch_issues", lambda: [_issue(n) for n in range(1, 6)])
     assert cli.main(["plan", "--set", "max_issues_per_run=3"]) == 0
-    assert [e["number"] for e in json.loads(capsys.readouterr().out)["frontier"]] == [1, 2, 3, 4, 5]
+    out = json.loads(capsys.readouterr().out)
+    assert [e["number"] for e in out["frontier"]] == [1, 2, 3]
+    assert out["deferred"] == [4, 5]
+    assert re.fullmatch(r"loop-\d{8}-[0-9a-f]{4}", out["run_id"])
     assert cli.main(["plan", "--limit", "2"]) == 0
-    assert [e["number"] for e in json.loads(capsys.readouterr().out)["frontier"]] == [1, 2]
+    out = json.loads(capsys.readouterr().out)
+    assert [e["number"] for e in out["frontier"]] == [1, 2] and out["deferred"] == [3, 4, 5]
 
 
 def test_frontier_native_blocker_missing_from_snapshot_blocks_and_warns():
@@ -285,6 +293,26 @@ def test_check_issue_with_no_gates_and_no_lines_exits_zero(tmp_path, monkeypatch
     rc = cli.main(["check", "--issue", "25", "--cwd", str(tmp_path)])
     assert rc == 0
     assert json.loads(capsys.readouterr().out) == {"issue": 25, "results": [], "summary": "0/0 passed"}
+
+
+@pytest.mark.parametrize("cmd, mode, baseline", [
+    ("print(1)", "auto", "green"),
+    ("raise SystemExit(1)", "auto", "red"),
+    ("raise SystemExit(1)", "always", "green"),
+    ("print(1)", "never", "red"),
+])
+def test_check_baseline_runs_the_tests_gate_under_tdd_mode(tmp_path, monkeypatch, capsys,
+                                                          cmd, mode, baseline):
+    """The baseline line is the tests gate's colour under ``auto``; ``always``
+    writes green and ``never`` red, whatever the gate said. No issue is read."""
+    _host_config(tmp_path, monkeypatch,
+                 f'[tdd]\nmode = "{mode}"\n[[gates]]\nid = "diff-guard"\nkind = "diff"\n'
+                 f'[[gates]]\nid = "tests"\nkind = "command"\ncmd = \'{PY} "{cmd}"\'\n')
+    monkeypatch.setattr(github, "run", lambda *a, **k: pytest.fail("baseline reads no issue"))
+    assert cli.main(["check", "--baseline", "--cwd", str(tmp_path)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["baseline"] == baseline
+    assert [r["id"] for r in out["results"]] == ["tests"]
 
 
 def test_verify_rail_gh_failure_is_the_error_rung(tmp_path, monkeypatch, capsys):
@@ -2302,37 +2330,89 @@ def test_triage_override_rejects_unknown_key(tmp_path):
 # --- CLI contract -----------------------------------------------------------
 
 
+def _shipped(tmp_path, files):
+    """A git repo whose ``base...HEAD`` touches ``files``, as the triage cwd."""
+    root = tmp_path / "shipped"
+    root.mkdir()
+    def git(*args):
+        subprocess.run(["git", "-c", "user.name=fx", "-c", "user.email=fx@example.com",
+                        "-c", "commit.gpgsign=false", *args],
+                       cwd=root, check=True, capture_output=True)
+    git("init", "-q")
+    git("commit", "-q", "--allow-empty", "-m", "base")
+    git("tag", "base")
+    for rel in files:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("x\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-qm", "slice")
+    return root
+
+
+def _triage(tmp_path, files, *extra, changed=20, findings=(), baseline="green", rounds=0):
+    """Run ``devloop triage 59`` over a shipped slice: the gate results with
+    a diff gate counting ``changed`` lines, a judge return carrying
+    ``findings``, the baseline line and the fix rounds."""
+    root = _shipped(tmp_path, files)
+    gates_file, judge_file = tmp_path / "gates.json", tmp_path / "judge.json"
+    gates_file.write_text(json.dumps([
+        {"id": "diff-guard", "kind": "diff", "passed": True, "summary": "",
+         "detail": "", "changed_lines": changed},
+        {"id": "tests", "kind": "command", "passed": True, "summary": "", "detail": ""}]),
+        encoding="utf-8")
+    judge_file.write_text(json.dumps({
+        "criteria": [{"id": "AC1", "verdict": "met", "evidence": "ran it"}],
+        "findings": [{"severity": s, "finding": "f"} for s in findings]}), encoding="utf-8")
+    return cli.main(["triage", "59", "--gates-json", str(gates_file),
+                     "--judge-json", str(judge_file), "--baseline", baseline,
+                     "--fix-rounds", str(rounds), "--cwd", str(root),
+                     "--base-ref", "base", *extra])
+
+
 def test_triage_argparse_contract():
+    """The rail gathers its own signals: no hand-assembled signal file."""
     ns = cli.build_arg_parser().parse_args(
-        ["triage", "59", "--signals-json", "s.json"])
-    assert ns.cmd == "triage" and ns.number == 59 and ns.signals_json == "s.json"
-    # The issue number is optional context (signals already carry it).
-    ns2 = cli.build_arg_parser().parse_args(["triage", "--signals-json", "s.json"])
-    assert ns2.number is None
+        ["triage", "59", "--gates-json", "g.json", "--judge-json", "j.json",
+         "--baseline", "red", "--fix-rounds", "2"])
+    assert (ns.number, ns.gates_json, ns.judge_json, ns.baseline, ns.fix_rounds) == (
+        59, "g.json", "j.json", "red", 2)
+    with pytest.raises(SystemExit):
+        cli.build_arg_parser().parse_args(["triage", "59", "--signals-json", "s.json"])
+    with pytest.raises(SystemExit):  # the baseline line is green | red, nothing else
+        cli.build_arg_parser().parse_args(
+            ["triage", "--gates-json", "g", "--judge-json", "j", "--baseline", "true"])
 
 
 def test_triage_cli_red_via_default_config(tmp_path, capsys):
-    sig = tmp_path / "sig.json"
-    sig.write_text(json.dumps({
-        "fix_rounds": 0, "diff_lines": 900, "files_touched": ["hooks/hooks.json"],
-        "tests_touched": True, "review_severity": "note", "baseline_green": True,
-    }), encoding="utf-8")
-    rc = cli.main(["triage", "59", "--signals-json", str(sig)])
+    """A big diff (the diff gate's count) and a sensitive path (git diff) go red."""
+    assert _triage(tmp_path, ["hooks/hooks.json"], changed=900) == 0
     out = json.loads(capsys.readouterr().out)
-    assert rc == 0
     assert out["lane"] == "red" and out["label"] == "ready-for-human"
     assert out["issue"] == 59
+    assert any("900" in r for r in out["reasons"])
 
 
 def test_triage_cli_clean_pr_is_review_light(tmp_path, capsys):
-    sig = tmp_path / "sig.json"
-    sig.write_text(json.dumps({
-        "fix_rounds": 0, "diff_lines": 10,
-        "files_touched": ["src/thinkweave/core/foo.py", "tests/test_foo.py"],
-        "tests_touched": True, "review_severity": "note", "baseline_green": True,
-    }), encoding="utf-8")
-    assert cli.main(["triage", "--signals-json", str(sig)]) == 0
-    assert json.loads(capsys.readouterr().out)["label"] == "review-light"
+    """A test file in the diff is the coverage signal; a note stays yellow."""
+    assert _triage(tmp_path, ["src/foo.py", "tests/test_foo.py"], findings=["note"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["label"] == "review-light" and out["reasons"] == []
+
+
+@pytest.mark.parametrize("kw, needle", [
+    ({"findings": ["note", "problem"]}, "review severity problem"),
+    ({"baseline": "red"}, "degraded baseline"),
+])
+def test_triage_cli_reads_severity_and_baseline(tmp_path, capsys, kw, needle):
+    assert _triage(tmp_path, ["tests/test_foo.py"], **kw) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["lane"] == "red" and any(needle in r for r in out["reasons"])
+
+
+def test_triage_cli_reads_rounds_and_missing_tests(tmp_path, capsys):
+    assert _triage(tmp_path, ["src/foo.py"], rounds=2) == 0
+    reasons = " | ".join(json.loads(capsys.readouterr().out)["reasons"])
+    assert "2 fix round(s)" in reasons and "tests_touched=false" in reasons
 
 
 # ---------------------------------------------------------------------------
@@ -2398,12 +2478,9 @@ def test_red_label_sourced_from_on_gate_failure(tmp_path, capsys):
     assert triage.classify_pr(
         _signals(baseline_green=False), TRIAGE_CFG,
         red_label="needs-a-human")["label"] == "needs-a-human"
-    sig = tmp_path / "sig.json"
     # A path this repo's loop.toml declares sensitive, so the run classifies red.
-    sig.write_text(json.dumps(_signals(files_touched=["packages/devloop/devloop/cli.py"])),
-                   encoding="utf-8")
-    cli.main(["triage", "--signals-json", str(sig),
-                     "--set", "labels.on_gate_failure=escalate-me"])
+    _triage(tmp_path, ["packages/devloop/devloop/cli.py"],
+            "--set", "labels.on_gate_failure=escalate-me")
     assert json.loads(capsys.readouterr().out)["label"] == "escalate-me"
 
 
@@ -2413,12 +2490,21 @@ def test_schema_glob_is_case_insensitive():
     assert r["lane"] == "red"
 
 
-def test_triage_cli_non_object_signals_clean_error(tmp_path, capsys):
-    sig = tmp_path / "sig.json"
-    sig.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
-    rc = cli.main(["triage", "--signals-json", str(sig)])
+@pytest.mark.parametrize("gates_text, judge_text, needle", [
+    ("[]", '{"criteria": [], "findings": []}', "diff gate"),
+    ('[{"id": "d", "kind": "diff", "changed_lines": 3}]', '["not", "an", "object"]', "judge"),
+])
+def test_triage_cli_unreadable_inputs_are_errors(tmp_path, capsys, gates_text, judge_text, needle):
+    """No diff gate count, or a judge return that is not an object, is exit 2
+    naming the input, never a lane read from a guess."""
+    root = _shipped(tmp_path, ["tests/test_foo.py"])
+    (tmp_path / "g.json").write_text(gates_text, encoding="utf-8")
+    (tmp_path / "j.json").write_text(judge_text, encoding="utf-8")
+    rc = cli.main(["triage", "--gates-json", str(tmp_path / "g.json"),
+                   "--judge-json", str(tmp_path / "j.json"), "--baseline", "green",
+                   "--cwd", str(root), "--base-ref", "base"])
     assert rc == 2
-    assert "error" in json.loads(capsys.readouterr().out)
+    assert needle in json.loads(capsys.readouterr().out)["error"]
 
 
 # ---------------------------------------------------------------------------
