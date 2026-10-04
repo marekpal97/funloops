@@ -33,10 +33,7 @@
       ln -s ../../docs/agents/ponytail-audit.command.md \
             .claude/commands/ponytail-audit.md
 
-  (run from the repo root). The arch-proposal orchestrator (issue #61) invokes
-  this skill's text directly in a fresh audit subagent, so the symlink is only
-  needed for interactive `/ponytail-audit` use, not for the slow loop's
-  simplification axis.
+  (run from the repo root).
 
   UPDATING: re-fetch upstream, re-pin the sha + fetch date above, and re-vendor
   the body verbatim. Do not hand-edit the body.

@@ -1,40 +1,25 @@
-# devloop/ boundary spec — module map, Gate protocol, trajectory module, index_client contract
+# devloop boundaries — planes, module map, Gate protocol, host overlay
 
-**Status:** accepted design, and the boundary authority for anything that
-redesigns inside these modules. It specifies *where seams go and what each
-interface promises*. Issue numbers throughout are thinkweave's, where the
-package was designed and extracted before the carve-out into this workspace.
+Where the seams of the `devloop` package go and what each interface promises.
+A redesign inside these modules follows this map. *Deep* means much
+behaviour behind a small interface; the constitution's rules 1, 4 and 7 set
+the goals.
 
-Vocabulary: *module* = interface + implementation (scale-agnostic); *interface*
-= everything a caller must know (signatures, invariants, error modes, config);
-*seam* = where an interface lives; *deep* = much behavior behind a small
-interface. Terms per the codebase-design doctrine; goals per the packaged
-constitution (`constitution.md`: deep but interpretable modules with boundaries
-at likely redesign points — rule 1; generic utils never beside key logic — rule
-4; no contract asserted in prose without an enforcing seam — rule 7).
+## 1. The two planes
 
-## 1. The two planes and the external seam
+- **Judgment plane**: the `/issue-loop` command (`issue-loop.command.md`). An
+  LLM orchestrator that dispatches agents, applies labels and opens PRs.
+- **Deterministic plane**: the `devloop/` package. Graph math, gate
+  execution, classification, pack and payload assembly. Stdlib only, no LLM
+  call, never imports its host.
 
-The loop is two planes with one seam between them:
+The seam between them is the **CLI subcommand surface** (JSON on stdout, exit
+codes): `config · plan · claim · release · check · validate · prime · triage
+· trajectory · board · pack`. The orchestrator knows nothing else. The
+`devloop` console script and `python -m devloop` are one entry point.
 
-- **Judgment plane** — the `/issue-loop` command (`issue-loop.command.md`): an
-  LLM orchestrator that dispatches implementer/judge/reviewer subagents,
-  composes traces, applies labels, opens PRs.
-- **Deterministic plane** — the `devloop/` package: graph math, gate
-  execution, classification, payload assembly. Stdlib-only, never imports its
-  host, no LLM calls (both pinned by `test_devloop_boundaries.py`).
-
-The seam between the planes is the **CLI subcommand surface** (JSON on stdout,
-exit codes): `config · plan · claim · release · check · validate · prime ·
-triage · trajectory · board · pack`. That surface is the package's one external interface — the
-orchestrator knows nothing else. It is reached through the `devloop` console
-script or `python -m devloop`; the two are one entry point, pinned byte-equal
-by `test_funloops_packaging.py`.
-
-Everything below the CLI is interior. Modules receive resolved config
-*sections* and plain dicts as parameters — no module below `cli` reads
-`loop.toml`, touches `gh`, or resolves paths on its own (accept dependencies,
-don't create them).
+Below the CLI, modules receive resolved config sections and plain dicts. No
+module below `cli` reads `loop.toml`, calls `gh` or resolves paths itself.
 
 ## 2. Package map
 
@@ -45,365 +30,143 @@ packages/devloop/
     __init__.py        (empty)
     __main__.py        `python -m devloop` → cli.main
     cli.py             entry point: argparse, config resolution, dispatch
-    dag.py             tracker-as-DAG math + the body-grammar it parses
+    dag.py             tracker-as-DAG math over native dependencies
     board.py           board hygiene: the grammar dag.py reads, as checks + sweep ops
-    pack.py            the dispatch pack: issue + rules + persona + codegraph's CLI text
+    pack.py            the dispatch pack: one role's whole dispatch file
     gates.py           Gate protocol + deterministic executors
     triage.py          risk-lane classification of shipped PRs
     paths.py           leaf util: the three-form path matcher
     github.py          gh plumbing: issue snapshot + tracker mutations
-    index_client.py    the sqlite-RO seam into the derived index
+    index_client.py    the read-only seam into the derived index
     trajectory/
       __init__.py      re-exports the module's public interface
       mint.py          write face: trajectory-note payload assembly
-      prime.py         read face: claim-time prior-trajectory context
-  docs/agents/         the judgment plane: command docs + loop.toml
+      prime.py         read face: claim-time prior-run context
+  docs/agents/         the judgment plane: command doc, constitution, persona, loop.toml
   tests/
 ```
 
-Ten public names. `trajectory/` is **one module** with two implementation
-files — its interface is what `trajectory/__init__.py` re-exports; `mint.py`
-and `prime.py` are internal seams, not siblings (§4). There is no `config.py`,
-no `utils.py`, no `git.py` (§2.1, §6). `docs/agents/` is the other plane's home
-and imports nothing: the command doc, the vendored skills, this spec, the
-packaged constitution (the default every installing repo inherits and may
-extend via its own `docs/agents/constitution.md`; resolution contract
-`cli.find_constitution`), and the repo's `loop.toml` beside the host-neutral
-`loop.toml.template`.
-
-Per-module interfaces:
-
-**`cli.py`** — owns `DEFAULT_CONFIG`, `load_config`, `parse_override`,
-`apply_overrides`, `build_arg_parser`, `main`. Config lives here deliberately:
-resolution-and-override is run-posture, exercised only at the entry point;
-unknown-key rejection (one check for `--set` and the file, so a deleted knob
-is refused by name rather than silently ignored) and "gates are file-only"
-are CLI contract lines.
-`cli.py` is also the imperative shell: the `trajectory` subcommand's git reads
-(branch, log, numstat) and file-argument loading happen here, feeding the pure
-`build_trajectory` — subprocess git is argument-gathering, not a module.
-
-**`dag.py`** — `blockers`, `compute_components`, `scope_to_dag`,
-`apply_assume_done`, `compute_frontier`. Pure over issue-snapshot dicts (shape
-owned by `github`, § below). Edges come from the snapshot's native dependency
-keys only; the module reads no body metadata.
-
-**`gates.py`** — the Gate protocol (§3) plus `run_command_gate`,
-`evaluate_diff_gate` (pure), `run_diff_gate`. Runs its own `git diff`
-subprocess — execution is the gate's job.
-
-**`triage.py`** — `classify_pr`, the signal enums, `TRIAGE_LABELS`.
-Fail-closed posture on the three safety-critical signals is part of the
-interface, stated in the docstring and pinned by the existing tests.
-
-**`paths.py`** — `match(path, pattern)` (dir-prefix / glob / bare-basename
-dispatch by pattern shape) and `hits(files, patterns)`. The only leaf util
-(§6). Two callers: `triage` (sensitive/watched paths) and the diff gate
-(`forbidden_paths` — unified by #94; all shipped `forbidden_paths` entries end
-in `/`, where `match` is exactly `startswith`. The unification means
-`forbidden_paths` *adopts* the three-form convention; a future non-slash entry
-gets basename/glob semantics, documented in loop.toml when #94 lands).
-
-**`github.py`** — `run(args)` (the one subprocess seam to `gh`),
-`fetch_issues()` (REST snapshot + native-dependency enrichment),
-`fetch_labels(number)`. This module owns the **issue-snapshot dict shape** —
-`{number, title, state, labels, assignees, body, native_blocked_count,
-native_blockers?}` — which is the `github`↔`dag` contract; `dag` never sees
-`gh` output, only these dicts. Tracker *mutations* for claim/release stay in
-`cli.py` composed from `github.run`: the assign-vs-label claim convention is
-loop policy, not gh plumbing, and one-call-site wrappers would fail the
-deletion test. For the `board` verb it also owns the richer **board-snapshot
-shape** — `{repo, labels[], issues[{…, sub_issues, blockers[], children[],
-parent}]}` with every relationship resolved to a `{repo, number, state}` ref
-(`fetch_board(repo)`) — and `apply_op(op)`, the one place the sweep's op
-vocabulary meets the network.
-
-**`board.py`** — the enforcing seam for the board grammar `dag.py` assumes
-(funloops#9): sub-issue = epic membership, native blocked-by = ordering, the
-`epic` anchor is blocked-by every open child, `[labels]` rungs are exclusive,
-titles don't re-encode order a native edge already carries. Pure checks over
-the board snapshot (labels · epics · rungs · edges — private; the interface is two functions),
-each yielding findings with a severity and — only where the fix is mechanical,
-never where it is a judgment (which rung, which track, is this epic done) — a
-sweep **op** (`create_label · delete_label · add_label · remove_label ·
-retitle · add_blocker`). `doctor()` runs them all; `plan_sweep()` turns a
-report into the deduped, ordered op list `board sweep --apply` replays.
-Conventions text: `board-hygiene.md`.
-
-**`pack.py`** — the dispatch pack (funloops#28, #45, #46, #47; dec-f12457eb,
-dec-fd12489d, dec-d2de831e, dec-2f8c2322, dec-e6561edc, dec-72c80057): `Issue`, `Posture`,
-`compose`, `LINE_BUDGET`, `FileRecord`, `Codegraph` (the tool object:
-`repo_map` · `sync` · `files` · `context` · `entry_points` · `node`),
-`Directory` (the map object: `tree` · `catalog` · `slice`, and the fold
-below them), and below those `responsibility`, `parts`, `named_files`,
-`body`. Composition, the map's two tiers and the line budget are the
-module docstring's and `LINE_BUDGET`'s comment; the dispatch shape is
-`issue-loop.command.md` §1b (dec-72c80057, dec-e6561edc). A role is a
-`loop.toml [dispatch.<role>]` entry whose `posture` shapes its pack and whose
-`transport` picks §1b's recipe; one more role is one entry plus one section
-of the command doc, the same rule §3 states for judgment kinds.
-
-**`index_client.py`** — §5.
-
-**`trajectory/`** — §4.
-
-### 2.1 Deliberate non-modules
-
-- **No `config.py`** — the issue's module list omits it on purpose; config is
-  a `cli` concern (above).
-- **No `git.py`** — two call sites (`gates`, `cli`) with two-line bodies each;
-  a wrapper would be a pass-through (deletion test fails).
-- **No `shared/` package in the workspace** — the umbrella is a layout, not an
-  abstraction; the deferred joint-util candidates are named in the workspace
-  README and get extracted when a second loop is the second caller, not before.
-- **No `utils.py`** — §6.
+- **`cli.py`** owns config: `DEFAULT_CONFIG`, `load_config`, the `--set`
+  overrides and unknown-key rejection (one check for `--set` and the file, so
+  a deleted knob is refused by name). Gates are file-only. It is also the
+  imperative shell: git reads and file arguments feed the pure modules.
+  `find_config` and `find_constitution` walk up from the cwd to the repo
+  root; a host's `docs/agents/constitution.md` extends the packaged one.
+- **`dag.py`** is pure over issue-snapshot dicts. Edges come from native
+  dependency keys only; it reads no body metadata.
+- **`github.py`** is the one subprocess seam to `gh`. It owns the
+  issue-snapshot shape `{number, title, state, labels, assignees, body,
+  native_blocked_count, native_blockers?}` and, for `board`, the
+  board-snapshot shape and `apply_op`.
+- **`board.py`** checks the board grammar (`board-hygiene.md`) and turns
+  mechanical fixes into sweep ops; judgment calls get findings, never ops.
+- **`pack.py`** composes one role's dispatch: the issue, the rules, the
+  persona (writer only), codegraph's repo map, the touched modules and diff
+  (reader), the stack's module edges (shape), the posture's brief and the
+  dispatch lines. A role is a `loop.toml [dispatch.<role>]` entry; its
+  `posture` picks the sections and its `transport` the orchestrator's recipe.
+- **`gates.py`**: §3. **`triage.py`** classifies a shipped PR from its gate
+  results, judge return, baseline line and diff; missing safety signals fail
+  closed.
+- **`paths.py`** is the only leaf util. A leaf util exists only when two
+  modules need the same semantics (here `triage` and the diff gate). There is
+  no `utils.py`, `config.py` or `git.py`.
 
 ## 3. The Gate protocol
 
-A gate is a config entry (`loop.toml [[gates]]`) with a `kind`.
-**The gate split** is the protocol's structural claim: every kind has exactly
-one verb, and which verb it has states which plane runs it.
-
-- **Deterministic kinds** (`command`, `diff`) — the rail *executes*:
-  `execute(gate_cfg, ctx) -> GateResult`, where ctx is the worktree cwd (+
-  base ref for diff).
-- **Judgment kinds** (`judge`) — the rail never executes; the
-  orchestrator dispatches a subagent and the rail *validates* the subagent's
-  return: `validate(gate_cfg, raw) -> GateResult`, rejecting schema-violating
-  returns (#99's re-ask loop keys off the rejection). `judge` is the fused
-  acceptance+review stage (funloops#39, dec-611cbd8a): its envelope carries
-  `criteria[]` verdicts and `findings[]`, and only a criterion `not-met`
-  fails it; a `rule:<n>` criterion (rules 3, 6, 7, 8) must cite `file:line`.
-  Its shape posture (`validate --posture shape`) returns `{verdict, flow,
-  owns[], options[]}`, a failing case routing to a human. A gate entry may carry only the keys its kind reads
-  (`GATE_KEYS`); the config loader refuses any other key by name.
-
-`GateResult` is a plain dict shape, not a class: `{id, kind, passed, summary,
-detail}` — already what both executors emit and what the trajectory
-frontmatter stores; the shape is shared by both verbs so downstream consumers
-(`--gates-json`, the PR evidence table) never care which plane produced it.
-
-Structurally, `gates.py` carries one registry per verb:
+A gate is a `loop.toml [[gates]]` entry with a `kind`. **The gate split**:
+every kind has exactly one verb, and the verb says which plane runs it.
 
 ```python
 DETERMINISTIC = {"command": run_command_gate, "diff": run_diff_gate}
 JUDGMENT = {"judge": validate_judge}
 ```
 
-The `check` subcommand dispatches **only** through `DETERMINISTIC`; any other
-kind — judgment-side or typo — gets the error `gate kind '<k>' is LLM-judged
-— run it from the /issue-loop command, not the script` (previously an `else`
-branch; the registry promotes it from error-message prose to structure,
-byte-identical output).
-The `validate` subcommand (#99) dispatches **only** through `JUDGMENT`, and
-the two registries are pinned disjoint + covering the shipped pipeline.
-`check --issue N` (dec-e267d040) is the same verb's second form: every
-configured `command` gate, then the issue body's `verify:` lines as ad-hoc
-command gates, all through `run_command_gate`, printed as one `{issue,
-results: [GateResult…], summary}` — no new kind, no loop.toml key.
+- **Deterministic kinds** (`command`, `diff`): `check` executes them. Any
+  other kind gets `gate kind '<k>' is LLM-judged — run it from the
+  /issue-loop command, not the script`. `check --issue N` runs every command
+  gate, then the issue's `verify:` lines as ad-hoc command gates, as one
+  result list.
+- **Judgment kinds** (`judge`): the orchestrator dispatches an agent and
+  `validate` checks its return. The judge return carries `criteria[]`
+  verdicts and `findings[]`; only a `not-met` criterion fails it, and a
+  `rule:<n>` criterion (rules 3, 6, 7, 8) must cite `file:line`. The shape
+  posture returns `{verdict, flow, owns[], options[]}`.
 
-A judgment result is `GateResult` plus `reasons`, and that key carries the
-whole execute-vs-validate difference: **empty `reasons` = a verdict**
-(`passed: false` is a fix round), **non-empty `reasons` = the return never
-became a verdict** — each entry names an offending field path and value, and
-the orchestrator re-asks the same subagent. `validate` maps this onto
-`check`'s exit codes with rejection on the error rung: `0` passed, `1` failed,
-`2` re-ask.
+Both verbs emit one `GateResult` shape, `{id, kind, passed, summary,
+detail}`, so consumers never care which plane produced it. A judgment result
+adds `reasons`: empty is a verdict, non-empty is a schema rejection naming
+each field path. `validate` exits `0` passed, `1` failed, `2` re-ask. A gate
+entry carries only the keys its kind reads (`GATE_KEYS`). No class
+hierarchy: a dict registry and one result shape state the split.
 
-*(Amended 2026-08-01, owner ruling during #94: the original draft shipped
-`JUDGMENT` as a data-only set at #94 time. Both the review and simplify gates
-independently flagged that as the epic's own half-mechanism shape, and the
-owner sided with the anti-goal over the draft.)*
+## 4. The trajectory module and the host overlay
 
-**No class hierarchy.** A dict registry + one shared result shape state the
-split completely; `typing.Protocol` machinery would be interface without
-behavior.
+The trajectory note is one primitive with a write face (`mint.py`) and a read
+face (`prime.py`). One module owns both because they share one vocabulary:
+the frontmatter keys (`outcome`, `primed`, `served`, `builds_on`, `trace`),
+the `loop-run` tag and the trajectory→insight `builds_on` link.
 
-## 4. The trajectory module — one primitive, two faces
-
-The trajectory note is one primitive with a write face and a read face, and
-**one module owns both** because both faces share one vocabulary: the
-frontmatter keys (`outcome`, `primed`, `served`, `builds_on`, `trace`), the
-`loop-run` tag, the trajectory→insight `builds_on` link. Split mint from prime into
-sibling modules and that vocabulary needs a third home or gets duplicated —
-the exact "retrieval, triage, trajectory composition share a bucket" failure
-inverted. Prime is a *trajectory mechanic*: it reads what mint writes.
-
-Public interface (re-exported by `trajectory/__init__.py`, everything else
-internal):
+Public interface, re-exported by `trajectory/__init__.py`:
 
 - `build_trajectory(issue, *, branch, commits, numstat, gates, fix_rounds,
-  outcome, ...) -> dict` — pure; emits the weave_create-shaped payload.
-  (mint face)
+  outcome, ...) -> dict`: pure; the weave_create-shaped payload.
 - `build_prime_payload(issue_number, run_id, concepts, *, conn, limit,
-  budget_chars, decisions, query) -> dict` — the claim-time payload.
-  `concepts` (ontology terms) and `query` (the issue's text) are the two
-  retrieval legs; `decisions` are the decision ids the orchestrator passed
-  (the ticket's `## Decisions` ids merged with the file-walk ids), each
-  resolved to its title and first summary line for the block. It always
-  serves what it finds — the sampled holdout was retired by dec-cf8f0d33.
-  (prime face)
-- `append_served_event(buffer_path, run_id, issue_number, served, session_id)`
-  + `LOOP_PRIME_TOOL` — the served-context write-through to the session
-  buffer JSONL.
+  budget_chars, decisions, query) -> dict`: the claim-time payload. Concepts
+  and the issue's text are two retrieval legs; decision ids resolve to title
+  and summary line. It always serves what it finds.
+- `append_served_event(...)` + `LOOP_PRIME_TOOL`: the served-context write
+  to the session buffer.
 
-Internal to `mint.py`: the trace normalizers (`_normalize_trace*`,
-`_as_int_or_none`) and the skill projection. Two settled scope rules the module
-carries, stated here because they bound what these internals may become:
+Invariants:
 
-**`_normalize_trace` is a backstop, not the validation seam.** Gate-return
-enforcement lives at the `validate` verb (§3), where the subagent's return
-arrives and a rejection can be re-asked. The normalizer survives only to shape
-legacy or degraded input — strict on type (a non-dict trace is rejected),
-lenient on keys (unknowns dropped, each item projected). Add enforcement at the
-seam, never here.
+- **Prime never crashes the loop.** Any index problem degrades to
+  `primed=false` with a `note`.
+- **Prime writes nothing to the index.** Its one side effect is the buffer
+  append.
+- **`_normalize_trace` is a backstop, not the validation seam.** Return
+  enforcement lives at `validate`; the normalizer only shapes degraded input.
+- **`skills[]` is the stage-dispatch log**, the stages this loop dispatched,
+  not every Skill invocation. Capture-all is parked until a consumer needs
+  invocations the loop did not dispatch.
 
-**`skills[]` is the stage-dispatch log, not a capture of every Skill
-invocation.** It records the stages *this loop dispatched* — implementer,
-the judge, and future stages — as
-`{id, role, skill, outcome, fix_rounds_attributed}` plus the optional dispatch
-join keys (command doc §3), passed through verbatim. `skill` names the skill
-that ran the stage, empty when none did. The generic capture-all is
-**parked**: it needs a new mechanism (a Skill-tool hook or transcript scraping)
-and has no live reader, and a capability ships with its consumer or not at all.
-*Unpark trigger:* a consumer that needs invocations the loop did not itself
-dispatch — concretely, asking which invocations correlate with rework. Until
-then nothing implies capture-all exists.
+**The host overlay.** How these notes reach a memory host is host-side. For a
+Thinkweave host it is `docs/agents/issue-loop-memory.md` in the thinkweave
+repo; this is the one place that locates it. A finished issue writes four
+surfaces, and no field has two owners:
 
-**Invocation-trajectory extension — the parking note above is the contract.**
-Internal to `prime.py`:
-`_coerce_builds_on`, the outcome-rank table, `render_prime_block`, and the two
-composition helpers over the seam (`query_trajectories`, `resolve_insights`).
+| Surface | Owns |
+|---|---|
+| tracker comments | run history, claims, the PR link |
+| PR body | the change and its gate evidence; findings in its one comment |
+| trajectory note | how it went |
+| session note (`/wrap`) | cross-issue synthesis, decisions, insights |
 
-Two interface-level invariants, stated on the module:
-
-- **Prime never crashes the loop.** Any index problem (missing db, corrupt
-  file, schema drift) degrades to `primed=false` with a `note` — the
-  orchestrator dispatches unchanged. This is a contract line callers build
-  on, not an implementation nicety.
-- **Prime writes nothing to the index.** Its only side effect is the
-  served-event append to the *session buffer* (markdown-adjacent log); the
-  index stays strictly read-only (§5).
-- **Prime retrieves on two legs, and the concept leg alone is not enough.**
-  Concept-only retrieval was dead by construction: the write side tags
-  trajectories with ontology concepts while the rail was being handed GitHub
-  labels, so the join matched nothing and every run was effectively unprimed.
-  Hence the full-text leg over the issue's own words, RRF-fused in
-  `index_client` (§5), and hence the warning the payload's `note` carries when
-  called with labels and no `--query`. The orchestrator's half of this contract
-  is the command doc §1b.
-
-**The host overlay.** How these notes reach a *particular* memory host — the
-vault write-back, its four-surface ownership partition, the wrap-coverage rail —
-is host-side documentation, not this package's. For a Thinkweave host that
-document is `docs/agents/issue-loop-memory.md` in the **thinkweave** repo; this
-paragraph is the only place it is located, so a move updates one line. What lives here is the shape the package emits and reads back;
-what lives there is what a host does with it.
+The trajectory note is a plain `note`: observable facts only, never a
+decision field; the loop never mints a decision. Its `trace` is the
+machine-readable half of the PR's gate evidence. The register test sorts
+every artifact: run-bound semantic trace → the trajectory's `trace`; portable
+lesson → an insight note, linked by `builds_on`; enumerable fact → a
+frontmatter key. The loop never runs `/wrap`; the host's catch-up rail wraps
+the run's session.
 
 ## 5. The index_client contract
 
-`index_client.py` is the package's **single seam into the derived SQLite
-index** — stdlib-only, read-only, never imports the host.
+`index_client.py` is the single seam into the derived SQLite index:
+stdlib only, read-only, never imports the host.
 
-Interface (#94, completed by #100):
+- `resolve_db_path(db, vault)`: `--db`, else the vault's `weave_dir`
+  override, else `THINKWEAVE_INDEX_DB`; `None` when nothing resolves.
+- `open_ro(db_path)`: URI `mode=ro`, `Row` factory.
+- `Error`, `Connection`: aliases, so no other module imports `sqlite3`.
+- `trajectory_candidates(conn, concepts, query, scan_cap)`: the concept leg
+  and the FTS leg over `notes_fts`, fused by RRF (`RRF_K = 60`). FTS failure
+  is tolerated only while the concept leg returns something.
+- `note_rows(conn, ids, note_type='note')`: ids → `{title, body}` of one type.
 
-- `resolve_db_path(db: str | None, vault: str | None) -> str | None` — `--db`
-  wins; else the vault's `weave_dir` override from `config/config.toml` /
-  legacy `.weave/config.toml` (mirroring `core.config` resolution), else
-  `THINKWEAVE_INDEX_DB`; `None` when nothing resolves (never guess a path).
-- `open_ro(db_path) -> sqlite3.Connection` — URI `mode=ro`, `Row` factory.
-- `Error = sqlite3.Error`, `Connection = sqlite3.Connection` — aliases so no
-  other module ever imports `sqlite3` (cli's degrade guard, prime's
-  annotations post-#100), keeping the importer-allowlist seam tight.
-- `trajectory_candidates(conn, concepts, query, scan_cap) -> list[dict]` — the
-  retrieval surface. Two legs (concept match; fts5 match over `notes_fts`)
-  fused by RRF at `RRF_K = 60`, the retrieval doctrine's constant (the main
-  package's knob is `retrieval.rrf_k`; the rail reads no vault config, so it is
-  a constant here rather than a parameter nobody passes). Either leg's input
-  may be empty. The FTS leg is best-effort *only while the other leg is
-  carrying*: a vault with no `notes_fts` still primes on concepts, but a broken
-  FTS with nothing else retrieved raises into the degrade guard — FTS is
-  load-bearing, so its failure must not read as a clean empty match.
-- `note_rows(conn, ids, note_type='note') -> dict[str, dict]` — ids →
-  `{title, body}` rows of one type: `'note'` for insight color (a `builds_on`
-  id may name a decision or session; those never serve as color),
-  `'decision'` for the decisions leg's titles and summary lines.
-
-The SQL-home invariant: every SQL string devloop issues lives here — the
-thinkweave index is the package's only database (codegraph is a CLI the pack
-invokes, never an index devloop reads: #28, dec-d2de831e).
-`test_devloop_boundaries.py` pins the speaker set (a SELECT appearing in any
-other module is a new database seam nobody designed). The query surface is
-*index-vocabulary-shaped* (tags,
-concepts, FTS match, ids → bodies), returning plain dicts — schema knowledge
-inside, domain knowledge outside. Trajectory-domain judgment (which tag is
-`loop-run`, outcome ranking, color filtering, budgeting) stays in
-`trajectory/prime.py`, composing over the seam. The fusion sits *inside* the
-seam because both legs are retrievers over the index; prime never sees a
-rank list, only fused candidates.
-
-Four enforcing seams — prose alone is banned by the epic. Three live here;
-the schema pin can only live where a real index does:
-
-1. **Importer-allowlist test** — asserts which devloop modules import
-   `sqlite3`: the `{index_client}` singleton. Five lines, and the seam is
-   enforced rather than remembered (`test_devloop_boundaries.py`).
-1b. **SQL-speaker test** — asserts which modules contain SQL at all: the
-   same `{index_client}` singleton (`test_devloop_boundaries.py`).
-2. **No-host test** — asserts no module imports the host it was carved out of.
-   This workspace's CI has no host installed, so without the seam the coupling
-   would surface as a confusing ImportError in some later slice rather than as
-   a boundary violation (`test_devloop_boundaries.py`).
-3. **Schema-pin test** — builds a real fixture index by importing the *host's
-   indexer*, then exercises every devloop SQL path against it: `resolve_db_path`
-   + `open_ro` + the trajectory queries (`notes`, `note_tags`, `note_concepts`
-   tables and the columns they read), so indexer schema drift fails a test
-   instead of silently degrading prime to unprimed forever. It runs **host-side
-   only** — it needs both sides of the seam in one process, and this package
-   deliberately cannot import the host. The hand-built-schema tests in
-   `test_issue_loop.py` are the fast unit checks that travel with the package.
-
-## 6. Leaf-util doctrine
-
-Rule 4 bans generic utils beside key logic; rule 1 bans speculative
-structure. The reconciling rule: **a leaf util exists only when
-two modules need the same semantics** (one caller = hypothetical seam; two =
-real).
-
-- `paths.py` qualifies today — `triage` and the diff gate, unified by #94.
-- Nothing else does. `_split_csv` (cli), `_as_int_or_none` (mint's trace
-  semantics: bool-is-not-int), `_coerce_builds_on` (prime's wikilink
-  tolerance) are *domain-shaped* coercions with one home each; they stay
-  module-private where used. If a later wave gives one a second
-  cross-module caller with identical semantics, mint the leaf then.
-- No `utils.py`, ever — a junk drawer is the "generic beside key logic"
-  violation with a folder around it.
-
-## 7. Redesign-point ledger
-
-The boundary placement is justified by what it localizes. The rows are the
-thinkweave-era changes that tested it; they are kept as evidence the seams hold,
-not as open work:
-
-| Issue | Change | Touches |
-|---|---|---|
-| #95 | delete body-regex DAG grammar (native deps) | `dag.py` only |
-| #98 | delete v1 Lessons fallback | `trajectory/prime.py` only |
-| #99 | judgment-gate validators + normalize-to-backstop | `gates.py` (introduces the `JUDGMENT` validator registry + its tests), `trajectory/mint.py` |
-| #100 | prime v3 retrieval (FTS+concept via the seam) | `index_client.py`, `trajectory/prime.py` |
-| #102 | rework-evidence stamps | `trajectory/mint.py` (+ orchestrator) |
-
-Any of these needing a third module is a boundary bug — file it against this
-spec.
-
-## 8. Where this package came from
-
-`devloop` was extracted from a single `scripts/` rail in its host repo, then
-carved into this workspace with history preserved (`git log --follow` on any
-module reaches back through its whole prior life). Both moves were
-behavior-frozen; the function-by-function migration map that governed the first
-one has served its purpose and lives in that history.
-
-Standing acceptance for any future move: whole suite green, CLI surface
-byte-compatible (including the judgment-kind error message and `--help` text),
-no semantic diff beyond what the issue names.
+Every SQL string devloop issues lives here, and the query surface speaks
+index vocabulary (tags, concepts, FTS, ids). Trajectory judgment (the
+`loop-run` tag, outcome ranking, budgets) stays in `trajectory/prime.py`.
+`test_devloop_boundaries.py` pins the `sqlite3` importer set, the SQL-speaker
+set and the no-host rule. The schema pin against a real indexer runs
+host-side, where both sides of the seam exist.

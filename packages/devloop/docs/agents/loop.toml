@@ -1,7 +1,7 @@
 # Issue-to-PR loop configuration for THIS repo (funloops).
 #
 # Read by the `devloop` rail (`uv run devloop config`) and the /issue-loop
-# command (orchestration). Semantics: docs/agents/issue-loop.md. A new host
+# command (orchestration). A new host
 # repo starts from `loop.toml.template` beside this file, which carries the
 # same knobs with their defaults commented and nothing host-specific in them.
 #

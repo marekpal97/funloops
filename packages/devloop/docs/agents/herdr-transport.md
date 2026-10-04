@@ -1,10 +1,11 @@
 # The herdr transport — one dispatch recipe
 
 `issue-loop.command.md` §1b dispatches a role by its entry's `transport`.
-This doc is the recipe for `transport = "herdr"`; the dispatch text, the
-return file and the run directory are §1b's.
+This doc is the recipe for `transport = "herdr"`; the worktree (§0.5), the
+dispatch file and the return file are the command doc's.
 
-The worktree is a herdr workspace and the agent a named herdr session; every
+herdr opens a workspace on the worktree you made, and the agent is a named
+herdr session; every
 command answers in JSON, and the ids come from those answers, never from a
 guess. `harness` is required on this transport (`--kind` has no default): an
 entry without one is a config error you surface, not a guess. The entry's
@@ -14,10 +15,9 @@ shows a working tail per harness): a prompt no one answers reads as
 sandboxes writes, so the return file is writable.
 
 ```bash
-# implementer: a new worktree, the agent in its root pane
-herdr worktree create --cwd <repo-root> --branch <branch_prefix><N> --base origin/main --label <branch_prefix><N> --no-focus
-#   → .result.worktree.path (the <worktree> every rail call targets),
-#     .result.workspace.workspace_id, .result.root_pane.pane_id
+# implementer: a workspace on the existing worktree, the agent in its root pane
+herdr worktree open --cwd <repo-root> --path <worktree> --label <branch> --no-focus
+#   → .result.workspace.workspace_id, .result.root_pane.pane_id
 # gate role (the judge): no new worktree; a new pane beside the implementer's
 herdr pane split <implementer-pane-id> --direction right --cwd <worktree>
 #   → .result.pane.pane_id
@@ -31,9 +31,8 @@ from the focused workspace, which may be another repo. A herdr worktree lives
 outside the repo tree, but a harness that trusts by repository (Codex) keys
 that trust on `<repo-root>`, never on `<worktree>`.
 
-Write the dispatch text to `<dispatch-file>` beside the return file first:
-the prompt is the pointer, the file is the same text the Agent tool gets
-inline. `--wait` returns the first settled state:
+`<dispatch-file>` is the path `devloop pack --out` printed. `--wait` returns
+the first settled state:
 
 - `idle` or `done`: read the return file. **A settled agent with no return
   file failed** — a harness error (an unsupported model, an API refusal)
@@ -47,7 +46,7 @@ block). The evidence is `herdr agent read <role>-<N> --source
 recent-unwrapped --lines 120`, or the error itself.
 
 A fix round or a re-ask is `herdr agent prompt` to the **same agent name**
-with the evidence, the re-spliced dispatch file and a fresh return path: it
+with the evidence, a freshly written dispatch file and a fresh return path: it
 keeps its context as SendMessage does. `herdr agent get <role>-<N>` carries
 the session facts §3 records. Teardown: `herdr worktree remove --workspace
 <workspace-id>` is this transport's `git worktree remove` (§1d, same

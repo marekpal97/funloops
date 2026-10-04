@@ -11,7 +11,7 @@
 # check the path and the directory you ran from.
 #
 # Read by the `devloop` rail (`uv run devloop config`) and by the /issue-loop
-# command (orchestration). Semantics: issue-loop.md. Per-run posture belongs on
+# command (orchestration). Per-run posture belongs on
 # the command line, not in edits to this file: `--set` and its sugar are
 # issue-loop.command.md §0's.
 

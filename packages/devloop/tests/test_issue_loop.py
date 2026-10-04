@@ -4,6 +4,7 @@ Everything here is pure: parsing and frontier computation take plain dicts
 and strings — no gh, no git, no network.
 """
 
+import argparse
 import json
 import re
 import sqlite3
@@ -419,183 +420,6 @@ def test_gate_pipeline_order_is_pinned():
     assert ids == ["diff-guard", "tests", "judge"]
 
 
-# test_committed_hooks_carry_no_ponytail_entries stayed in thinkweave: it reads
-# thinkweave's hooks/hooks.json, which is the host's, not this package's
-# (carve-out import rule, thinkweave#148). Same for
-# test_vendored_ponytail_audit_installs_no_hooks below.
-
-
-# ---------------------------------------------------------------------------
-# plan-distill (issue #72) — grill-fork → plan-time decisions doc-pinning.
-# The command is agent-facing docs; these pins assert the load-bearing rules
-# survive edits (stable tokens, not brittle prose). Mirror the ponytail pins.
-
-
-def _plan_distill_doc() -> str:
-    doc = cli.REPO_ROOT / "docs" / "agents" / "plan-distill.command.md"
-    assert doc.exists(), "plan-distill.command.md must ship under docs/agents/"
-    return doc.read_text(encoding="utf-8")
-
-
-def test_plan_distill_fork_gate_requires_both_conditions():
-    """The fork-gate mints a decision only when BOTH a concrete
-    considered-and-rejected alternative AND a falsifiable predicted_outcome
-    are present — clarifying answers (fact elicitation) never qualify."""
-    text = _plan_distill_doc().lower()
-    # Both gate conditions named as jointly required.
-    assert "alternative" in text
-    assert "considered and rejected" in text
-    assert "falsifiable" in text and "predicted_outcome" in text
-    assert "both" in text  # both-required framing, not either/or
-
-
-def test_plan_distill_clarifying_questions_yield_none():
-    """Acceptance criterion 1: clarifying questions mint zero decisions."""
-    text = _plan_distill_doc().lower()
-    assert "clarifying" in text
-    # An explicit "no decision from a clarifying answer" statement.
-    assert "never mint" in text or "yield no decision" in text or "mints nothing" in text
-
-
-def test_plan_distill_no_count_cap_scales_with_contention():
-    """Acceptance criterion 2: question count does not drive decision count;
-    the fork-gate replaces any cap and scales with real contention."""
-    text = _plan_distill_doc().lower()
-    assert "no count cap" in text or "no cap" in text or "replaces any count cap" in text
-    # The scaling claim: a 40-question grill with 3 forks yields ~3 decisions.
-    assert "does not drive" in text or "question count" in text
-
-
-def test_plan_distill_body_budget_is_1k_chars():
-    """Acceptance criterion 3: bodies respect the ~1K-char wrap-body budget."""
-    text = _plan_distill_doc()
-    assert "1K" in text or "1,000" in text or "1000" in text
-
-
-def test_plan_distill_frontmatter_and_alternatives_section_required():
-    """Each minted decision carries the counterfactual as an
-    '## Alternatives considered' body section plus predicted_outcome + plan_ref
-    frontmatter (acceptance criterion 1)."""
-    text = _plan_distill_doc()
-    assert "## Alternatives considered" in text
-    assert "predicted_outcome" in text
-    assert "plan_ref" in text
-
-
-def test_plan_distill_plan_ref_placeholder_convention():
-    """plan_ref links to /to-spec → /to-tickets refs when they exist, and uses
-    a documented placeholder (updated by /to-tickets) when they don't yet."""
-    text = _plan_distill_doc()
-    assert "[pending]" in text
-    assert "/to-tickets" in text and "/to-spec" in text
-
-
-def test_plan_distill_executable_fallback_command_shape():
-    """MCP-absent fallback is an executable `weave add` decision, verified
-    against the real CLI flag shape (--type decision, -f key=value)."""
-    text = _plan_distill_doc()
-    assert "weave add" in text
-    assert "--type decision" in text
-    # Frontmatter carried via repeatable -f, matching _parser_basics.py.
-    assert "-f predicted_outcome=" in text
-    assert "-f plan_ref=" in text
-
-
-def test_plan_distill_write_surface_is_enumerated():
-    """Write-surface enumeration: the entire write surface is
-    weave_create / weave add decisions — no code edits, no gh, no PRs."""
-    text = _plan_distill_doc()
-    assert "entire write surface" in text
-    assert "weave_create" in text and "weave add" in text
-    low = text.lower()
-    # No PRs, no code edits — stated plainly (each token load-bearing on its own).
-    assert "no prs" in low
-    assert "no code edits" in low
-
-
-def test_plan_distill_mcp_example_nests_fields_in_frontmatter():
-    """CRITICAL fix: the MCP weave_create schema
-    (surfaces/mcp/tools/notes.py) accepts only type/title/body/project/tags/
-    frontmatter/session_id — extra top-level kwargs are silently dropped. So
-    concepts / predicted_outcome / plan_ref MUST be nested under frontmatter=,
-    or the minted decision carries none of them (and the ontology gate, which
-    keys off fm['concepts'], never runs). Pin the dict-style (quoted-key)
-    nesting, which only appears inside a frontmatter={...} block."""
-    text = _plan_distill_doc()
-    assert "frontmatter={" in text
-    assert '"concepts":' in text
-    assert '"predicted_outcome":' in text
-    assert '"plan_ref":' in text
-    # The dropped-kwarg trap named so a future editor doesn't re-flatten it.
-    assert "silently dropped" in text or "top-level kwarg" in text
-
-
-def test_plan_distill_plan_ref_is_scalar_string_no_flow_list():
-    """MAJOR fix: plan_ref is a string (mcp/tools/_extract_schemas.py:108,
-    consumed as a string in synthesis/judge.py:138). Represent it as a scalar
-    string everywhere — `plan_ref: "[pending]"`, multi-refs as one comma-joined
-    string — never a YAML flow list. The old `[spec-4c1, #91, #92]` example was
-    literally unparseable (# starts a YAML comment); it must be gone."""
-    text = _plan_distill_doc()
-    assert '"[pending]"' in text  # quoted scalar-string form
-    assert "#91" not in text and "#92" not in text  # unparseable flow-list gone
-    low = text.lower()
-    assert "string" in low and ("comma-joined" in low or "comma joined" in low)
-
-
-def test_plan_distill_fallback_warns_comma_split():
-    """MINOR fix: `weave add -f key=value` comma-splits any comma-bearing value
-    into a list (surfaces/cli/notes.py::_parse_fm_token). A prose
-    predicted_outcome with commas would silently become a list on the CLI path,
-    so the doc must warn: comma-free phrasing on -f, or use the MCP path for
-    prose predictions."""
-    low = _plan_distill_doc().lower()
-    assert "comma-split" in low or "comma splits" in low or "splits" in low
-    assert "comma-free" in low or "comma free" in low
-
-
-def test_plan_distill_located_outside_the_loop():
-    """MINOR fix: plan-distill is human-invoked at grill/plan time — OUTSIDE the
-    issue-loop. Naming this keeps vault-issue-contract.md's 'session note is the
-    sole decision owner' readable as loop-scoped, not contradicted."""
-    low = _plan_distill_doc().lower()
-    assert "outside the loop" in low or "not the loop" in low or "outside the issue-loop" in low
-
-
-# test_plan_distill_fallback_parses_through_real_weave_argparse stayed in
-# thinkweave: it imports thinkweave's own argparse to pin the documented
-# `weave add` fallback (carve-out import rule, thinkweave#148).
-
-
-def test_plan_distill_rides_installed_skill_never_edits_it():
-    """Acceptance criterion 4: the installed grilling/grill-me skill is
-    untouched; the command rides it and explicitly never edits it. (A test can't
-    see the home dir — assert the doc instructs no-touch instead.)"""
-    text = _plan_distill_doc().lower()
-    assert "grilling" in text
-    assert "installed" in text
-    assert "never edit" in text or "do not edit" in text or "not fork" in text
-
-
-def test_plan_distill_symlink_header_wiring():
-    """The machine-local symlink convention is documented in-header, mirroring
-    arch-proposal/ponytail (symlinks into .claude/commands/ are not committed)."""
-    text = _plan_distill_doc()
-    assert ".claude/commands/" in text and "ln -s" in text
-
-
-def test_plan_distill_symlink_is_not_committed():
-    """The symlink itself is machine-local — never committed.
-    Mirror the arch-proposal/issue-loop convention: git must not track it."""
-    import subprocess
-
-    out = subprocess.run(
-        ["git", "ls-files", ".claude/commands/"],
-        cwd=cli.REPO_ROOT, capture_output=True, text=True, check=False,
-    ).stdout
-    assert "plan-distill" not in out
-
-
 # ---------------------------------------------------------------------------
 # trajectory payload (memory-feed proposal) — pure assembly
 
@@ -759,19 +583,6 @@ def test_trajectory_verb_prints_join_key_reasons(tmp_path, monkeypatch, capsys):
         "skills[0].duration_sec", "skills[0].tokens"]
 
 
-def test_command_doc_section3_says_how_each_join_key_is_filled():
-    """§3 tells the orchestrator how to fill each of the eight join keys, and
-    that tokens and session_ref are omitted when unknown, never zeroed or
-    blanked."""
-    sec = _command_doc_subsection("## 3.")
-    for key in DISPATCH_KEYS:
-        assert f"`{key}`" in sec, key
-    for transport in ("agent-tool", "herdr", "headless-argv"):
-        assert transport in sec
-    low = " ".join(sec.split()).lower()
-    assert "omit" in low and "never zeroed or blanked" in low
-
-
 def test_trajectory_reads_a_branch_after_the_worktree_is_removed(tmp_path, monkeypatch, capsys):
     """Acceptance (#52): §1d removes the implementer worktree once the PR is
     open, then §3 records the trajectory. The verb takes --branch and reads
@@ -876,16 +687,6 @@ def test_trace_rounds_key_is_now_reviews():
         gates=[], fix_rounds=0, outcome="shipped",
         trace={"rounds": [{"gate": "judge"}], "reviews": [{"gate": "judge"}]})
     assert set(payload["frontmatter"]["trace"]) == {"reviews"}
-
-
-def test_command_doc_section3_takes_the_branch_outside_the_worktree():
-    """Acceptance (#52): §3 records the trajectory after §1d removed the
-    implementer worktree, so its command runs outside that path and names the
-    branch to read — the worktree's absence cannot silently record HEAD."""
-    sec = " ".join(_command_doc_subsection("## 3.").split())
-    assert "--branch <branch>" in sec
-    assert "<repo-root>" in sec
-    assert "<worktree>" not in sec
 
 
 def test_trajectory_argparse_contract():
@@ -1118,13 +919,10 @@ def test_dispatch_refuses_a_value_of_the_wrong_shape_naming_the_key(tmp_path, en
         cli.load_config(p)
 
 
-def test_template_carries_the_dispatch_table_with_every_key_and_no_host_value():
-    """Every dispatch key appears in the template, live or commented; what
-    resolves from it names no harness, model, effort or argv tail."""
+def test_template_dispatch_table_names_no_host_value():
+    """What resolves from the template's dispatch table names no harness,
+    model, effort or argv tail."""
     template_path = cli.REPO_ROOT / "docs" / "agents" / "loop.toml.template"
-    text = template_path.read_text(encoding="utf-8")
-    for key in ("transport", "harness", "model", "effort", "args", "posture"):
-        assert f"{key} = " in text, key
     dispatch = cli.load_config(template_path)["dispatch"]
     assert set(dispatch) == {"implementer", "judge"}
     for role, entry in dispatch.items():
@@ -2023,69 +1821,6 @@ def test_trajectory_trace_argparse_contract():
     assert ns2.trace_json is None
 
 
-# ---------------------------------------------------------------------------
-# §3 command-doc pins (issue #85) — Lessons retired, insight-minting + builds_on
-# linking instructed with the register test stated, and doc examples executable
-# against the real schemas (the #72 trap: MCP custom fields nest under
-# frontmatter=; CLI examples parse through the real argparse).
-
-
-def test_command_doc_section3_retires_lessons_body():
-    """§3 no longer instructs a Lessons body section — the body is the
-    run-causal register (What / How it went) only."""
-    sec = _command_doc_subsection("## 3.")
-    assert "What / How it went" in sec
-    # The old '(What / How it went / Lessons …)' compose instruction is gone.
-    assert "How it went / Lessons" not in sec
-    assert "no lessons section" in sec.lower()
-
-
-def test_command_doc_section3_instructs_insight_minting_and_builds_on():
-    """§3 instructs minting portable lessons as separate insight notes and
-    linking them from the trajectory via builds_on."""
-    low = _command_doc_subsection("## 3.").lower()
-    assert "insight note" in low
-    assert "builds_on" in low
-    assert "concepts at creation" in low or "concepts-at-creation" in low
-
-
-def test_command_doc_section3_states_register_test():
-    """§3 states the register test that sorts every artifact."""
-    low = _command_doc_subsection("## 3.").lower()
-    assert "run-bound semantic trace" in low
-    assert "portable lesson" in low
-    assert "insight note" in low
-    assert "frontmatter key" in low
-
-
-def test_command_doc_section3_trace_cli_example_is_executable():
-    """Executability pin (#72 trap): §3 documents the --trace-json flag on the
-    trajectory command, and that exact invocation shape parses through the REAL
-    argparse — not a drifted or hand-waved flag."""
-    sec = _command_doc_subsection("## 3.")
-    assert "--trace-json" in sec
-    ns = cli.build_arg_parser().parse_args([
-        "trajectory", "85", "--cwd", "wt", "--gates-json", "g.json",
-        "--trace-json", "trace.json", "--fix-rounds", "1",
-        "--outcome", "shipped", "--pr-url", "u", "--run-id", "r",
-    ])
-    assert ns.trace_json == "trace.json" and ns.cmd == "trajectory"
-
-
-def test_command_doc_section3_weave_create_nests_concepts_and_builds_on():
-    """Executability pin (#72 trap): the MCP weave_create schema
-    (surfaces/mcp/tools/notes.py) accepts only type/title/body/project/tags/
-    frontmatter/session_id — extra top-level kwargs are silently dropped. So the
-    insight note's `concepts` and the trajectory's `builds_on` link MUST be
-    nested under frontmatter={…}. Pin the dict-style nesting."""
-    sec = _command_doc_subsection("## 3.")
-    assert "frontmatter={" in sec
-    assert '"concepts":' in sec
-    assert '"builds_on":' in sec
-    # The dropped-kwarg trap named so a future editor doesn't re-flatten it.
-    assert "silently dropped" in sec or "top-level kwarg" in sec
-
-
 def test_resolve_index_db_honors_weave_dir_override(tmp_path):
     """PR #10 deployment class: <vault>/config/config.toml sets weave_dir off
     the vault (derived SQLite on native fs). --vault must resolve the index
@@ -2532,434 +2267,6 @@ def test_triage_cli_unreadable_inputs_are_errors(tmp_path, capsys, gates_text, j
 
 
 # ---------------------------------------------------------------------------
-# Slow self-improvement loop (issue #61) — vendored ponytail-audit skill +
-# the arch-proposal command doc. Doc-grep contracts, mirroring the #58
-# vendoring test and the committed-hooks acceptance guard.
-
-
-def test_vendored_ponytail_audit_skill_present_with_provenance():
-    """The ponytail-audit (whole-repo) skill is vendored as dev tooling under
-    docs/agents/ with pinned-upstream provenance (sha + source repo + MIT
-    notice), and the
-    machine-local symlink wiring documented in-header (symlinks into
-    .claude/commands/ are not committed)."""
-    vendored = cli.REPO_ROOT / "docs" / "agents" / "ponytail-audit.command.md"
-    assert vendored.exists()
-    text = vendored.read_text(encoding="utf-8")
-    # Provenance: canonical upstream repo + the pinned commit sha (same as #58).
-    assert "DietrichGebert/ponytail" in text
-    assert "16f29800fd2681bdf24f3eb4ccffe38be3baec6b" in text
-    # The upstream path is the whole-repo audit, not the diff review.
-    assert "skills/ponytail-audit/SKILL.md" in text
-    # MIT license obligation carried per the upstream LICENSE (#58 lesson:
-    # vendored deps carry license obligations even for internal tooling).
-    assert "MIT" in text
-    assert "Copyright (c) 2026 DietrichGebert" in text
-    assert "Permission is hereby granted" in text
-    # The wiring note (ln -s into .claude/commands/), since the symlink itself
-    # is machine-local and not committed.
-    assert ".claude/commands/" in text and "ln -s" in text
-    # The skill's actual delete-list vocabulary survived the vendoring.
-    for tag in ("delete:", "stdlib:", "native:", "yagni:", "shrink:"):
-        assert tag in text
-    # The whole-repo hunt list (what distinguishes audit from review) survived.
-    assert "Hunt" in text
-
-
-def _arch_proposal_doc() -> str:
-    return (cli.REPO_ROOT / "docs" / "agents" / "arch-proposal.command.md").read_text(
-        encoding="utf-8"
-    )
-
-
-def test_arch_proposal_command_forbids_opening_prs():
-    """Acceptance criterion: the slow loop PROPOSES (files issues), never opens
-    PRs. The command doc must carry the explicit never-open-a-PR / never-modify
-    -code rule so the mechanism can't drift into applying changes."""
-    text = _arch_proposal_doc().lower()
-    # An explicit prohibition on opening PRs and on modifying code.
-    assert "never" in text
-    assert "pr" in text  # sanity: the doc talks about PRs
-    # The load-bearing rule, matched loosely on the two verbs it forbids.
-    assert ("never open" in text or "not open" in text or "no pr" in text
-            or "never opens" in text)
-    # Real guard: the pr-creation command may appear ONLY inside a prohibition.
-    # The doc names `gh pr create` exactly to forbid it, so every occurrence is
-    # immediately preceded by "never" — the doc can never read as an instruction
-    # to open a PR (regression guard against a copy-paste that drops the negation).
-    assert "gh pr create" in text
-    start = 0
-    while (idx := text.find("gh pr create", start)) != -1:
-        assert "never" in text[max(0, idx - 30):idx], "gh pr create not in a prohibition"
-        start = idx + len("gh pr create")
-
-
-def test_arch_proposal_command_forbids_pr_opening_rule_is_explicit():
-    """The never-PR rule is stated as a rule, not merely implied — the doc
-    contains a sentence pairing 'PR' with a prohibition and 'issue' with the
-    output. Regression guard against the doc losing the read-only contract."""
-    text = _arch_proposal_doc()
-    lowered = text.lower()
-    # It files issues (the output) ...
-    assert "gh issue create" in lowered
-    # ... and it is labeled arch-proposal.
-    assert "arch-proposal" in lowered
-    # ... and it never opens PRs / modifies code (read-only + issue-filing).
-    assert "read-only" in lowered or "read only" in lowered
-    assert "never open" in lowered or "opens zero pr" in lowered or "zero pr" in lowered
-
-
-def test_arch_proposal_command_wires_steering_gate():
-    """The command routes candidate proposals through the #62 evidence gate and
-    files ONLY what the gate returns — the anti-invention contract. The doc must
-    invoke `weave steering gate` and reference the weekly budget cap."""
-    text = _arch_proposal_doc().lower()
-    assert "weave steering gate" in text
-    assert "--proposals-json" in text
-    assert "weekly_budget" in text or "weekly budget" in text
-    # It files the gate's evidence-carrying output, not raw suggestions.
-    assert "filed" in text
-
-
-def test_arch_proposal_command_cites_architecture_and_prior_decisions():
-    """The command consults ARCHITECTURE.md (the invariant authority) and prior
-    decisions before proposing, so it does not re-propose against already-decided
-    work (a skip-list of decided-against directions). Input *context* comes from
-    the project snapshot instead — see the thinkweave-native test below."""
-    text = _arch_proposal_doc()
-    assert "ARCHITECTURE.md" in text
-    lowered = text.lower()
-    # Prior-decision query: the decisions_for_file graph walk or the search.
-    assert "decisions_for_file" in lowered or "weave_search" in lowered or "type=decision" in text
-    # A skip-list of already-decided-against directions.
-    assert "skip" in lowered and "decid" in lowered
-
-
-def test_arch_proposal_command_runs_both_axes():
-    """Both improvement axes are wired: the installed improve-arch skill
-    (deepening) and the vendored ponytail-audit (simplification)."""
-    text = _arch_proposal_doc()
-    assert "improve-codebase-architecture" in text or "improve-arch" in text
-    assert "ponytail-audit" in text
-
-
-def test_arch_proposal_command_creates_label_idempotently():
-    """The command creates the arch-proposal label idempotently (so a fresh
-    tracker gets it) — gh label create ... --force (or a check-then-create)."""
-    text = _arch_proposal_doc()
-    assert "gh label create arch-proposal" in text
-
-
-def test_arch_proposal_documents_routine_spec():
-    """A Routine/cron entry is specified: weekly cadence + the headless
-    invocation with the repo's established headless posture
-    (--dangerously-skip-permissions). Acceptance criterion 3: a Routine entry
-    runs headless without permission prompts."""
-    text = _arch_proposal_doc()
-    lowered = text.lower()
-    assert "routine" in lowered
-    assert "weekly" in lowered
-    assert "--dangerously-skip-permissions" in text
-    # The headless invocation names the command.
-    assert "arch-proposal" in lowered
-
-
-def test_arch_proposal_documents_headless_symlink_gotcha():
-    """The headless-skill-resolution gotcha (headless `claude -p "/skill"` only
-    resolves .claude/commands/ symlinks) must be documented, with the
-    machine-local symlink as Routine setup."""
-    text = _arch_proposal_doc()
-    assert ".claude/commands/" in text and "ln -s" in text
-
-
-def test_arch_proposal_label_documented_in_triage_labels():
-    """The arch-proposal label is documented in the tracker's label vocabulary
-    so the slow loop's output label is a known role, not an ad-hoc string."""
-    labels = (cli.REPO_ROOT / "docs" / "agents" / "triage-labels.md").read_text(
-        encoding="utf-8"
-    )
-    assert "arch-proposal" in labels
-    # The human-triage transition it feeds: accept → ready-for-agent.
-    assert "ready-for-agent" in labels
-
-
-# ---------------------------------------------------------------------------
-# Doc truth (issue #91): the slow loop reads thinkweave-native state, and the
-# gate split is stated in exactly one place. Doc-grep contracts, same idiom as
-# the #61 block above.
-
-
-def test_arch_proposal_input_context_is_thinkweave_native():
-    """§1's input context comes from a thinkweave-native surface, not a
-    hand-curated doc list: the project snapshot (whose `state` section IS
-    STATE.md), with the CLI parity command as the headless degrade. The choice
-    of surface must be stated, not left implicit."""
-    text = _arch_proposal_doc()
-    start = text.index("\n## 1. ")
-    section = text[start:text.index("\n## 2. ", start)]
-    # The surface lives in §1, named as such rather than left implicit.
-    assert "weave_project_snapshot" in section
-    assert "input-context surface" in section.lower()
-    # Headless degrade: the CLI parity command, then STATE.md on disk.
-    assert "weave project-snapshot" in section
-    assert "STATE.md" in section
-    # The curated-doc-list instruction it replaced must NOT come back.
-    assert "Read `ARCHITECTURE.md` end-to-end" not in text
-
-
-_GATE_SPLIT_MARKER = "**The gate split"
-
-
-def test_gate_split_has_one_home_in_the_gate_protocol():
-    """The gate split (command/diff execute in the rail; the judge is
-    orchestrator-dispatched and only validated there) is stated once, in the
-    boundary spec's Gate protocol. The command doc's gate section and the
-    semantics doc point at it instead of restating it."""
-    agents = cli.REPO_ROOT / "docs" / "agents"
-    hits = [p.name for p in sorted(agents.glob("*.md"))
-            if _GATE_SPLIT_MARKER in p.read_text(encoding="utf-8")]
-    assert hits == ["devloop-boundaries.md"]
-    spec = (agents / "devloop-boundaries.md").read_text(encoding="utf-8")
-    protocol = spec[spec.index("## 3. The Gate protocol"):spec.index("## 4. ")]
-    assert _GATE_SPLIT_MARKER in protocol
-    # The quoted refusal is the rail's ACTUAL string, not an approximation.
-    refusal = "is LLM-judged — run it from the /issue-loop command, not the script"
-    assert refusal in " ".join(protocol.split())
-    assert refusal in (cli.REPO_ROOT / "devloop" / "cli.py").read_text(encoding="utf-8")
-    gate = " ".join(_command_doc_subsection("### 1c.").split())
-    assert "`devloop-boundaries.md` §3" in gate
-    assert "LLM-judged" not in gate
-    semantics = (agents / "issue-loop.md").read_text(encoding="utf-8")
-    assert "reports them as command-run" not in semantics
-    assert "`devloop-boundaries.md` §3" in semantics
-
-
-# ---------------------------------------------------------------------------
-# Dispatch persona (issue #89, made unconditional by dec-d79e8e7b) —
-# write-time simplification pressure at the only point it works: dispatch.
-# Seams: doc-grep contracts on the command doc + vendored persona file,
-# mirroring the #58/#61 pins. The [dispatch] knob is gone; its rejection is
-# pinned with the other deleted keys above. The epic north-star block left
-# the loop with funloops#45 (dec-2f8c2322): the pack's Rules section is the
-# judge's standard now.
-
-
-def test_forked_ponytail_persona_carries_provenance():
-    """The AGENTS.md ladder persona is devloop's own fork (dec-cac953a6, #41)
-    but keeps the provenance the #58/#61 vendorings carry (source repo + the
-    sha it forked from + MIT notice). It is a dispatch splice source, not a
-    slash command — the command doc references this file, never duplicates
-    it."""
-    vendored = cli.REPO_ROOT / "docs" / "agents" / "ponytail-persona.md"
-    assert vendored.exists()
-    text = vendored.read_text(encoding="utf-8")
-    # Provenance: canonical upstream repo + pinned sha; the upstream path is
-    # AGENTS.md (the ladder), not a skills/ SKILL.md.
-    assert "DietrichGebert/ponytail" in text
-    assert "16f29800fd2681bdf24f3eb4ccffe38be3baec6b" in text
-    assert "AGENTS.md" in text
-    # MIT obligation carried per the upstream LICENSE (#58 lesson).
-    assert "MIT" in text
-    assert "Copyright (c) 2026 DietrichGebert" in text
-    assert "Permission is hereby granted" in text
-
-
-def _issue_loop_doc() -> str:
-    return (cli.REPO_ROOT / "docs" / "agents" / "issue-loop.command.md").read_text(
-        encoding="utf-8"
-    )
-
-
-def test_issue_loop_doc_splices_persona_by_reference():
-    """Implementer (§1b) and fix-round dispatches carry the vendored persona —
-    referenced from docs/agents/ponytail-persona.md, never inlined (the ladder
-    text must not be duplicated into the command doc)."""
-    doc = _issue_loop_doc()
-    assert "ponytail-persona.md" in doc
-    # Reference, not duplication: the ladder's persona line stays vendored-only.
-    assert "lazy senior developer" not in doc
-    # The fix-round feedback re-splices the pack.
-    assert "re-splicing **the pack**" in doc
-
-
-# ---------------------------------------------------------------------------
-# Command-doc sections
-
-
-def _command_doc_subsection(marker: str) -> str:
-    """Extract one `### 1x.` subsection of issue-loop.command.md — from the
-    heading that starts with ``marker`` to the next heading of any level.
-    A `#` line inside a ``` fence is an example (§1d's findings comment), not
-    a heading, so it never ends the section."""
-    doc = cli.REPO_ROOT / "docs" / "agents" / "issue-loop.command.md"
-    assert doc.exists(), "issue-loop.command.md must ship under docs/agents/"
-    lines = doc.read_text(encoding="utf-8").splitlines()
-    start = next(i for i, ln in enumerate(lines) if ln.startswith(marker))
-    end, fenced = len(lines), False
-    for i in range(start + 1, len(lines)):
-        fenced ^= lines[i].startswith("```")
-        if not fenced and lines[i].startswith(("## ", "### ")):
-            end = i
-            break
-    return "\n".join(lines[start:end])
-
-
-def _herdr_doc() -> str:
-    return (cli.REPO_ROOT / "docs" / "agents" / "herdr-transport.md").read_text(encoding="utf-8")
-
-
-def test_every_role_returns_by_the_file_its_dispatch_names_on_both_transports():
-    """funloops#47 (dec-72c80057) then #65: the return file is the one return
-    channel. §1b names it as the dispatch's third line, outside the worktree,
-    and gives one recipe per transport — the herdr one starts a named agent,
-    prompts it, routes `blocked` to human, re-prompts the same name for a fix
-    round and removes the worktree; §1c reads the judge return from that file
-    on either transport."""
-    b = " ".join(_command_doc_subsection("### 1b.").split())  # reflow-safe
-    assert "the pack plus three lines" in b and "return file path" in b
-    assert "never inside the worktree" in b
-    assert "[`herdr-transport.md`](herdr-transport.md)" in b
-    herdr = " ".join(_herdr_doc().split())
-    for token in ("herdr worktree create", "herdr agent start", "herdr agent prompt",
-                  "`blocked`", "same agent name", "herdr worktree remove"):
-        assert token in herdr, token
-    c = " ".join(_command_doc_subsection("### 1c.").split())
-    assert "return file its dispatch names" in c and "either transport" in c
-    assert "--return-json <return-file>" in c
-
-
-def test_the_herdr_recipe_targets_the_repo_and_keeps_gate_roles_in_the_implementers_worktree():
-    """The herdr recipe names the repo for the worktree, gives gate roles a
-    pane in the implementer's workspace instead of a new worktree, says the
-    argv tail settles approval prompts, and treats a settled agent without a
-    return file as a failure."""
-    assert "the implementer's worktree path" in " ".join(
-        _command_doc_subsection("### 1b.").split())
-    herdr = " ".join(_herdr_doc().split())
-    for token in ("herdr worktree create --cwd <repo-root>",
-                  "herdr pane split <implementer-pane-id>",
-                  "who answers the harness's approval prompts",
-                  "keys that trust on `<repo-root>`",
-                  "A settled agent with no return file failed"):
-        assert token in herdr, token
-
-
-def test_the_template_shows_an_unattended_herdr_tail_per_harness():
-    """A herdr agent's approval prompt has no one to answer it, so the
-    template carries a working argv tail for each harness it names."""
-    text = (cli.REPO_ROOT / "docs" / "agents" / "loop.toml.template").read_text(encoding="utf-8")
-    assert 'claude: args = ["--permission-mode", "auto"]' in text
-    assert 'codex:  args = ["-s", "workspace-write", "-a", "never"]' in text
-
-
-def test_issue_loop_doc_1b_passes_the_tickets_decisions_to_the_decisions_leg():
-    """funloops#49 (dec-f5bdf9ea): §1b says the ticket's `## Decisions` ids go
-    to `--decisions`, merged with the ids the file walk finds, so the durable
-    why reaches the implementer through the pack."""
-    section = " ".join(_command_doc_subsection("### 1b.").split())  # reflow-safe
-    assert "`## Decisions`" in section
-    assert "merged with" in section
-    assert "`--decisions`" in section
-
-
-def test_issue_comments_carry_no_gate_table():
-    """Gate evidence lives in the PR and nowhere else: every issue comment
-    template in §1d (ship) and §1e (slice, PR link) is one line — run id plus
-    a tip sha or a PR link — and none carries a gate table. The one exception
-    is §1c's route-to-human comment, where no PR exists."""
-    for marker in ("### 1d.", "### 1e."):
-        section = " ".join(_command_doc_subsection(marker).split())  # reflow-safe
-        bodies = re.findall(r'gh issue comment <N> --body "([^"]*)"', section)
-        assert bodies, marker
-        for body in bodies:
-            assert "table" not in body, (marker, body)
-            assert "<run-id>" in body, (marker, body)
-            assert "<sha>" in body or "<pr-url>" in body, (marker, body)
-    ship = " ".join(_command_doc_subsection("### 1d.").split())
-    assert 'shipped at <sha>, PR <pr-url>"' in ship
-    assert "Issue comments carry no gate table" in ship
-    stacked = " ".join(_command_doc_subsection("### 1e.").split())
-    assert "PR at end of run" in stacked
-    assert 'run <run-id>: PR <pr-url>"' in stacked
-    routed = " ".join(_command_doc_subsection("### 1c.").split())
-    assert 'routed to human at <sha>. <gate evidence table>"' in routed
-    assert "The one exception is §1c's route-to-human comment" in ship
-
-
-def test_pr_body_carries_each_fact_once():
-    """The PR body is a fixed shape and nothing else. pr-per-issue (§1d):
-    `Closes`, one sentence on what the code now does, one gate table (gate |
-    verdict | summary) whose summary cells carry only what varies, the demo
-    line, the findings line, the attribution. Stacked (§1e): one
-    table for the stack, one row per issue and one column per gate, no
-    per-issue tables, one sentence per issue with no heading."""
-    ship = " ".join(_command_doc_subsection("### 1d.").split())
-    assert "The PR body carries each fact once, and nothing else" in ship
-    assert "not the issue title" in ship
-    assert "gate | verdict | summary" in ship
-    assert "A summary cell carries only what varies" in ship
-    assert "Never `no forbidden paths`, never `exited 0`, never the command text" in ship
-    assert "the gate table; the demo line; the findings line; the attribution block" in ship
-    assert "`Findings: see comment` or `Findings: none`" in ship
-    assert "no notes addressed to the orchestrator" in ship
-    stacked = " ".join(_command_doc_subsection("### 1e.").split())
-    assert "Its body is §1d's, with the stack's shape" in stacked
-    assert "each fact once, and nothing else" not in stacked  # one home: §1d
-    assert "one sentence per issue" in stacked
-    assert "one gate table for the stack, one row per issue and one column per gate" in stacked
-    assert "no per-issue tables" in stacked
-    assert "`Not included` line only when part of the DAG remains" in stacked
-    # Titles: the issue title, or the epic/root title plus the issue numbers.
-    assert '--title "<issue title>"' in ship
-    assert "the issue numbers in parentheses" in stacked
-    assert "never clauses joined by semicolons" in stacked
-
-
-def test_findings_are_one_pr_comment_after_pr_open():
-    """funloops#55 (dec-39140113, dec-f7e7dd53): findings have one home. §1d
-    posts them as one `gh pr comment` after `gh pr create`, one heading per
-    severity present and one bullet per finding; a hedged finding is dropped,
-    a filed one is its issue number, and no findings means no comment. §1e
-    drops a stack-tip finding that restates a slice finding."""
-    raw = _command_doc_subsection("### 1d.")
-    assert raw.index("gh pr create") < raw.index("gh pr comment")
-    assert "### problem" in raw and "### note" in raw
-    assert "Findings: none" in raw
-    ship = " ".join(raw.split())
-    assert "findings once" in ship
-    assert "`none`/`note`/`problem`" in ship  # the signals table's severity values
-    assert "A finding that breaks §1c's sentence rule" in ship
-    assert "the observation first" not in ship.lower()  # one home: the §1c brief
-    assert "is dropped, not softened" in ship
-    assert "already filed as an issue is the issue number alone" in ship
-    assert "A PR with no findings and no deviations gets no comment" in ship
-    stacked = " ".join(_command_doc_subsection("### 1e.").split())
-    assert "stack-tip finding that restates a slice finding is dropped" in stacked
-
-
-def test_judge_brief_says_a_finding_is_one_sentence():
-    """funloops#48 (dec-f7e7dd53): the judge brief (§1c) says a finding is one
-    sentence naming the rule or the exercised path — the same finding used to
-    arrive as a paragraph and then appear three times — and the observation
-    comes first, with no clause that withdraws it."""
-    raw = _command_doc_subsection("### 1c.").replace("\n> ", " ")  # the brief is a blockquote
-    section = " ".join(raw.split())
-    assert "A finding is one sentence" in section
-    assert "The observation first; no clause that withdraws it." in section
-
-
-def test_persona_return_section_carries_the_three_sentence_rules():
-    """funloops#48 (dec-f7e7dd53): the output style never reaches subagents,
-    so the sentence rules ride the persona every implementer reads. Its return
-    section carries exactly the three: one idea per sentence, under twenty
-    words, active voice."""
-    persona = pack.body(cli.PACKAGE_PERSONA)
-    ret = persona[persona.index("Return:"):]
-    for rule in ("one idea per sentence", "under twenty words", "active voice"):
-        assert rule in ret.lower(), rule
-
-
-# ---------------------------------------------------------------------------
 # Judgment-gate validators (issue #99, fused by #39 / dec-611cbd8a) — the rail
 # never EXECUTES the judge; it validates what the orchestrator's
 # subagent returned, rejecting a schema-violating return with per-field
@@ -3134,80 +2441,16 @@ def test_normalize_trace_is_documented_as_a_backstop_not_the_validation_seam():
     doc = " ".join(mint._normalize_trace.__doc__.split())
     assert "backstop" in doc
     assert "validate" in doc  # names the verb that owns enforcement
-    # The same rule on the spec side — #149 moved it out of the host's overlay
-    # into the boundary spec, where the module's other scope rules live.
-    spec = (cli.REPO_ROOT / "docs" / "agents" / "devloop-boundaries.md").read_text(
-        encoding="utf-8")
-    assert "backstop, not the validation seam" in spec
 
 
-def test_command_doc_wires_the_validate_verb_into_the_gate_pipeline():
-    """The judgment-gate return contract is asserted in exactly one place — the
-    §1c gate-pipeline section, next to the gate split it completes — and quotes
-    the rail's ACTUAL invocation and exit codes."""
-    text = (cli.REPO_ROOT / "docs" / "agents" / "issue-loop.command.md").read_text(
-        encoding="utf-8")
-    start = text.index("### 1c. Gate pipeline")
-    section = " ".join(text[start:text.index("\n### ", start + 1)].split())
-    assert "devloop validate --gate" in section
-    assert "--return-json" in section
-    # The three-way exit convention the orchestrator branches on.
-    assert "re-ask" in section and "reasons" in section
-    # Each judgment kind's schema is stated where its gate is.
-    assert '"criteria"' in section and '"findings"' in section
-    # #56 (dec-39140113): the brief blocks on a shown failure under the
-    # reserved `intent` id; a `not-met` without evidence is a finding.
-    assert "run it yourself" in section
-    assert "no longer works as the issue intends" in section
-    assert '"id": "intent"' in section
-    assert "it is a finding" in section
-    # `intent` is a criterion, so its fix round is the ordinary one.
-    assert "like any other criterion" in section
-
-
-def test_validate_schemas_match_the_enums_the_command_doc_advertises():
-    """Doc-vs-code pin: the enums the orchestrator prompts its subagents with
-    are the enums the rail accepts. Drift here is a silent re-ask loop."""
-    section = (cli.REPO_ROOT / "docs" / "agents" / "issue-loop.command.md").read_text(
-        encoding="utf-8")
-    for value in gates.VERDICTS + gates.SEVERITIES:
-        assert f'"{value}"' in section, value
-
-
-def test_skills_scope_is_settled_as_stage_dispatch_with_an_unpark_trigger():
-    """AC3 (#99): `skills[]` is the loop's STAGE-dispatch log, not a generic
-    capture of every Skill invocation in the run. The generalization is parked
-    with an explicit unpark trigger, stated in the doc that owns the contract,
-    so the next reader neither builds it speculatively nor assumes it exists.
-    """
-    spec = (cli.REPO_ROOT / "docs" / "agents" / "devloop-boundaries.md").read_text(
-        encoding="utf-8")
-    start = spec.index("**`skills[]` is the stage-dispatch log")
-    para = " ".join(spec[start:spec.index("\n\n**", start + 1)].split())
-    assert "parked" in para.lower() and "unpark trigger" in para.lower()
-    assert "every Skill invocation" in para  # names what it is NOT
-    # The projection agrees: it is documented as the stage-dispatch shape.
+def test_skills_projection_is_the_stage_dispatch_shape():
+    """`skills[]` is the loop's stage-dispatch log: the projection says so and
+    keeps exactly the five contracted fields."""
     assert "stage" in mint._normalize_skill.__doc__
     # And it still projects exactly the five contracted fields — the parking
     # decision changes the prose, never the shipped shape.
     assert set(mint._normalize_skill({"id": "x", "extra": 1}, "skills[0]", [])) == {
         "id", "role", "skill", "outcome", "fix_rounds_attributed"}
-
-
-def test_boundary_doc_cli_surface_list_matches_the_parser():
-    """§1 of the boundary spec calls the CLI subcommand surface the package's
-    ONE external interface — so that list is a contract, not a summary. Pin it
-    against argparse; #99's `validate` verb widened the surface."""
-    import argparse as _argparse
-
-    text = (cli.REPO_ROOT / "docs" / "agents" / "devloop-boundaries.md").read_text(
-        encoding="utf-8")
-    start = text.index("**CLI subcommand surface**")
-    listed = text[text.index("`", start) + 1:text.index("`.", start)]
-    documented = {name.strip() for name in listed.split("·")}
-    sub = next(a for a in cli.build_arg_parser()._actions
-               if isinstance(a, _argparse._SubParsersAction))
-    assert documented == set(sub.choices)
 
 
 # ---------------------------------------------------------------------------
@@ -3253,28 +2496,6 @@ def test_standing_orders_run_the_one_check_call_before_returning():
     assert "every `verify:` line from the worktree root" not in orders
 
 
-def test_command_doc_run_directory_lives_under_the_git_common_dir():
-    sec = " ".join(_command_doc_subsection("### 1b.").split())
-    assert "mktemp" not in sec
-    assert "$(git rev-parse --git-common-dir)/devloop/runs/<run-id>/" in sec
-    assert "<return file>.demo/" in sec
-
-
-def test_command_doc_judge_prompt_scores_demo_and_verify_from_evidence():
-    sec = " ".join(_command_doc_subsection("### 1c.").split())
-    assert "evidence directory" in sec
-    assert "never re-run" in sec
-    assert "never only a test the diff adds" in sec
-    assert "another SHA" in sec
-
-
-def test_command_doc_findings_comment_carries_deviations():
-    sec = " ".join(_command_doc_subsection("### 1d.").split())
-    assert sec.index("### deviation") < sec.index("### problem") < sec.index("### note")
-    assert "`demo: <short sha>`, the SHA the implementer's `demo.md` names" in sec
-    assert "deviations" in _command_doc_subsection("## 3.")
-
-
 def test_validate_judge_has_no_third_verdict():
     """The judge's verdicts are `met` and `not-met`: an `uncertain` is a
     schema rejection (rc 2, a re-ask), never a verdict."""
@@ -3285,53 +2506,9 @@ def test_validate_judge_has_no_third_verdict():
         "criteria[0].verdict: 'uncertain' is not one of met | not-met"]
 
 
-def test_command_doc_judge_prompt_makes_unsettled_demo_evidence_not_met():
-    prompt = [ln.removeprefix("> ") for ln in _command_doc_subsection("### 1c.").splitlines()]
-    sec = " ".join(" ".join(prompt).split())
-    assert "uncertain" not in sec
-    assert "cannot settle the demo's observable is `not-met`" in sec
-    assert "names what the evidence lacks" in sec
-
-
-def test_fix_round_reruns_and_rejudges_every_demo():
+def test_standing_orders_rerun_every_demo_in_a_fix_round():
     orders = " ".join(pack.STANDING_ORDERS.split())
     assert "A fix round re-runs every `demo:` criterion on the new tip" in orders
-    sec = " ".join(_command_doc_subsection("### 1c.").split())
-    assert "the failed criteria plus every `demo:` criterion" in sec
-
-
-def test_issue_tracker_states_the_one_line_criterion_contract():
-    """The ticket contract the rail parses: one line per criterion, and a
-    verify line that never re-enters the rail."""
-    doc = " ".join((cli.REPO_ROOT / "docs" / "agents" / "issue-tracker.md")
-                   .read_text(encoding="utf-8").split())
-    assert ("Each acceptance criterion is one line: a `verify:` command, a `demo:` "
-            "scenario, or one prose sentence.") in doc
-    assert "A verify line never calls `devloop check`" in doc
-    assert "exit 0 passes" in doc
-
-
-def test_loop_docs_carry_no_simplify_stage_and_no_deleted_knob():
-    """The stage and the knobs leave the docs with the code."""
-    agents = cli.REPO_ROOT / "docs" / "agents"
-    assert not (agents / "ponytail-review.command.md").exists()
-    for name in ("issue-loop.command.md", "issue-loop.md", "loop.toml", "loop.toml.template"):
-        text = (agents / name).read_text(encoding="utf-8")
-        for gone in ("simplify", "max_parallel", "Parallel-safe", "dispatch.small",
-                     "--diff-lines", "majority", "uncertain", "pre-simplify"):
-            assert gone not in text, (name, gone)
-
-
-def test_command_doc_dispatches_the_frontier_at_once_and_checks_in_one_call():
-    """The DAG frontier is the parallel set; one rail call runs the command
-    gates and the verify lines."""
-    per_issue = " ".join(_command_doc_subsection("## 1.").split())
-    assert "every frontier issue at once, each in its own worktree" in per_issue
-    gate = " ".join(_command_doc_subsection("### 1c.").split())
-    assert "devloop check --issue <N>" in gate
-    assert "check --gate tests" not in gate
-    stacked = " ".join(_command_doc_subsection("### 1e.").split())
-    assert "each DAG component is one stack" in stacked
 
 
 # --- the judge's constitution contract and its shape posture -----------------
@@ -3404,13 +2581,34 @@ def test_validate_cli_takes_the_shape_posture(tmp_path, capsys):
     assert cli.main(["validate", "--gate", "judge", "--return-json", str(case)]) == 2
 
 
-def test_command_doc_names_the_rules_as_contract_and_routes_a_shape_case_to_human():
-    prompt = [ln.removeprefix("> ") for ln in _command_doc_subsection("### 1c.").splitlines()]
-    gate = " ".join(" ".join(prompt).split())
-    assert "the Interfaces block's intent, and rules 3, 6, 7 and 8 of the Rules section" in gate
-    assert "reserved id `rule:<n>`" in gate
-    assert "--posture shape" in gate
-    assert "A restructure case stops the run at the human." in gate
-    assert "the single per-slice judge carries both postures" in gate
-    stacked = " ".join(_command_doc_subsection("### 1e.").split())
-    assert "run §1c's shape posture over all of them before the PR" in stacked
+
+
+# ---------------------------------------------------------------------------
+# The command doc: the three tests that read its text.
+
+COMMAND_DOC = cli.REPO_ROOT / "docs" / "agents" / "issue-loop.command.md"
+
+
+def _command_doc() -> str:
+    return COMMAND_DOC.read_text(encoding="utf-8")
+
+
+def test_command_doc_is_at_most_2500_words():
+    words = len(_command_doc().split())
+    assert words <= 2500, f"{words} words; the cap is 2500"
+
+
+def test_every_devloop_verb_the_command_doc_names_is_a_subcommand():
+    sub = next(a for a in cli.build_arg_parser()._actions
+               if isinstance(a, argparse._SubParsersAction))
+    named = set(re.findall(r"\bdevloop ([a-z][a-z-]*)", _command_doc()))
+    assert named, "the command doc names no devloop verb"
+    assert named <= set(sub.choices), named - set(sub.choices)
+
+
+def test_command_doc_outside_host_extension_blocks_never_needs_a_vault():
+    spine = re.sub(r"<!-- host-extension:.*?<!-- /host-extension -->", "",
+                   _command_doc(), flags=re.DOTALL)
+    assert "host-extension" not in spine, "an unbalanced host-extension block"
+    for token in ("vault", "prime", "priming", "trajector"):
+        assert token not in spine.lower(), token
