@@ -12,23 +12,17 @@
 #
 # Read by the `devloop` rail (`uv run devloop config`) and by the /issue-loop
 # command (orchestration). Semantics: issue-loop.md. Per-run posture belongs on
-# the command line, not in edits to this file: every knob in
-# [loop]/[labels]/[tdd]/[triage] takes `--set [section.]key=value` for a
-# single run, and every [dispatch.<role>] key takes
-# `--set dispatch.<role>.<key>=<value>` (the size tier:
-# `--set dispatch.small[.<role>].<key>=<value>`). Gates are file-only by design — the
-# pipeline is a trust boundary you change in review-visible history, not a
-# per-run mood. A key the rail does not know is refused by name, on both paths.
+# the command line, not in edits to this file: `--set` and its sugar are
+# issue-loop.command.md §0's.
 
 [loop]
 max_issues_per_run = 3   # token guardrail: issues processed per invocation
-max_parallel = 1         # frontier width dispatched concurrently (>1 = worktrees)
 max_fix_rounds = 2       # implement→gates→fix iterations before routing to human; never extended mid-run
 training_mode = true     # pause for human approval before push/PR; flip when trusted
 branch_prefix = "loop/issue-"
 require_green_baseline = true   # red suite on main → refuse to implement
-run_mode = "pass"        # pass: one frontier pass | exhaust: re-plan until dry
-delivery = "pr-per-issue"  # pr-per-issue | stacked (one branch, one final PR)
+run_mode = "pass"          # pass | exhaust (issue-loop.command.md §0)
+delivery = "pr-per-issue"  # pr-per-issue | stacked (issue-loop.command.md §0)
 
 [tdd]
 # auto: TDD is ENFORCED iff the per-run baseline probe is green.
@@ -59,11 +53,11 @@ sensitive_paths = []
 # in every adopting repo), and the constitution's amendment path relies on a
 # human seeing the diff.
 watched_paths = ["docs/agents/"]
-red_min_diff_lines = 800         # "big diff" → red (a signal for the human lane, never a block)
+red_diff_lines = 800             # "big diff" → red (a signal for the human lane, never a block)
 
 # ── Dispatch ──────────────────────────────────────────────────────────────
 # Which agent runs each role. Run posture, so every key takes --set for one
-# run. A role IS its entry: implementer, judge and simplify always resolve,
+# run. A role IS its entry: implementer and judge always resolve,
 # and one more [dispatch.<role>] table declares one more role (plus its
 # section in issue-loop.command.md); a key outside the six is refused by
 # name. Absent keys mean the Agent tool in the orchestrator's own
@@ -79,11 +73,10 @@ transport = "agent-tool"    # agent-tool | herdr
 # args = ["--model", "opus"]  # literal argv tail after `--`; the host writes it
 
 [dispatch.judge]
-posture = "reader"
-transport = "agent-tool"
-
-[dispatch.simplify]
-posture = "reader"
+# reader: the per-slice judge, its pack the touched modules in full.
+# shape: the stack-tip pass over every touched module and its edges
+# (`devloop pack <N...> --role judge --posture shape`).
+posture = ["reader", "shape"]
 transport = "agent-tool"
 
 # On herdr the agent runs in its own terminal, so nobody answers its approval
@@ -98,30 +91,17 @@ transport = "agent-tool"
 # Try a role on herdr for one run with
 # `--set dispatch.judge.transport=herdr --set dispatch.judge.harness=codex`.
 # [dispatch.judge]
-# posture = "reader"
+# posture = ["reader", "shape"]
 # transport = "herdr"
 # harness = "codex"
 # args = ["-s", "workspace-write", "-a", "never"]
 
-# The size tier (optional). At or under max_diff_lines changed lines — the
-# diff-guard count — these model / effort / args stand in for the base entries
-# of judge and simplify. The implementer runs before any diff exists and never
-# takes it. Absent, the base table applies at every size; declared,
-# max_diff_lines is required. `devloop config --diff-lines <n>` prints the
-# tier a count takes and the effective table; each stage record carries it.
-# [dispatch.small]
-# max_diff_lines = 200
-# [dispatch.small.judge]
-# model = "sonnet"
-# effort = "low"
-# [dispatch.small.simplify]
-# model = "sonnet"
-
 # ── Gate pipeline ─────────────────────────────────────────────────────────
 # Ordered, and the order is the contract: the deterministic guards run first,
-# then the one judge, then the applying trim. kinds: command | diff
-# (deterministic, run by the rail) — judge | simplify (LLM-judged, run by the
-# command in fresh subagent contexts). Another command/diff gate is
+# then the one judge. kinds: command | diff (deterministic, run by the rail)
+# — judge (LLM-judged, run by the command in a fresh subagent context).
+# `devloop check --issue <N>` runs every command gate, then the issue's
+# `verify:` lines, as one result list. Another command/diff gate is
 # config-only; a new *kind* needs a DETERMINISTIC entry in devloop/gates.py or
 # a section in the /issue-loop command. A gate carries only the keys its kind
 # reads; anything else is refused by name.
@@ -145,23 +125,8 @@ timeout_sec = 1200
 
 # The one judgment stage: a fresh judge returns criteria[] verdicts against
 # the issue's acceptance criteria plus advisory findings[]. Fails iff a
-# criterion is not-met per `threshold`; findings never block.
+# criterion is not-met; findings never block.
 [[gates]]
 id = "judge"
 kind = "judge"
 required = true
-threshold = "all"        # all | majority — of the issue's acceptance criteria
-
-# simplify runs LAST and is safe by construction: it can only SHRINK an
-# already-verified diff. The orchestrator snapshots the tip, applies the
-# subagent's delete-list, re-runs `rerun`, and hard-resets to the snapshot if
-# it goes red — so required=false is literal: its failure mode is a revert,
-# not a block. Stacked delivery runs it once, at the stack tip (dec-0ab8ab6b).
-[[gates]]
-id = "simplify"
-kind = "simplify"
-required = false
-skill = "ponytail-review"          # vendored under docs/agents/; host /simplify is the fallback
-rerun = ["tests"]                  # re-verify the shrunk diff against these gate ids, in order; no second judge
-revert_note = "⚠ simplify-reverted"  # PR-body note when the shrunk diff is discarded
-# min_diff_lines = 50              # skip the stage (subagent + re-verify) when diff-guard counted fewer changed lines; absent or 0 = never skip

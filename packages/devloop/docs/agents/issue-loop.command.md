@@ -1,6 +1,6 @@
 ---
 name: issue-loop
-description: "Drain the ready-for-agent frontier of the GitHub issue DAG: implement each unblocked issue in an isolated worktree, run the configured gate pipeline (diff/tests/judge/simplify), and open a draft PR per issue. Headless-safe."
+description: "Drain the ready-for-agent frontier of the GitHub issue DAG: implement each unblocked issue in an isolated worktree, run the configured gate pipeline (diff/tests/verify/judge), and open a draft PR per issue. Headless-safe."
 argument-hint: "[issue-number] | --dag <issue> to work one DAG | --stacked | --max-issues <n> | --set key=value | nothing to drain the frontier"
 disable-model-invocation: true
 ---
@@ -35,12 +35,6 @@ what resolved. Config: `loop.toml` beside this file (a new host repo starts from
 `loop.toml.template`). Semantics: `issue-loop.md`; tracker conventions:
 `issue-tracker.md`; label vocabulary: `triage-labels.md`.
 
-`run_mode`: **pass** — one pass over the frontier, up to `max_issues_per_run`;
-issues from **distinct DAG components** (`component` in `plan` output) may run
-in parallel. **exhaust** — re-plan after each shipped issue while the frontier
-is non-empty (still capped); it widens only as PRs merge, so this pairs with a
-human merging as you ship. Dry with blocked issues left: report, never busy-wait.
-
 **Optional host extension: the memory feed.** Where the host repo has a
 Thinkweave vault, the loop primes each implementer from prior runs and writes
 back what happened, in stretches delimited by `host-extension` HTML comments.
@@ -52,21 +46,27 @@ and runs unchanged.
 **Per-run overrides.** `loop.toml` holds the *defaults*; the arguments set this
 run's *posture*. Translate sugar flags — `--stacked` → `--set delivery=stacked`,
 `--max-issues <n>` → `--set max_issues_per_run=<n>` — and pass any explicit
-`--set [section.]key=value` through verbatim. Append the collected `--set` flags
+`--set [section.]key=value` through verbatim. The section defaults to `loop`,
+the value parses as a TOML scalar, and `--set dispatch.<role>.<key>=<value>`
+sets one key of a role's entry. Append the collected `--set` flags
 to **every** `devloop` invocation in this run, so rail and orchestrator see the
 same effective config. Never edit `loop.toml` on the user's behalf. Gates are
 file-only (a trust boundary, not a run-time posture); the rail rejects unknown
-keys by name on both paths, and `--stacked` without `--dag` is an error per §1e.
+keys by name on both paths.
+
+`run_mode`: **pass** — one pass over the frontier, up to `max_issues_per_run`;
+the frontier is the parallel set (§1). **exhaust** — re-plan after each shipped
+issue while the frontier is non-empty (still capped); it widens only as PRs
+merge, so this pairs with a human merging as you ship. Dry with blocked issues
+left: report, never busy-wait. `delivery`: **pr-per-issue** — each issue ships
+as its own branch and draft PR, and blockers close on merge; **stacked** — §1e.
+
 Then `uv run devloop config <set-flags>` (resolved knobs, the per-role
 `dispatch` table, and gates) and `uv run devloop plan <set-flags>` (frontier /
-blocked / claimed). Each stage you dispatch is a role, and a role is a
-`dispatch.<role>` entry: the table's three (implementer, judge, simplify) plus
-any the host declares — one more role costs one entry and one section of this
-doc, the rule `devloop-boundaries.md` states for gate kinds. The entry's
+blocked / claimed). Each stage you dispatch is a role: its `dispatch.<role>`
+entry (`devloop-boundaries.md` §2). The entry's
 `posture` shapes its pack and its `transport` picks the dispatch recipe, both
-in §1b. Record what the entry named in the stage's dispatch join keys (§3). A
-declared `[dispatch.small]` tier stands in for the judgment roles' entries
-below a diff size; §1c resolves it once the diff exists. `plan` reports the
+in §1b. Record what the entry named in the stage's dispatch join keys (§3). `plan` reports the
 whole frontier; the orchestrator takes the first `max_issues_per_run` of the
 reported frontier, in the order reported, and the rest wait for the next run.
 
@@ -98,11 +98,11 @@ the probe said.
 
 ## 1. Per issue — claim, implement, gate, ship
 
-Process frontier issues **sequentially** by default. If `max_parallel > 1` AND
-every picked issue has `parallel_safe: true`, you may dispatch implementer
-subagents concurrently, each in its own worktree, at most `max_parallel` at
-once and **never two issues from the same DAG `component`** (one DAG is chased
-sequentially, whatever the labels say). For each issue:
+The DAG frontier is the parallel set: dispatch every frontier issue at once,
+each in its own worktree. An issue on the frontier has no open blocker, so no
+label or knob holds it back; sibling issues that touch one file may conflict at
+merge, and a human resolves that. Stacked delivery runs one stack per DAG
+component instead (§1e). For each issue:
 
 ### 1a. Claim (control-plane visibility)
 
@@ -111,7 +111,7 @@ renders natively in the tracker UI.
 
 ### 1b. Implement
 
-<!-- host-extension: memory feed — needs a Thinkweave vault. Without one, skip to "Dispatch blocks" below; the implementer is dispatched unprimed, which is exactly what `primed=false` records. -->
+<!-- host-extension: memory feed — needs a Thinkweave vault. Without one, skip to "The pack" below; the implementer is dispatched unprimed, which is exactly what `primed=false` records. -->
 
 **Prime from prior trajectories (claim-time).** Before spawning the implementer,
 fetch the reusable half of prior similar runs — the insight notes prior
@@ -162,10 +162,17 @@ order: the issue — spliced once, here; never re-read into the prompt;
 **extends** the default, **never replaces** it); `## Persona` —
 `ponytail-persona.md`, the implementer's write-time posture; the repo map;
 `## Standing orders` — the implementer's orders and the codegraph drill-down,
-owned by `pack.py` and pinned by its golden. A `reader` pack (the judge,
-simplify, any reviewing role the host declares) is the same issue, rules and
-map, no persona and no standing orders — the rules are the shape standard its
-findings cite (§1c), the persona is not its business. `{"error": …}` instead
+owned by `pack.py` and pinned by its golden. A `reader` pack (the judge, any
+reviewing role the host declares) is the same issue, rules and
+map, no persona and no standing orders, plus `## Touched modules`: the full
+text of every file `--base-ref`...HEAD touches, its lines numbered for
+`file:line` citations. The rules are part of its contract (§1c); the persona
+is not its business. A `shape` pack (`--posture shape`, the judge's stack-tip
+pass, §1c) takes every issue of the stack (`devloop pack <N> <N2> …`): the
+issues, the rules, the touched modules, and `## Module edges` from codegraph,
+with no repo map. Without codegraph the edges block says, in one line, that
+the edges are missing; the module text still ships whole. A role's entry may
+list several postures; `--posture` picks one, and the first is the default. `{"error": …}` instead
 of a pack means the role has no entry or no posture, or the rules or the
 persona did not resolve: STOP and surface it —
 dispatching without the rules is the fail-open its own rule names. Amendments
@@ -178,8 +185,7 @@ dispatch text is, verbatim: the pack, the branch name (`<branch_prefix><N>`),
 the baseline line (§0.5: `green` or `red`), and the return file path. Nothing
 else: every standing order is the pack's, so one text owns each rule, and the
 issue arrives once. A gate role's dispatch adds exactly what §1c names for
-it (the judge: the diff and the test and verify-rail output; simplify: the
-vendored skill text and the diff) and the implementer's worktree path, which
+it (the judge: the diff and the `check --issue` output) and the implementer's worktree path, which
 it works inside and never edits. The return file is the one return channel for every role
 on both transports: one path per dispatch under the run directory, made once
 per run at `$(git rev-parse --git-common-dir)/devloop/runs/<run-id>/`. It is
@@ -197,110 +203,50 @@ names a fresh path. The role's
   entry's `model` when it names one; never the fork type — a fork inherits
   this orchestrator's whole conversation, including context the subagents
   must not see). Its prompt is the dispatch text. A fix round is a SendMessage
-  to the same agent: it keeps its context. A gate role (judge, simplify) is a
+  to the same agent: it keeps its context. A gate role (the judge) is a
   fresh agent **without** isolation: it works in the implementer's worktree,
   whose path its dispatch names.
-- **`herdr`.** The worktree is a herdr workspace and the agent a named herdr
-  session; every command answers in JSON, and the ids come from those answers,
-  never from a guess. `harness` is required on this transport (`--kind` has no
-  default): an entry without one is a config error you surface, not a guess.
-  The entry's `args` must settle who answers the harness's approval prompts
-  (the template shows a working tail per harness): a prompt no one answers
-  reads as `blocked`. Append `--add-dir <return-dir>` to the tail when the
-  harness sandboxes writes, so the return file is writable.
-
-  ```bash
-  # implementer: a new worktree, the agent in its root pane
-  herdr worktree create --cwd <repo-root> --branch <branch_prefix><N> --base origin/main --label <branch_prefix><N> --no-focus
-  #   → .result.worktree.path (the <worktree> every rail call targets),
-  #     .result.workspace.workspace_id, .result.root_pane.pane_id
-  # gate role (judge, simplify): no new worktree; a new pane beside the implementer's
-  herdr pane split <implementer-pane-id> --direction right --cwd <worktree>
-  #   → .result.pane.pane_id
-  herdr agent start <role>-<N> --kind <harness> --pane <pane-id> -- <args>
-  #   the entry's harness and args (the literal argv tail); returns once the agent is ready
-  herdr agent prompt <role>-<N> "Your dispatch is <dispatch-file>: read it whole and follow it. Write your return to <return-file>." --wait --timeout <ms>
-  ```
-
-  `--cwd <repo-root>` is required: without it herdr resolves the repository
-  from the focused workspace, which may be another repo. A herdr worktree
-  lives outside the repo tree, but a harness that trusts by repository (Codex)
-  keys that trust on `<repo-root>`, never on `<worktree>`.
-  Write the dispatch text to `<dispatch-file>` beside the return file first:
-  the prompt is the pointer, the file is the same text the Agent tool gets
-  inline. `--wait` returns the first settled state. `idle` or `done`: read the
-  return file. **A settled agent with no return file failed** — a harness
-  error (an unsupported model, an API refusal) settles as `idle` too: route
-  to human (§1c's route-to-human block) with `herdr agent read <role>-<N>
-  --source recent-unwrapped --lines 120` as the evidence. **`blocked`** — herdr recognised an approval or question UI —
-  routes the issue to human (§1c's route-to-human block, with `herdr agent
-  read <role>-<N> --source recent-unwrapped --lines 120` as the evidence);
-  never answer the dialog yourself. `agent_prompt_stalled` or a timeout is the
-  same exit, the error as the evidence. A fix round is `herdr agent prompt` to
-  the **same agent name** with the evidence, the re-spliced dispatch file and
-  a fresh return path: it keeps its context as SendMessage does. `herdr agent
-  get <role>-<N>` carries the session facts §3 records. Teardown:
-  `herdr worktree remove --workspace <workspace-id>` is this transport's
-  `git worktree remove` (§1d, same `--force` rule); it closes the agent's
-  pane with the workspace.
+- **`herdr`.** The recipe is [`herdr-transport.md`](herdr-transport.md): a
+  herdr workspace for the worktree, a named herdr session for the agent.
 
 ### 1c. Gate pipeline
 
 Run the configured gates **in order**, inside the implementer's worktree.
 
-**The gate split — which plane runs which kind.** `command` and `diff` gates
-**execute in the rail**: Python runs the shell command / the diff arithmetic and
-returns the verdict. `judge` and `simplify` are never executed by the rail —
-*this* orchestrator dispatches a fresh agent for each as its `dispatch.<role>`
-entry says (§1b's recipe for its transport). A gate agent's return is the
-return file its dispatch names, on either transport; you read the file, never
-its screen. The rail's `check` runs the two
-deterministic kinds and refuses every other kind — judgment kind or typo alike —
-with `gate kind '<k>' is LLM-judged — run it from the /issue-loop command, not
-the script`. Protocol detail (the two registries, the shared `GateResult` shape,
-execute-vs-validate): `devloop-boundaries.md` §3.
+The rail runs the `diff` and `command` gates; you dispatch the judge (the
+plane split: `devloop-boundaries.md` §3). A gate agent returns by the return
+file its dispatch names, on either transport (§1b).
 
 ```bash
-uv run --directory <worktree> devloop check --gate <id> --base-ref origin/main   # command | diff
-uv run --directory <worktree> devloop check --issue <N>                          # the verify rail
+uv run --directory <worktree> devloop check --gate diff-guard --base-ref origin/main   # the diff gate
+uv run --directory <worktree> devloop check --issue <N>                               # command gates, then verify lines
 ```
 
 `diff-guard` is a forbidden-paths check only; a breach is a fix round, never an overage to approve.
 
-**The verify rail — the issue's own runnable criteria** (dec-2f5bf66a). After the
-tests gate, `check --issue <N>` runs every `verify:` line the body carries via the
-shell from the worktree root, one command `GateResult` per line (`id: verify:<k>`;
-pass = exit 0 plus, after the line's LAST ` => `, that text in stdout), as `{issue,
-results, summary}`; no lines = `no verify lines`, exit 0. Re-running `check --issue`
-on an issue already being verified is a fixed point (excluded, counted); a runaway
-cycle is one red result naming it. Red = **deterministic not-met**: a fix round,
-rerun until green or `max_fix_rounds` is spent; a missing binary is red, named, never skipped.
-
-**Pick the dispatch tier.** With the diff-guard result's `changed_lines` in
-hand, `uv run --directory <worktree> devloop config --diff-lines
-<changed_lines> <set-flags>` resolves the tier: `tier` is `small` when the
-count is at or under `[dispatch.small]`'s `max_diff_lines`, and the small
-tier's model / effort / args then stand in `dispatch.judge` and
-`dispatch.simplify`; otherwise, or with no small tier declared, it is `base`
-and the table is §0's. Dispatch the judge and simplify as that output's
-`dispatch.<role>` says, and record its `tier` in each of those stages' join
-keys (§3). The implementer never takes the small tier: it runs before any diff
-exists, so §0's `config` without a count is its table.
+**The check — one call, one result list** (dec-e267d040). `check --issue <N>`
+runs every configured `command` gate (the tests gate), then each `verify:` line
+the issue body carries, via the shell from the worktree root. It prints
+`{issue, results, summary}`: one command `GateResult` per check, a verify line
+as `id: verify:<k>`, and a check passes on exit 0. Any red result is
+**deterministic not-met**: a fix round, rerun until green or `max_fix_rounds`
+is spent. A missing binary is red and named, never skipped.
 
 **The judge — the one LLM judgment stage.** `kind: judge` — dispatch a **fresh
 judge subagent** (a fresh agent, no implementation context) as
 `dispatch.judge` says, with the judge pack (`uv run --directory <worktree>
-devloop pack <N> --role judge`, §1b), `git diff origin/main...HEAD`, the test
-and verify-rail output, the implementer's evidence directory (`<return
+devloop pack <N> --role judge --base-ref origin/main`, §1b), `git diff origin/main...HEAD`, the
+`check --issue` output, the implementer's evidence directory (`<return
 file>.demo/`, §1b) when the issue carries a `demo:` criterion, and its return
 file path (§1b: it writes the object below to that file, and that file is
 what you hand the rail). Tell it, verbatim:
 
-> The contract is the issue's acceptance criteria plus the Interfaces block's
-> intent. Judge the diff against that contract and nothing else. Return one
+> The contract is the issue's acceptance criteria, the Interfaces block's
+> intent, and rules 3, 6, 7 and 8 of the Rules section. Judge the diff and the
+> touched modules against that contract and nothing else. Return one
 > verdict per criterion, `"met"` or `"not-met"`, each with one line of
 > evidence. A criterion is not met when the code does not do what it says.
-> A `verify:` criterion takes its verdict from the verify-rail output in this
+> A `verify:` criterion takes its verdict from the `check --issue` output in this
 > dispatch: cite that output, never re-run the command.
 > Where a criterion is prose and no verify line ran it, run it yourself and
 > cite the output. Evidence for a prose criterion is something you ran
@@ -317,6 +263,10 @@ what you hand the rail). Tell it, verbatim:
 > Code the diff changes that no longer works as the issue intends is `not-met`
 > too, even when no criterion names the case: return it as one more criterion
 > under the reserved id `intent`, and only when you have the failure in hand.
+> A violation of rule 3, 6, 7 or 8 in a touched module is `not-met` under the
+> reserved id `rule:<n>`, one entry per violation. Its evidence cites the
+> `file:line` from the Touched modules section and says what breaks the rule.
+> Rules 1 and 4 are not yours here, and no other rule blocks.
 > Every `not-met` names a command, a test, or output; without one it is not a
 > `not-met`, it is a finding. Everything else you notice
 > — a risk, a smell, a better design, an edge case outside the contract — is a
@@ -339,19 +289,15 @@ what you hand the rail). Tell it, verbatim:
 ```
 
 `evidence` and `finding` are never blank; `findings` may be empty, not absent.
-The rail accepts `intent` as it accepts any criterion id.
-**Only a criterion `not-met` blocks.** Findings
-never do, whatever their severity: they go to the PR's findings comment and
-the triage lane (§1d) — never a fix round, never an issue.
+**Only a criterion `not-met` blocks.** Findings go to the PR's findings
+comment and the triage lane (§1d) — never a fix round, never an issue.
 
-**Every judgment return is schema-checked before it becomes a verdict.** (For
-`simplify` the **vendored** skill owns its output format, a prose delete-list;
-you condense it into the envelope.) Hand the return file to the rail before
+**Every judgment return is schema-checked before it becomes a verdict.** Hand the return file to the rail before
 acting on it, on either transport — `uv run devloop validate --gate <id>
 --return-json <return-file>`. The rail emits the same `GateResult` the
 deterministic gates emit, plus `reasons`, and exits `0` — schema-valid and
 **passed** (judge: no criterion
-`not-met` per the gate's `threshold`, `all` or `majority`); `1` — schema-valid
+`not-met`); `1` — schema-valid
 and **failed**: a real verdict, run a fix round per the failure flow below; `2`
 — **schema-rejected**: `reasons` names each offending field path and value
 (`criteria[1].verdict: 'probably' is not one of met | not-met`). **Re-ask**
@@ -360,36 +306,56 @@ Agent tool, `herdr agent prompt <name>` on herdr) — never hand-fix its return,
 never read a verdict out of a rejected one, never pass it on to `--gates-json`.
 A second rejection is a failed gate: route to human with the reasons.
 
-**The simplify stage (`kind: simplify`, after the judge).** Runs **last, only
-after every required gate is green**, and is safe by construction: it can only
-*shrink* the verified diff. `required = false` — its "failure" mode is a revert.
+**The shape posture — rules 1 and 4 and every Interfaces block.** The judge
+takes a second posture once per stack tip of two or more slices (§1e), after
+the last slice passes its gates. Dispatch a fresh judge as `dispatch.judge`
+says, with the shape pack (`uv run --directory <worktree> devloop pack <N>
+<N2> … --role judge --posture shape --base-ref origin/main`, every completed
+issue of the stack) and its return file path. In `pr-per-issue` delivery, and
+for a one-slice stack, no separate dispatch runs: the single per-slice judge carries both postures. Its
+dispatch adds this brief and a second return file for the shape object, and
+its pack is the reader pack, which already holds every touched module.
+Tell it, verbatim:
 
-0. **Size gate.** Compare the diff-guard result's `changed_lines` field (the
-   count `check --gate diff-guard` printed for this branch) with the gate's
-   `min_diff_lines` (absent loads as 0, so the stage never skips unless the
-   host sets it). `changed_lines < min_diff_lines` → skip steps 1–4 entirely,
-   no subagent and no re-verify: the §3 trace envelope is
-   `{"outcome": "skipped-small"}` and the PR body's simplify line reads
-   `simplify: skipped (<changed_lines> lines < min_diff_lines)`. Otherwise
-   continue.
-1. **Snapshot the tip.** `pre=$(git -C <worktree> rev-parse HEAD)`.
-2. **Get the delete-list.** Dispatch a **fresh subagent** as `dispatch.simplify`
-   says (§1b's recipe) with the text of the **vendored**
-   `ponytail-review.command.md` skill beside this file (host `/simplify` is
-   the fallback), the branch diff `git diff origin/main...HEAD`, and its
-   return file path. Read the delete-list from that file and condense it with
-   its `net: -<N> lines possible` tally into
-   `{"outcome": "applied", "lines_delta": -<N>, "cuts": [{"what": …, "why":
-   …}], "kept": [{…}]}` and `validate` it. `outcome` is `"lean"` when the
-   subagent said `Lean already. Ship.` (skip the rest; the PR body's simplify
-   line reads `simplify: lean`); `"applied"` when you apply the delete-list;
-   `"reverted"` is step 4's terminal value after a red re-verify.
-3. **Apply** the delete-list as a single commit on the branch.
-4. **Re-verify and keep or revert.** Re-run the gate's `rerun` list — the
-   `tests` gate via the rail, nothing else — on the shrunk diff. Green → keep;
-   the PR body's simplify line reads `simplify: -<N> lines`. Red → `git -C
-   <worktree> reset --hard $pre`, ship the **pre-simplify** diff; the simplify
-   line is the gate's `revert_note` (`⚠ simplify-reverted`).
+> The contract is rules 1 and 4 of the Rules section and every Interfaces
+> block in the issues above. Judge the module structure of the touched
+> modules against that contract and nothing else. For rule 1, name each
+> domain concept the stack touches (a lifecycle, a status rule) and the
+> modules a reader must visit to follow it. Rule 1 breaks when one concept's
+> behaviour is split or re-derived across several modules, or when a new
+> module has one consumer; adding no module does not by itself keep it. A
+> record's own constructors and checks beside the record, or a helper moved
+> to the one module its consumers share, deepen a module and do not break it.
+> For rule 4, read each touched module from its top. It breaks when the top
+> does not show the module's flow in a few short names, when one module
+> holds several jobs as loose functions side by side, or when several
+> functions each re-spell the same main-flow steps instead of one name
+> owning them. The main flow is the path every route or verb of the stack
+> runs. Fail the contract for a break on the main flow. A seam off it does
+> not fail the contract: name it in `flow` under a `"met"` verdict. Return
+> `"met"` when the main flow has one owning module that reads top-down and
+> owns what its Interfaces block declares. Otherwise return `"not-met"` with
+> a restructure case. `flow` states the current flow in at most five
+> lines and names each broken rule by number. `owns` says, per module, what
+> it should own. `options` gives one to three shape options, one sentence
+> each. Do not edit code. Return exactly this object:
+
+```json
+{"verdict": "not-met",
+ "flow": "<at most five lines naming rule 1 and/or 4>",
+ "owns": [{"module": "<path>", "owns": "<what it should own>"}],
+ "options": ["<shape option>"]}
+```
+
+A `met` return may leave `flow` empty and `owns` and `options` as empty lists;
+its `flow` may name the seams off the main flow.
+Validate it with `uv run devloop validate --gate judge --posture shape
+--return-json <return-file>`: exit `0` met, `1` a restructure case, `2`
+schema-rejected (re-ask once, as above). **A restructure case stops the run at
+the human.** It never starts a fix round. Route to human (the block below),
+the case as the comment's evidence: in stacked delivery on the DAG root
+issue, naming the branch and its tip sha, and no PR opens; in
+`pr-per-issue` on the issue, before the PR opens.
 
 **On a required-gate failure:** feed the evidence (gate id, summary, detail, the
 failed criteria with their evidence, the red verify lines) back to the
@@ -409,16 +375,16 @@ gh issue edit <N> --remove-label ready-for-agent --add-label <on_gate_failure>
 gh issue comment <N> --body "🤖 issue-loop run <run-id>: routed to human at <sha>. <gate evidence table>"
 ```
 
-This is the one issue comment that carries a gate table: no PR exists, so the
-issue is the evidence's only home. The table is §1d's; a failed row carries
+The table is §1d's; a failed row carries
 the failed criteria with their evidence or the red verify lines, and one
 sentence under the table says what the fix rounds attempted.
 
 Then continue with the next frontier issue — one stuck issue must not stall the
 loop. **Three exits, no others:** **ship** (every criterion met, no findings);
 **ship with findings** (criteria met, findings in the PR's findings comment); **route
-to human** (a criterion stays `not-met` past `max_fix_rounds`, or a judge return
-stays schema-rejected after a re-ask).
+to human** (a criterion stays `not-met` past `max_fix_rounds`, a judge return
+stays schema-rejected after a re-ask, or the shape posture returns a
+restructure case).
 
 ### 1d. Ship
 
@@ -442,19 +408,15 @@ title.
 
 **The PR body carries each fact once, and nothing else:** `Closes #<N>`; one
 sentence that says what the code now does (not the issue title); the gate
-table; the simplify line; the demo line; the findings line; the attribution
-block.
+table; the demo line; the findings line; the attribution block.
 
 - The gate table is one table, columns gate | verdict | summary, one row per
   gate. A summary cell carries only what varies: `133 lines`, `274 passed`,
   `5/5`, `8/8`, or the failure named. Never `no forbidden paths`, never
   `exited 0`, never the command text; a pass with nothing to report is the
   number alone.
-- The simplify line is one line under the table: `simplify: -<N> lines`,
-  `simplify: lean`, `simplify: skipped (<n> lines < min_diff_lines)`, or the
-  gate's `revert_note`.
-- The demo line is one line under the simplify line: `demo: <short sha>
-  (pre-simplify)`, the SHA the implementer's `demo.md` names. An issue with
+- The demo line is one line under the table: `demo: <short sha>`, the SHA
+  the implementer's `demo.md` names. An issue with
   no `demo:` criterion has no demo line.
 - The findings line is `Findings: see comment` or `Findings: none`.
 - No summary bullets, no run parameters, no line-count deltas of documents,
@@ -462,11 +424,9 @@ block.
 
 **The findings comment — one per PR, posted right after `gh pr create`.** It
 names findings once (dec-f7e7dd53): one `###` heading per severity present,
-one bullet per finding, the judge's sentence verbatim. A finding is one
-sentence: the observation first, then the rule number or the exercised path in
-a trailing clause. No hedge and no self-retraction: a finding that would end
-"so no action is needed" or "cosmetic only" is dropped, not softened. A
-finding already filed as an issue is the issue number alone. Each deviation
+one bullet per finding, the judge's sentence verbatim. A finding that breaks
+§1c's sentence rule, or hedges ("so no action is needed", "cosmetic only"), is
+dropped, not softened. A finding already filed as an issue is the issue number alone. Each deviation
 the implementer's return names is one bullet under `### deviation`, one
 sentence, ahead of the judge's findings. A PR with no findings and no
 deviations gets no comment; its body line reads `Findings: none`. A PR whose
@@ -484,13 +444,11 @@ implementer named a deviation is never `Findings: none`.
 ```
 
 Keep the `ready-for-agent` label and the assignee — the issue closes on merge;
-if the PR is rejected, a human unassigns to re-queue. **No stack-tip simplify
-here — a documented no-op:** a pr-per-issue branch holds one slice, so §1c's
-simplify already ran at what IS the stack tip (the whole-branch pass is §1e's).
+if the PR is rejected, a human unassigns to re-queue.
 
 **Risk-lane triage — label what a human should look at.** After the PR is
 opened, assemble its signal set — you already hold all of it — into a JSON file
-and run `uv run devloop triage <N> --signals-json <signals-file>`. The three
+and run `uv run devloop triage <N> --signals-json <signals-file>`. The two
 **safety-critical** keys are REQUIRED and fail closed — an absent key or an
 unrecognized enum value classifies **red** (naming the offending key/value),
 because you assemble these signals and enum drift is realistic:
@@ -499,7 +457,6 @@ because you assemble these signals and enum drift is realistic:
 | ----------------- | --------- | -------- | --------------------------------------------------- |
 | `review_severity` | str       | **yes**  | worst judge finding: `none`/`note`/`problem`        |
 | `baseline_green`  | bool      | **yes**  | the tests gate was green on the pristine worktree   |
-| `acceptance`      | str       | **yes**  | judge criteria verdict: `met`/`uncertain`/`not-met` |
 | `fix_rounds`      | int       | no (→0)  | implement→gate→fix iterations (0 = first try)       |
 | `diff_lines`      | int       | no (→0)  | total changed lines (the diff-guard gate's count)   |
 | `files_touched`   | list[str] | no (→[]) | repo-relative paths the PR changed                  |
@@ -511,7 +468,7 @@ every triggered rule. **You** apply the label via gh (`gh issue edit <N>
 default lane: a human skims, the reasons (fix rounds, a watched path, no
 coverage signal) telling them where to look; there is no auto-merge lane.
 **red** (`ready-for-human`): sensitive path (always), big diff, degraded
-baseline, any `problem` finding, or uncertain/not-met judge verdict — the
+baseline, or any `problem` finding — the
 `on_gate_failure` label reused deliberately, the same "human, please look" rung
 as a gate failure. Thresholds and the sensitive-path list are `[triage]` knobs
 in `loop.toml`, per-host, never hardcoded.
@@ -522,63 +479,46 @@ worktree pins its branch, and git then refuses every human attempt to check the
 PR out (the VS Code PR extension fails with "error switching to pull request").
 Only the evidence paths — `training_mode` headless holds and gate-failure
 routing — keep a worktree, and those are listed in the run report (§2). In
-`run_mode = exhaust`: after shipping, re-run `plan` and continue with any new
-frontier issues until the per-run cap; otherwise report and stop.
+`run_mode = exhaust`, re-plan now (§0); otherwise report and stop.
 
 ### 1e. Stacked delivery (`delivery = stacked`)
 
-One larger piece of work, no intermittent PRs. Requires a `--dag <N>` scope and
-is sequential (`max_parallel` is ignored). Differences from the flow above:
+One larger piece of work, no intermittent PRs: each DAG component is one stack.
+A stack is sequential inside its component; distinct components run as
+concurrent stacks, each on its own branch and worktree. `--dag <N>` scopes the
+run to one component. The trade is one review of a bigger diff instead of many
+small ones, and a review change to an early slice reworks the stack above it:
+pick it when you would review the DAG as one unit anyway. Differences from the
+flow above:
 
-- **One branch, one worktree.** `loop/dag-<N>`, created once from origin/main.
+- **One branch, one worktree per stack.** `loop/dag-<N>`, `<N>` the component's
+  root, created once from origin/main.
   Each issue's implementer agent is FRESH (§1b) but works in this same worktree,
   stacking commits on the previous slices. Record the tip sha before each issue.
 - **Blockers advance in-branch, not by merge.** After an issue passes all gates,
   add it to the done-list and re-plan with `plan --dag <N> --assume-done
-  <done-list>` — its dependents become workable immediately.
+  <done-list>` — its dependents become workable immediately. In-branch done is
+  provisional and never written to the tracker.
 - **Per-issue gates, scoped diffs.** Run `check --gate diff-guard --base-ref
   <tip-before-this-issue>` so the forbidden-paths check applies per slice; the
   tests gate always runs on the whole branch (earlier slices must stay green —
   that IS the stacking guarantee). The judge sees the per-issue diff (`git diff
-  <tip-before>...HEAD`), and its tier (§1c) follows the same per-slice
-  count. **Simplify does not run per slice** (dec-0ab8ab6b):
-  the one pass is the stack-tip pass below, where cross-slice trimming lives.
+  <tip-before>...HEAD`), and its pack takes `--base-ref <tip-before>`.
 - **Tracker visibility without PRs.** After each issue passes, one line: `gh
   issue comment <N> --body "🤖 issue-loop run <run-id>: slice landed on
-  loop/dag-<root> at <sha> — PR at end of run"`. No gate table: the evidence
-  waits for the PR. Do NOT close the issue; do NOT open a PR yet.
-- **Stack-tip simplify — the stack's one pass, whole-branch, before PR-open.**
-  Once the stack is final — DAG exhausted, cap hit, or an issue routed to human
-  — run the §1c simplify flow ONCE over the whole branch, before pushing
-  anything. Same gate entry, same steps, one extra input: the diff is the
-  **cumulative merge-base diff** `git diff origin/main...HEAD`. §1c's size
-  gate (step 0) applies to that cumulative diff against the same
-  `min_diff_lines` (`check --gate diff-guard --base-ref origin/main`), and
-  the pass's tier follows that cumulative count; a skip lands under
-  `stack_simplify`. The subagent also receives the **whole-file** contents of every touched file
-  (`git diff --name-only origin/main...HEAD`, then read each) so it can see a
-  later slice re-rolling an earlier slice's helper. Keep-or-revert is §1c's
-  steps 1, 3 and 4 on the whole branch (the gate's `rerun` list, `reset --hard
-  $pre` on red), the `revert_note` suffixed `(stack-tip)`. This pass's result
-  is the PR body's simplify line.
-  <!-- host-extension: memory feed — needs a Thinkweave vault. -->
-  Record the result in the final completed issue's §3 trace under
-  `stack_simplify`.
-  <!-- /host-extension -->
+  loop/dag-<root> at <sha> — PR at end of run"`. Do NOT close the issue; do
+  NOT open a PR yet.
+- **The shape posture at the tip.** When the stack holds two or more
+  completed slices, run §1c's shape posture over all of them before the PR.
 - **One PR at the end** (DAG exhausted, cap hit, or an issue routed to human):
   push the branch and open a single draft PR. Its title is the epic title or
   the DAG root's title, then the issue numbers in parentheses; never clauses
-  joined by semicolons. Its body carries each fact once, and nothing else:
-  the `Closes #A` lines for every completed issue; one sentence per issue,
-  issue number first, saying what its slice does (not its title, no heading,
-  no paragraph); one gate table for the stack, one row per issue and one
-  column per gate (diff, tests, verify, judge), each cell the varying number
-  only (`133 lines`, `274 passed`, `5/5`, `8/8`) and a failed cell naming the
-  failure — no per-issue tables; the simplify line (the stack-tip pass);
-  `Findings: see comment` or `Findings: none`; a `Not included` line only
-  when part of the DAG remains, naming the issues and why; the attribution
-  block. No summary bullets, no `###` per issue, no orchestrator notes, no
-  run parameters, no line-count deltas of documents. Then §1d's one findings
+  joined by semicolons. Its body is §1d's, with the stack's shape: a
+  `Closes #A` line for every completed issue; one sentence per issue, issue
+  number first; one gate table for the stack, one row per issue and one
+  column per gate, no per-issue tables; a demo line per issue that carries a
+  `demo:` criterion; and a `Not included` line only when part of the DAG
+  remains, naming the issues and why. Then §1d's one findings
   comment, covering every completed issue; a stack-tip finding that restates
   a slice finding is dropped. Then one more line per issue: `gh issue comment
   <N> --body "🤖 issue-loop run <run-id>: PR <pr-url>"`. `training_mode`
@@ -624,10 +564,10 @@ prime context, or `--no-primed` when nothing was served (`primed: false`);
 omitting both keeps the pre-serving shape. `primed`/`served` are facts about
 the run, never an experiment arm. `--skills-json` is a list of `{id, role,
 skill, outcome, fix_rounds_attributed}` you write, one per stage dispatched
-(the implementer subagent, the judge — `kind: judge` gate — and any future
-stage); `skill` names the skill that ran the stage, verbatim (the vendored
-`ponytail-review` for the simplify gate, `code-review` for a judge fork), empty
-when none ran; `fix_rounds_attributed` is how many fix rounds that stage caused
+(the implementer subagent, the judge — `kind: judge` gate — the judge's shape
+posture as one more entry, role `judge`, id `judge:shape`, posture `shape`, and
+any future stage); `skill` names the skill that ran the stage, verbatim (`code-review` for a
+judge fork), empty when none ran; `fix_rounds_attributed` is how many fix rounds that stage caused
 (total: `--fix-rounds`). Omit it for `skills: []`; add `--skill-centric` when
 the record is primarily about a skill invocation.
 
@@ -637,17 +577,15 @@ them through verbatim and rejects a wrong type with the field path in
 `reasons` (`skills[0].tokens: expected int, got 'many'`). Fill them from what
 you know at dispatch and return time, never from a guess:
 
+- `posture` — the posture the stage's pack took: `writer`, `reader` or
+  `shape`.
 - `transport` — the role's entry's `transport`, the recipe §1b ran:
   `agent-tool` (the Agent tool), `herdr` (a herdr session), `headless-argv` (a
   harness CLI you ran as a subprocess).
 - `harness` — the entry's `harness` (herdr's `--kind`); on the Agent tool, the
   harness you are running in.
-- `model` and `effort` — the entry's `model` and `effort` as the tier resolved
-  them (§1c), the values you passed on (the Agent tool's `model` argument, the
-  argv tail's model flag).
-- `tier` — `base` or `small`: the tier the §1c `config --diff-lines` call
-  named for the judgment stages; the implementer's dispatch has no count and
-  is `base`.
+- `model` and `effort` — the entry's `model` and `effort`, the values you
+  passed on (the Agent tool's `model` argument, the argv tail's model flag).
 - `session_ref` — the harness's own session id when the transport exposes one:
   on herdr, `herdr agent get <name>` → `.result.agent.agent_session.value`
   (an id or a path, as its `kind` says); a headless run's session id. The
@@ -662,16 +600,13 @@ read as a measurement.
 
 `--trace-json` points at a JSON file **you compose from the gate agents' own
 reports** — no new model call: the judge's per-criterion evidence, findings and
-verdict flips, the simplify gate's cut/keep rationale, the TDD red-confirmation
+verdict flips, the TDD red-confirmation
 — the envelopes §1c already validated, condensed into
 
 ```json
-{"rounds": [{"gate": "judge", "finding": "<prose>", "severity": "note",
+{"reviews": [{"gate": "judge", "finding": "<prose>", "severity": "note",
              "disposition": "accepted", "fixed_by": "<prose>"}],
  "criteria": [{"id": "AC1", "verdict": "met", "flipped_by_round": 1}],
- "simplify": {"outcome": "applied", "lines_delta": -12,
-              "cuts": [{"what": "<prose>", "why": "<prose>"}], "kept": [{…}]},
- "stack_simplify": {"<same envelope as simplify>": "…"},
  "edge_cases": ["<prose>"], "deviations": ["<prose>"],
  "tdd": {"red_confirmed": true}}
 ```
@@ -679,13 +614,11 @@ verdict flips, the simplify gate's cut/keep rationale, the TDD red-confirmation
 `deviations` holds the same sentences as the findings comment's
 `### deviation` bullets (§1d), one string each.
 
-The rail only accepts and shapes it (unknown keys dropped; a non-dict trace is
+`reviews` holds the judge's and the fix rounds' findings. The rail only
+accepts and shapes the trace (unknown keys dropped; a non-dict trace is
 rejected). `severity` is `problem` or `note`, the judge envelope's own values.
-`simplify` records the pr-per-issue branch's one pass and is absent per slice
-in stacked mode; `stack_simplify` records the §1e stack-tip pass, the one
-pass of a stacked run, on the **final completed issue's** trajectory — which
-issue is final is orchestrator knowledge the rail never holds. It lands under the single
-`trace` frontmatter key — the machine-readable half of the tracker's gate
+It lands under the single
+`trace` frontmatter key — the machine-readable half of the PR's gate
 evidence, not a second prose owner. Omit `--trace-json` and the key is absent.
 
 **Mint portable lessons as insight notes, then link them.** The trajectory body
@@ -712,56 +645,23 @@ artifact: `run-bound semantic trace` → the trajectory's `trace`; a
    nesting, same dropped-kwarg trap). The payload's `tags` already carry
    `loop-run` (plus `skill-invocation` when `--skill-centric`). If MCP is down,
    fall back to `weave add -f …`.
+3. **The round on the epic's task** — write the payload JSON to a file in the
+   run directory, then land it:
+
+   ```bash
+   weave task record-run <payload-file> --trajectory <trajectory-note-id> \
+     --project <project> [--session <this-session-id>]
+   ```
+
+   It prints the task id. The payload's `epic_url` (the issue's sub-issue
+   parent, empty when it has none) names the task the round lands on. Read
+   that task note: when its `asked` does not name the epic, this host's weave
+   lacks the epic contract. That, or a non-zero exit, is a warning in the
+   run report (§2) with weave's stderr — never a failed run.
 
 Do not duplicate gate evidence or run history — the tracker and PR own those.
 
-## 4. Wrap coverage — do NOT run `/wrap` here
-
-**Optional host extension**, and it is a *don't*: headless loop runs are
-wrap-covered without an explicit run-end `/wrap` — the `SessionStart` hook mints
-this run's session note and the nightly `/dream` `dream-wrap-worker` catch-up
-synthesises + `weave wrap-finalize`s it; the per-issue content is already in
-the §3 trajectory notes. Session synthesis and **decision promotion** belong to
-the session-note owner; a loop that minted decisions would break the
-single-owner rule. See [`vault-issue-contract.md`](vault-issue-contract.md).
+Do not run `/wrap`: the session-note owner covers a loop run
+([`vault-issue-contract.md`](vault-issue-contract.md)).
 
 <!-- /host-extension -->
-
-## 5. Board hygiene — `devloop board doctor` / `sweep`
-
-The tracker is the loop's input contract (§0 reads it as a DAG), so its grammar
-is enforced by the same rail — a read-only lint plus a mechanical sweep, run
-across every repo that installs devloop (funloops#9). **Conventions, in one
-table** — each row is a `doctor` check; the last column says whether the fix is
-mechanical (a sweep op) or a human verdict (finding only):
-
-| convention | check | fix |
-| --- | --- | --- |
-| Epic membership = native **sub-issue**; anything with sub-issues carries the `epic` label | `epic-unlabelled` | op `add_label` |
-| Epics group, they never run — no runnable rung on an epic | `epic-runnable` | op `remove_label` |
-| The epic is **blocked-by every open child** (anchor: `plan --dag <epic>` scopes to the tree, epic closes last) | `epic-unanchored` | op `add_blocker` |
-| Epic closes when its last child closes, or gets an explicit re-scope comment | `epic-delivered` | human |
-| Ordering = native **blocked-by**; a body `Blocked-by: #N` header with no native twin is the mint-time gap | `text-only-blocker` | op `add_blocker` (never when #N is the issue's own parent — that is the inverted-root error, flagged only) |
-| Titles describe the work; `W1a:` / `A3:` / `S5:` prefixes are retired once a native edge carries the order, or the issue is closed (no order left to encode); `EPIC:` / `PRD:` prefixes go once the `epic` label is on | `title-order-prefix` | op `retitle` |
-| Exactly **one** triage rung per open non-epic issue (`triage-labels.md` table) | `rung-contradictory` (error) / `rung-missing` (warn) | human / op `add_label needs-triage` (the rung that asserts only "no verdict yet" — it queues the issue for `/triage`) |
-| `track:*` = subsystem lane, on every open issue where the repo uses lanes | `track-missing` | human |
-| The repo's label set carries the whole triage table + `epic` + the loop's `[labels]`, and none of GitHub's boilerplate five | `label-missing` / `label-boilerplate` | op `create_label` / `delete_label` |
-| Cross-repo edges are legal (multi-repo DAGs share one substrate) but a single-repo `plan` cannot see them | `cross-repo-edge` | info |
-| Runnable, unblocked, unassigned and untouched for 14 days — re-verify it | `runnable-idle` | info |
-
-**Mint-time rule** (the other half of the contract): any route that mints a DAG
-— `/to-tickets`, `/wayfinder`, an interactive session —
-publishes native edges + the runnable label at creation; `doctor` catches a
-route that forgot.
-
-```bash
-uv run devloop board doctor --repo owner/a --repo owner/b   # JSON report; exit 1 on any error
-uv run devloop board sweep  --repo owner/a                  # print the op plan (dry run)
-uv run devloop board sweep  --repo owner/a --apply [--only create_label,add_label]
-```
-
-`--repo` is repeatable and defaults to the cwd's clone. The sweep only ever
-executes ops the pure layer emitted; it cannot close an issue, pick a rung, or
-choose a track — those stay findings for a human (or a `/triage` session).
-Safe to run unattended: the weekly slow loop runs `doctor` across all boards
-and `sweep --apply` for the op kinds listed in its cron line.

@@ -1,34 +1,10 @@
 """Tracker-as-DAG math over GitHub-native issue dependencies.
 
 Pure over issue-snapshot dicts (shape owned by ``devloop.github``). Blocker
-edges come from the snapshot's native dependency fields; ``Wave:`` and
-``Parallel-safe:`` stay body metadata.
+edges come from the snapshot's native dependency fields only.
 """
 
 from __future__ import annotations
-
-import re
-
-# ---------------------------------------------------------------------------
-# Body metadata — no native GitHub field for these
-
-_WAVE_RE = re.compile(r"Wave:\s*(\d+)", re.IGNORECASE)
-_PARALLEL_RE = re.compile(r"Parallel[- ]safe:\s*(yes|no)", re.IGNORECASE)
-
-
-def parse_wave(body: str) -> int | None:
-    m = _WAVE_RE.search(body or "")
-    return int(m.group(1)) if m else None
-
-
-def parse_parallel_safe(body: str) -> bool:
-    """Default True: absence of the hint must not serialize the whole loop."""
-    m = _PARALLEL_RE.search(body or "")
-    return m.group(1).lower() == "yes" if m else True
-
-
-# ---------------------------------------------------------------------------
-# Frontier computation — pure functions over an issue snapshot
 
 
 def blockers(issue: dict) -> list[int]:
@@ -41,9 +17,7 @@ def compute_components(issues: list[dict]) -> dict[int, int]:
 
     Component id = the smallest issue number in the component, so ids are
     stable across runs as long as the component's oldest issue stays open.
-    Two open issues in the same component belong to one DAG — the
-    orchestrator must not work them concurrently; distinct components are
-    unrelated work and parallel-safe by construction.
+    Stacked delivery makes each component one stack.
     """
     open_numbers = {i["number"] for i in issues if i["state"].upper() == "OPEN"}
     parent = {n: n for n in open_numbers}
@@ -112,8 +86,6 @@ def compute_frontier(issues: list[dict], cfg: dict, limit: int | None = None) ->
             "number": issue["number"],
             "title": issue.get("title", ""),
             "blockers": blockers(issue),
-            "wave": parse_wave(issue.get("body", "")),
-            "parallel_safe": parse_parallel_safe(issue.get("body", "")),
             "component": component[issue["number"]],
         }
         assignees = issue.get("assignees", [])
@@ -139,7 +111,7 @@ def compute_frontier(issues: list[dict], cfg: dict, limit: int | None = None) ->
         else:
             frontier.append(entry)
 
-    frontier.sort(key=lambda e: (e["wave"] if e["wave"] is not None else 10**9, e["number"]))
+    frontier.sort(key=lambda e: e["number"])
     if limit is not None:
         frontier = frontier[:limit]
     return {"frontier": frontier, "blocked": blocked, "claimed": claimed, "warnings": warnings}

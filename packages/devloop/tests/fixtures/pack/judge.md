@@ -68,3 +68,33 @@ Do not assume the list above is comprehensive.
 - `run` (function) (x: int) -> str — :13
 
 > Drop `symbolsOnly` (or pass `offset`/`limit`) to read the source, like Read.
+
+## Touched modules
+
+Every file `base...HEAD` touches, in full, its lines numbered for `file:line` citations.
+
+### fx/core.py
+
+```
+   1  """Core: runs things.
+   2
+   3  More detail that must not reach the catalog.
+   4  """
+   5
+   6  import json
+   7
+   8  from fx import helper
+   9
+  10  LIMIT = 5
+  11
+  12
+  13  def run(x: int) -> str:
+  14      return helper.fmt(json.dumps(x))
+```
+
+### fx/helper.py
+
+```
+   1  def fmt(x: int) -> str:
+   2      return str(x)
+```

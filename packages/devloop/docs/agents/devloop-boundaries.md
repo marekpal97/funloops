@@ -83,13 +83,10 @@ are CLI contract lines.
 (branch, log, numstat) and file-argument loading happen here, feeding the pure
 `build_trajectory` — subprocess git is argument-gathering, not a module.
 
-**`dag.py`** — `parse_wave`, `parse_parallel_safe`, `blockers`,
-`compute_components`, `scope_to_dag`, `apply_assume_done`, `compute_frontier`.
-Pure over issue-snapshot dicts (shape owned by `github`, § below). Edges come
-from the snapshot's native dependency keys only. The two `Wave:` /
-`Parallel-safe:` regexes stay: they are **domain grammar, not generic
-parsing** — body metadata with no native GitHub field, living beside the
-frontier math that consumes them.
+**`dag.py`** — `blockers`, `compute_components`, `scope_to_dag`,
+`apply_assume_done`, `compute_frontier`. Pure over issue-snapshot dicts (shape
+owned by `github`, § below). Edges come from the snapshot's native dependency
+keys only; the module reads no body metadata.
 
 **`gates.py`** — the Gate protocol (§3) plus `run_command_gate`,
 `evaluate_diff_gate` (pure), `run_diff_gate`. Runs its own `git diff`
@@ -131,7 +128,7 @@ never where it is a judgment (which rung, which track, is this epic done) — a
 sweep **op** (`create_label · delete_label · add_label · remove_label ·
 retitle · add_blocker`). `doctor()` runs them all; `plan_sweep()` turns a
 report into the deduped, ordered op list `board sweep --apply` replays.
-Conventions text: `issue-loop.command.md` §Board hygiene.
+Conventions text: `board-hygiene.md`.
 
 **`pack.py`** — the dispatch pack (funloops#28, #45, #46, #47; dec-f12457eb,
 dec-fd12489d, dec-d2de831e, dec-2f8c2322, dec-e6561edc, dec-72c80057): `Issue`, `Posture`,
@@ -163,20 +160,22 @@ of the command doc, the same rule §3 states for judgment kinds.
 
 ## 3. The Gate protocol
 
-A gate is a config entry (`loop.toml [[gates]]`) with a `kind`. The protocol's
-structural claim: **every kind has exactly one verb, and which verb it has
-states which plane runs it.**
+A gate is a config entry (`loop.toml [[gates]]`) with a `kind`.
+**The gate split** is the protocol's structural claim: every kind has exactly
+one verb, and which verb it has states which plane runs it.
 
 - **Deterministic kinds** (`command`, `diff`) — the rail *executes*:
   `execute(gate_cfg, ctx) -> GateResult`, where ctx is the worktree cwd (+
   base ref for diff).
-- **Judgment kinds** (`judge`, `simplify`) — the rail never executes; the
+- **Judgment kinds** (`judge`) — the rail never executes; the
   orchestrator dispatches a subagent and the rail *validates* the subagent's
   return: `validate(gate_cfg, raw) -> GateResult`, rejecting schema-violating
   returns (#99's re-ask loop keys off the rejection). `judge` is the fused
   acceptance+review stage (funloops#39, dec-611cbd8a): its envelope carries
   `criteria[]` verdicts and `findings[]`, and only a criterion `not-met`
-  fails it. A gate entry may carry only the keys its kind reads
+  fails it; a `rule:<n>` criterion (rules 3, 6, 7, 8) must cite `file:line`.
+  Its shape posture (`validate --posture shape`) returns `{verdict, flow,
+  owns[], options[]}`, a failing case routing to a human. A gate entry may carry only the keys its kind reads
   (`GATE_KEYS`); the config loader refuses any other key by name.
 
 `GateResult` is a plain dict shape, not a class: `{id, kind, passed, summary,
@@ -188,19 +187,20 @@ Structurally, `gates.py` carries one registry per verb:
 
 ```python
 DETERMINISTIC = {"command": run_command_gate, "diff": run_diff_gate}
-JUDGMENT = {"judge": validate_judge, "simplify": validate_simplify}
+JUDGMENT = {"judge": validate_judge}
 ```
 
 The `check` subcommand dispatches **only** through `DETERMINISTIC`; any other
-kind — judgment-side or typo — gets the existing "LLM-judged — run it from
-the /issue-loop command" error (previously an `else` branch; the registry
-promotes it from error-message prose to structure, byte-identical output).
+kind — judgment-side or typo — gets the error `gate kind '<k>' is LLM-judged
+— run it from the /issue-loop command, not the script` (previously an `else`
+branch; the registry promotes it from error-message prose to structure,
+byte-identical output).
 The `validate` subcommand (#99) dispatches **only** through `JUDGMENT`, and
 the two registries are pinned disjoint + covering the shipped pipeline.
-`check --issue N` (#40, dec-2f5bf66a) is the same verb's second form: the
-issue body's `verify:` lines run through `run_command_gate` as ad-hoc command
-gates, printed as `{issue, results: [GateResult…], summary}` — no new kind, no
-loop.toml key.
+`check --issue N` (dec-e267d040) is the same verb's second form: every
+configured `command` gate, then the issue body's `verify:` lines as ad-hoc
+command gates, all through `run_command_gate`, printed as one `{issue,
+results: [GateResult…], summary}` — no new kind, no loop.toml key.
 
 A judgment result is `GateResult` plus `reasons`, and that key carries the
 whole execute-vs-validate difference: **empty `reasons` = a verdict**

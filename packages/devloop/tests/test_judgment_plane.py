@@ -65,10 +65,10 @@ def test_command_doc_drives_the_devloop_rail():
     """Every rail invocation goes through the packaged entry point. The old
     ``python scripts/issue_loop.py`` path does not exist in this repo, so a doc
     that still names it is a doc that cannot be followed."""
-    text = _doc(COMMAND_DOC)
+    text = _doc(COMMAND_DOC) + _doc(DOCS / "board-hygiene.md")
     assert "scripts/issue_loop.py" not in text
     # Source of truth: argparse. Every subcommand the rail exposes is shown
-    # being invoked through `devloop`.
+    # being invoked through `devloop`, in the command doc or the board doc.
     for name in _subcommands():
         assert f"devloop {name}" in text, name
 
@@ -135,10 +135,10 @@ def test_plan_runs_against_the_funloops_tracker():
 
 
 def test_memory_feed_blocks_are_marked_and_balanced():
-    """The prime splice, the trajectory feed, and the wrap-coverage note are
-    the three vault-dependent stretches; each is a marked block."""
+    """The prime splice, and the trajectory feed with the wrap-coverage note,
+    are the vault-dependent stretches; each is a marked block."""
     text = _doc(COMMAND_DOC)
-    assert text.count(EXT_OPEN) == text.count(EXT_CLOSE) >= 3
+    assert text.count(EXT_OPEN) == text.count(EXT_CLOSE) >= 2
     # The marker states the condition and the vault-less behavior, so a reader
     # who skips the block knows what they are skipping. Non-greedy to the
     # closing `-->` (a marker may contain `>`).

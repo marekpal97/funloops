@@ -1,8 +1,7 @@
 """Risk-lane classification of shipped PRs, pure over (signals, cfg).
 
-Fail-closed on the three required signals (``baseline_green``,
-``acceptance``, ``review_severity``): a missing key or an off-enum value
-goes red. There is no green lane; labels are applied by the orchestrator.
+Fail-closed on the two required signals (``baseline_green``,
+``review_severity``): a missing key or an off-enum value goes red. There is no green lane; labels are applied by the orchestrator.
 """
 
 from __future__ import annotations
@@ -13,8 +12,6 @@ from devloop import paths
 # sets fails closed to red rather than slipping through as a skim.
 _VALID_REVIEW = {"none", "note", "problem"}
 _RED_REVIEW = {"problem"}
-_VALID_ACCEPTANCE = {"met", "uncertain", "not-met"}
-_RED_ACCEPTANCE = {"uncertain", "not-met"}
 
 # The red label is not here: it comes from labels.on_gate_failure so
 # triage-red and gate-failure share one label.
@@ -26,7 +23,7 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
 
     ``cfg`` is the resolved ``[triage]`` section; ``red_label`` is the red
     lane's tracker label. Red wins over yellow and ``reasons`` lists every
-    triggered rule. The three required signals fail closed to red when absent
+    triggered rule. The two required signals fail closed to red when absent
     or off-enum; the rest default benignly.
 
     Signals schema:
@@ -36,7 +33,6 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
       - ``tests_touched`` bool — the change carries test coverage [opt, →False]
       - ``review_severity`` str — worst judge finding: none|note|problem [REQUIRED]
       - ``baseline_green`` bool — tests gate green on the pristine worktree [REQUIRED]
-      - ``acceptance`` str — judge criteria verdict: met|uncertain|not-met [REQUIRED]
     """
     if red_label is None:
         # Imported lazily: cli imports this module, so a top-level import is a cycle.
@@ -52,8 +48,8 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
     sensitive = paths.hits(files, cfg.get("sensitive_paths", []))
     if sensitive:
         red.append("sensitive path(s): " + ", ".join(sensitive))
-    if diff_lines >= cfg["red_min_diff_lines"]:
-        red.append(f"large diff: {diff_lines} lines >= {cfg['red_min_diff_lines']}")
+    if diff_lines >= cfg["red_diff_lines"]:
+        red.append(f"large diff: {diff_lines} lines >= {cfg['red_diff_lines']}")
 
     # A truthy "false" string must not pass, so the type is checked too.
     if "baseline_green" not in signals:
@@ -71,15 +67,6 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
             red.append(f"unrecognized review_severity '{signals['review_severity']}' (fail-closed)")
         elif review in _RED_REVIEW:
             red.append(f"review severity {review}")
-
-    if "acceptance" not in signals:
-        red.append("acceptance signal missing (fail-closed)")
-    else:
-        acceptance = str(signals["acceptance"]).lower()
-        if acceptance not in _VALID_ACCEPTANCE:
-            red.append(f"unrecognized acceptance '{signals['acceptance']}' (fail-closed)")
-        elif acceptance in _RED_ACCEPTANCE:
-            red.append(f"acceptance {acceptance}")
 
     if red:
         return {"lane": "red", "label": red_label, "reasons": red}
