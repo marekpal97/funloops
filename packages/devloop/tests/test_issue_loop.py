@@ -5,7 +5,6 @@ and strings — no gh, no git, no network.
 """
 
 import json
-import os
 import re
 import sqlite3
 import subprocess
@@ -2825,6 +2824,7 @@ def test_findings_are_one_pr_comment_after_pr_open():
     assert "already filed as an issue is the issue number alone" in ship
     assert "A PR with no findings and no deviations gets no comment" in ship
     stacked = " ".join(_command_doc_subsection("### 1e.").split())
+    assert "stack-tip finding that restates a slice finding is dropped" in stacked
 
 
 def test_judge_brief_says_a_finding_is_one_sentence():

@@ -48,8 +48,8 @@ def compose(issues: dict[int, Issue], role: str, posture: Posture, rules: list[s
         raise ValueError(f"a {posture} pack carries the touched modules; none were resolved")
     writer, shape = posture == "writer", posture == "shape"
     numbers = ", ".join(f"#{n}" for n in issues)
-    parts = [f"# Dispatch pack — issue{'s' * (len(issues) > 1)} {numbers} "
-             f"({role}{', shape' * shape})"]
+    parts = [(f"# Dispatch pack — issue{'s' * (len(issues) > 1)} {numbers} "
+              f"({role}{', shape' * shape})")]
     parts += [f"## Issue{f' #{n}' * shape}\n\n{issue.title}\n\n{issue.body.strip()}"
               for n, issue in issues.items()]
     parts.append("## Rules\n\n" + "\n\n".join(rules))

@@ -519,7 +519,8 @@ flow above:
   column per gate, no per-issue tables; a demo line per issue that carries a
   `demo:` criterion; and a `Not included` line only when part of the DAG
   remains, naming the issues and why. Then §1d's one findings
-  comment, covering every completed issue. Then one more line per issue: `gh issue comment
+  comment, covering every completed issue; a stack-tip finding that restates
+  a slice finding is dropped. Then one more line per issue: `gh issue comment
   <N> --body "🤖 issue-loop run <run-id>: PR <pr-url>"`. `training_mode`
   pauses once, here. Then remove the `loop/dag-<N>` worktree (same teardown
   rule as §1d).
