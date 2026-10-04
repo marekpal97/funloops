@@ -315,6 +315,16 @@ def test_check_baseline_runs_the_tests_gate_under_tdd_mode(tmp_path, monkeypatch
     assert [r["id"] for r in out["results"]] == ["tests"]
 
 
+def test_check_baseline_without_a_command_gate_is_an_error_under_auto(tmp_path, monkeypatch,
+                                                                     capsys):
+    """Under ``auto`` no command gate means no tests ran: exit 2 naming it,
+    never a green baseline over an empty result list."""
+    _host_config(tmp_path, monkeypatch, '[tdd]\nmode = "auto"\n')
+    assert cli.main(["check", "--baseline", "--cwd", str(tmp_path)]) == 2
+    out = json.loads(capsys.readouterr().out)
+    assert "baseline" not in out and "command gate" in out["error"]
+
+
 def test_verify_rail_gh_failure_is_the_error_rung(tmp_path, monkeypatch, capsys):
     """A body that cannot be read is exit 2 with {"error"}, like every other
     `check` that never starts — exit 1 would read as 'a verify line is red'."""
@@ -2367,6 +2377,20 @@ def _triage(tmp_path, files, *extra, changed=20, findings=(), baseline="green", 
                      "--judge-json", str(judge_file), "--baseline", baseline,
                      "--fix-rounds", str(rounds), "--cwd", str(root),
                      "--base-ref", "base", *extra])
+
+
+def test_read_signals_returns_the_declared_record(tmp_path):
+    """The signal record crosses into classification as ``triage.Signals``."""
+    root = _shipped(tmp_path, ["src/foo.py", "tests/test_foo.py"])
+    signals = triage.read_signals(
+        [{"id": "diff-guard", "kind": "diff", "changed_lines": 12}],
+        {"criteria": [], "findings": [{"severity": "note", "finding": "f"}]},
+        "green", 1, root, "base")
+    assert signals == triage.Signals(
+        fix_rounds=1, diff_lines=12, files_touched=["src/foo.py", "tests/test_foo.py"],
+        tests_touched=True, review_severity="note", baseline_green=True)
+    assert signals.classify(TRIAGE_CFG, "ready-for-human") == {
+        "lane": "yellow", "label": "review-light", "reasons": ["1 fix round(s)"]}
 
 
 def test_triage_argparse_contract():

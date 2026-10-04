@@ -536,8 +536,12 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"error": f"tdd.mode: expected {' | '.join(TDD_MODES)}, "
                                        f"got {mode!r}"}))
             return 2
-        results = [run_command_gate(g, Path(args.cwd).resolve())
-                   for g in cfg["gates"] if g["kind"] == "command"]
+        tests = [g for g in cfg["gates"] if g["kind"] == "command"]
+        if mode == "auto" and not tests:
+            print(json.dumps({"error": "tdd.mode = auto: no command gate in config, so no "
+                                       "tests ran and the baseline has no colour"}))
+            return 2
+        results = [run_command_gate(g, Path(args.cwd).resolve()) for g in tests]
         green = {"always": True, "never": False}.get(mode, all(r["passed"] for r in results))
         print(json.dumps({"baseline": "green" if green else "red", "results": results},
                          indent=2))
@@ -619,8 +623,7 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as e:
             print(json.dumps({"error": str(e)}))
             return 2
-        result = triage.classify_pr(signals, cfg["triage"],
-                                    red_label=cfg["labels"]["on_gate_failure"])
+        result = signals.classify(cfg["triage"], cfg["labels"]["on_gate_failure"])
         print(json.dumps({"issue": args.number, **result}, indent=2))
     elif args.cmd == "trajectory":
         cwd = Path(args.cwd).resolve()

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 from devloop import paths
 
@@ -28,9 +29,24 @@ TRIAGE_LABELS = {"yellow": "review-light"}
 TEST_PATHS = ("tests/", "*/tests/*", "test_*", "*_test.*")
 
 
+class Signals(NamedTuple):
+    """One shipped PR's signal record, as ``read_signals`` gathers it."""
+
+    fix_rounds: int
+    diff_lines: int
+    files_touched: list[str]
+    tests_touched: bool
+    review_severity: str
+    baseline_green: bool
+
+    def classify(self, cfg: dict, red_label: str) -> dict:
+        """This PR's risk lane under the ``[triage]`` section ``cfg``."""
+        return classify_pr(self._asdict(), cfg, red_label)
+
+
 def read_signals(gate_results: list[dict], judge: object, baseline: str, fix_rounds: int,
-                 root: Path, base: str) -> dict:
-    """The signal record ``classify_pr`` takes: the diff gate's changed-line
+                 root: Path, base: str) -> Signals:
+    """The PR's signal record: the diff gate's changed-line
     count, the judge's worst finding, the baseline line, the fix rounds, and
     the files ``base...HEAD`` touches in ``root``. An input that cannot yield
     its signal raises ``ValueError`` naming it."""
@@ -41,14 +57,14 @@ def read_signals(gate_results: list[dict], judge: object, baseline: str, fix_rou
     if not isinstance(judge, dict) or not isinstance(judge.get("findings"), list):
         raise ValueError("judge-json: expected the judge return object with a findings list")
     files = touched_files(root, base)
-    return {
-        "fix_rounds": fix_rounds,
-        "diff_lines": counts[0],
-        "files_touched": files,
-        "tests_touched": any(paths.match(f, p) for f in files for p in TEST_PATHS),
-        "review_severity": worst_severity(judge["findings"]),
-        "baseline_green": baseline == "green",
-    }
+    return Signals(
+        fix_rounds=fix_rounds,
+        diff_lines=counts[0],
+        files_touched=files,
+        tests_touched=any(paths.match(f, p) for f in files for p in TEST_PATHS),
+        review_severity=worst_severity(judge["findings"]),
+        baseline_green=baseline == "green",
+    )
 
 
 def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
