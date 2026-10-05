@@ -60,7 +60,9 @@ def apply_assume_done(issues: list[dict], done: set[int]) -> list[dict]:
 
 
 def compute_frontier(issues: list[dict], cfg: dict, limit: int | None = None) -> dict:
-    """Partition issues into frontier / blocked / claimed, with reasons.
+    """Partition issues into frontier / blocked / claimed, with reasons. With
+    ``limit``, the frontier keeps its first ``limit`` entries and ``deferred``
+    names the rest.
 
     An issue is runnable when it is OPEN, carries the runnable label, is not
     claimed (an assignee IS a claim — wayfinder convention — and the legacy
@@ -112,6 +114,6 @@ def compute_frontier(issues: list[dict], cfg: dict, limit: int | None = None) ->
             frontier.append(entry)
 
     frontier.sort(key=lambda e: e["number"])
-    if limit is not None:
-        frontier = frontier[:limit]
-    return {"frontier": frontier, "blocked": blocked, "claimed": claimed, "warnings": warnings}
+    cut = len(frontier) if limit is None else limit
+    return {"frontier": frontier[:cut], "deferred": [e["number"] for e in frontier[cut:]],
+            "blocked": blocked, "claimed": claimed, "warnings": warnings}

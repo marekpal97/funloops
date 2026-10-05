@@ -1,10 +1,17 @@
 """Risk-lane classification of shipped PRs, pure over (signals, cfg).
 
-Fail-closed on the two required signals (``baseline_green``,
-``review_severity``): a missing key or an off-enum value goes red. There is no green lane; labels are applied by the orchestrator.
+``read_signals`` gathers the signal record from what the run already holds:
+the gate results, the validated judge return, the baseline line and the git
+diff. Fail-closed on the two required signals (``baseline_green``,
+``review_severity``): a missing key or an off-enum value goes red. There is
+no green lane; labels are applied by the orchestrator.
 """
 
 from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+from typing import NamedTuple
 
 from devloop import paths
 
@@ -16,6 +23,48 @@ _RED_REVIEW = {"problem"}
 # The red label is not here: it comes from labels.on_gate_failure so
 # triage-red and gate-failure share one label.
 TRIAGE_LABELS = {"yellow": "review-light"}
+
+# A touched path in one of these forms (paths.match) is the coverage signal.
+# ponytail: naming conventions only; a host with another layout reads as uncovered.
+TEST_PATHS = ("tests/", "*/tests/*", "test_*", "*_test.*")
+
+
+class Signals(NamedTuple):
+    """One shipped PR's signal record, as ``read_signals`` gathers it."""
+
+    fix_rounds: int
+    diff_lines: int
+    files_touched: list[str]
+    tests_touched: bool
+    review_severity: str
+    baseline_green: bool
+
+    def classify(self, cfg: dict, red_label: str) -> dict:
+        """This PR's risk lane under the ``[triage]`` section ``cfg``."""
+        return classify_pr(self._asdict(), cfg, red_label)
+
+
+def read_signals(gate_results: list[dict], judge: object, baseline: str, fix_rounds: int,
+                 root: Path, base: str) -> Signals:
+    """The PR's signal record: the diff gate's changed-line
+    count, the judge's worst finding, the baseline line, the fix rounds, and
+    the files ``base...HEAD`` touches in ``root``. An input that cannot yield
+    its signal raises ``ValueError`` naming it."""
+    counts = [g.get("changed_lines") for g in gate_results
+              if isinstance(g, dict) and g.get("kind") == "diff"]
+    if not counts or not isinstance(counts[0], int):
+        raise ValueError("gates-json: no diff gate result with an int changed_lines")
+    if not isinstance(judge, dict) or not isinstance(judge.get("findings"), list):
+        raise ValueError("judge-json: expected the judge return object with a findings list")
+    files = touched_files(root, base)
+    return Signals(
+        fix_rounds=fix_rounds,
+        diff_lines=counts[0],
+        files_touched=files,
+        tests_touched=any(paths.match(f, p) for f in files for p in TEST_PATHS),
+        review_severity=worst_severity(judge["findings"]),
+        baseline_green=baseline == "green",
+    )
 
 
 def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
@@ -80,3 +129,22 @@ def classify_pr(signals: dict, cfg: dict, red_label: str | None = None) -> dict:
     if not tests_touched:
         yellow.append("no test coverage signal (tests_touched=false)")
     return {"lane": "yellow", "label": TRIAGE_LABELS["yellow"], "reasons": yellow}
+
+
+def worst_severity(findings: list) -> str:
+    """``problem`` over ``note`` over ``none``; a severity off the enum is
+    returned as found, so ``classify_pr`` fails it closed."""
+    found = [f.get("severity") if isinstance(f, dict) else f for f in findings]
+    odd = [s for s in found if s not in _VALID_REVIEW]
+    if odd:
+        return str(odd[0])
+    return next((s for s in ("problem", "note") if s in found), "none")
+
+
+def touched_files(root: Path, base: str) -> list[str]:
+    """The repo-relative paths ``git diff base...HEAD`` names in ``root``."""
+    proc = subprocess.run(["git", "diff", "--name-only", "-z", f"{base}...HEAD"],
+                          cwd=root, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise ValueError(f"git diff {base}...HEAD: {proc.stderr.strip()}")
+    return sorted(filter(None, proc.stdout.split("\0")))

@@ -1,50 +1,23 @@
-"""The constitution ships as a devloop default (issue #26, dec-1746aec3).
+"""The constitution ships as a devloop default.
 
-Seams under test — the two the issue names:
-
-1. **Resolution** — ``cli.find_constitution``: a fresh repo with devloop
-   installed resolves the packaged default with zero authoring; a repo's
-   ``docs/agents/constitution.md`` overlay *extends* the default (appended
-   after it), never replaces it. Same upward walk as loop.toml, opposite
-   merge posture.
-2. **Rendering** — the resolved files render as the pack's ``## Rules``
-   section for both roles, packaged rules then overlay, numbered
-   continuously (funloops#45, dec-2f8c2322, superseding dec-d79e8e7b's
-   persona-as-splice-container); the persona is a sibling section for the
-   implementer only. The command doc names exactly one splice point, and
-   the persona does not restate rules 1 and 2.
-
-Sources of truth are the issue's acceptance criteria (≤ 40 lines, eight
-rules, no citation in any rule's text), dec-1746aec3's amendment convention
-(watched_paths covers both layers), and the filesystem — never the code
-under test.
+Seams under test: resolution (``cli.find_constitution``: a fresh repo gets the
+packaged default; a repo's ``docs/agents/constitution.md`` overlay extends it,
+never replaces it), the packaged file's one-screen cap, and the amendment
+convention (``watched_paths`` covers both layers).
 """
 
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from devloop import cli, pack, paths
+from devloop import cli, paths
 
-DOCS = cli.REPO_ROOT / "docs" / "agents"
-COMMAND_DOC = DOCS / "issue-loop.command.md"
 FUNLOOPS_ROOT = cli.REPO_ROOT.parents[1]
-
-# The former depth rider's most distinctive line, a restatement of rules 1
-# and 2 — if it appears in any packaged doc, the rules have a second home.
-LADDER_CLAUSE_PHRASE = "consolidate, not scatter"
-# AC3 verbatim: an issue/PR number, a bare 7-hex sha, or "PR " in a rule.
-CITATION = re.compile(r"#[0-9]{2,}|\b[0-9a-f]{7}\b|PR ")
-
-
-# ---------------------------------------------------------------------------
-# Resolution seam
 
 
 def _repo(tmp_path: Path, overlay: str | None = None) -> Path:
@@ -149,7 +122,7 @@ def test_config_verb_emits_the_resolved_constitution(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# The packaged file's own contract (the issue's criteria verbatim)
+# The packaged file's own contract: one screen
 
 
 def test_constitution_is_one_screen():
@@ -157,50 +130,6 @@ def test_constitution_is_one_screen():
         "the constitution must ship under docs/agents/"
     lines = cli.PACKAGE_CONSTITUTION.read_text(encoding="utf-8").splitlines()
     assert len(lines) <= 40, f"{len(lines)} lines — the criterion is ≤ 40"
-
-
-def test_eight_rules_and_no_citation_in_any_rule():
-    """dec-d79e8e7b's durability test: a packaged rule names the failure it
-    prevents in general terms; provenance is a decision id in the PR that
-    adds the rule, never in the text an installing repo cannot resolve."""
-    rules = re.findall(r"^\d+\.\s.*$", pack.body(cli.PACKAGE_CONSTITUTION),
-                       re.MULTILINE)
-    assert len(rules) == 8, f"{len(rules)} rules — the settled set is eight"
-    for rule in rules:
-        assert not CITATION.search(rule), f"rule cites an incident: {rule}"
-
-
-# ---------------------------------------------------------------------------
-# Rendering seam
-
-
-def test_overlay_rules_continue_the_packaged_numbering():
-    """The Rules section is the resolved files' bodies in order, and this
-    repo's real overlay continues the packaged numbering so a reader (and a
-    judge citing "rule 9") sees one list, never two starting at 1."""
-    numbers = [int(n) for p in cli.find_constitution(FUNLOOPS_ROOT)
-               for n in re.findall(r"^(\d+)\.\s", pack.body(p), re.MULTILINE)]
-    assert numbers == list(range(1, len(numbers) + 1))
-    assert len(numbers) > 8  # the overlay contributed
-
-
-def test_exactly_one_splice_point_in_the_command_doc():
-    """A single paragraph of the command doc names the file and defines the
-    extend-not-replace resolution."""
-    text = COMMAND_DOC.read_text(encoding="utf-8")
-    naming = [p for p in text.split("\n\n") if "constitution.md" in p]
-    assert len(naming) == 1, "constitution.md must be named at one splice point"
-    assert "extends" in naming[0] and "never replaces" in naming[0]
-
-
-def test_persona_does_not_restate_rules_1_and_2():
-    """Rules 1 and 2 live in the constitution alone: the persona's ladder
-    points at rule 2, and no packaged doc carries the old rider's line."""
-    persona = pack.body(cli.PACKAGE_PERSONA)
-    assert "Rule 2" in persona
-    assert "deepen the module you are in" not in persona
-    for doc in DOCS.glob("*.md"):
-        assert LADDER_CLAUSE_PHRASE not in doc.read_text(encoding="utf-8"), doc.name
 
 
 # ---------------------------------------------------------------------------

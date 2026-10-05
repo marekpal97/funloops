@@ -7,14 +7,16 @@ judgment stays in the /issue-loop command; everything schedulable is
 graph math here.
 
 Subcommands:
-  plan     — snapshot issues via `gh`, compute frontier + components (JSON)
+  plan     — snapshot issues via `gh`, compute frontier + components (JSON);
+             the frontier is cut to max_issues_per_run and carries a run id
   claim    — claim an issue for a run (the assignee IS the claim)
   release  — drop the claim
   config     — print resolved loop config (defaults merged with loop.toml;
                an unknown or deleted key is refused by name)
   check      — run one deterministic gate (kind: command | diff) and emit JSON;
                --issue N runs the command gates, then the issue's `verify:`
-               lines, as one result list
+               lines, as one result list; --baseline runs the command gates
+               and adds the baseline line (green | red) under tdd.mode
   validate   — validate a judgment gate's subagent return (kind: judge)
                against its schema; rejects for a re-ask
   prime      — assemble prior-trajectory prime context for an issue at claim
@@ -25,9 +27,13 @@ Subcommands:
   board      — doctor: lint one or more repos' boards against the grammar
                dag.py reads (JSON report, exit 1 on errors); sweep: replay
                the mechanical fixes (--plan by default, --apply runs them)
-  pack       — compose one dispatch's context (issue, the constitution as
-               rules, the persona for the implementer, the repo map spliced
-               from codegraph's CLI) and print it
+  pack       — compose one role's complete dispatch (issue, the constitution
+               as rules, the persona and standing orders for a writer, the
+               judge or shape brief for a reader, the repo map spliced from
+               codegraph's CLI, the dispatch lines) and print it, or write
+               it with --out
+  triage     — classify a shipped PR into a risk lane from its gate results,
+               its judge return, the baseline line and its git diff
 
 Stdlib only. Config: the host repo's docs/agents/loop.toml, found by walking up
 from the cwd, else the copy shipped with the package (see find_config).
@@ -38,8 +44,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import subprocess
 import tomllib
+from datetime import datetime
 from pathlib import Path
 from typing import get_args
 
@@ -173,6 +181,9 @@ DISPATCH_KEYS = ("posture", "transport", "harness", "model", "effort", "args")
 DISPATCH_CHOICES = {"transport": ("agent-tool", "herdr"), "posture": get_args(pack.Posture)}
 DISPATCH_DEFAULT = {"transport": "agent-tool"}
 OVERRIDABLE = " | ".join((*SECTIONS, "dispatch.<role>"))
+# tdd.mode: auto writes the tests gate's colour as the baseline line; always
+# writes green and never red, whatever the gate said.
+TDD_MODES = ("auto", "always", "never")
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +320,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_plan = sub.add_parser("plan", help="compute the runnable frontier", parents=[common])
-    p_plan.add_argument("--limit", type=int, default=None)
+    p_plan.add_argument("--limit", type=int, default=None,
+                        help="cap the frontier (default: max_issues_per_run)")
     p_plan.add_argument("--dag", type=int, default=None, metavar="N",
                         help="scope to the DAG component containing issue N")
     p_plan.add_argument("--assume-done", default="", metavar="N,N",
@@ -330,6 +342,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     what.add_argument("--gate", help="a command | diff gate id from loop.toml")
     what.add_argument("--issue", type=int, metavar="N",
                       help="run the command gates, then issue N's verify: lines, as one list")
+    what.add_argument("--baseline", action="store_true",
+                      help="run the command gates and add the baseline line "
+                           "(green | red) under tdd.mode")
     p_check.add_argument("--cwd", default=".")
     p_check.add_argument("--base-ref", default="origin/main")
 
@@ -377,12 +392,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_triage = sub.add_parser("triage", help="classify a shipped PR into a risk lane", parents=[common])
     p_triage.add_argument("number", type=int, nargs="?", default=None,
-                          help="issue/PR number for the output (optional; the "
-                               "signals JSON may also carry an 'issue' key)")
-    p_triage.add_argument("--signals-json", required=True,
-                          help="file with the PR's signal set: {fix_rounds, "
-                               "diff_lines, files_touched, tests_touched, "
-                               "review_severity, baseline_green}")
+                          help="issue/PR number for the output (optional)")
+    p_triage.add_argument("--gates-json", required=True,
+                          help="file with the gate results list; the diff gate's "
+                               "changed_lines is the diff size")
+    p_triage.add_argument("--judge-json", required=True,
+                          help="file with the validated judge return; its worst "
+                               "finding is the review severity")
+    p_triage.add_argument("--baseline", required=True, choices=("green", "red"),
+                          help="the run's baseline line (check --baseline)")
+    p_triage.add_argument("--fix-rounds", type=int, default=0)
+    p_triage.add_argument("--cwd", default=".", help="the checkout to read git from")
+    p_triage.add_argument("--base-ref", default="origin/main")
 
     p_traj = sub.add_parser("trajectory", help="assemble a per-issue trajectory payload (memory feed)", parents=[common])
     p_traj.add_argument("number", type=int)
@@ -430,15 +451,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          help="sweep: restrict to these op kinds (create_label, add_label, "
                               "remove_label, add_blocker, retitle, delete_label)")
 
-    p_pack = sub.add_parser("pack", help="compose one dispatch's context and print it", parents=[common])
+    p_pack = sub.add_parser("pack", help="compose one role's complete dispatch", parents=[common])
     p_pack.add_argument("number", type=int, nargs="+",
                         help="the issue; the shape posture takes every issue of a stack")
     p_pack.add_argument("--role", default="implementer", metavar="ROLE",
                         help="any [dispatch] role; its posture shapes the pack — "
                              "writer: issue + rules + persona + repo map + standing "
                              "orders; reader: issue + rules + repo map + touched "
-                             "modules; shape: issues + rules + touched modules + "
-                             "module edges")
+                             "modules + diff + judge brief; shape: issues + rules + "
+                             "touched modules + module edges + shape brief")
     p_pack.add_argument("--posture", default=None, choices=get_args(pack.Posture),
                         help="one of the role's postures (default: its first)")
     p_pack.add_argument("--base-ref", default="origin/main",
@@ -453,6 +474,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="host extension: file with the prime block to splice")
     p_pack.add_argument("--trace", default=None, metavar="FILE",
                         help="host extension: file with the run's threaded trace to splice")
+    p_pack.add_argument("--branch", default="", help="the dispatch's branch line")
+    p_pack.add_argument("--baseline", default="", choices=("", "green", "red"),
+                        help="the dispatch's baseline line (check --baseline)")
+    p_pack.add_argument("--return", dest="return_file", default="", metavar="FILE",
+                        help="the dispatch's return file; adds the worktree line")
+    p_pack.add_argument("--check-json", default=None, metavar="FILE",
+                        help="reader: file with the `check --issue` output to splice")
+    p_pack.add_argument("--evidence", default="", metavar="DIR",
+                        help="reader: the implementer's demo evidence directory")
+    p_pack.add_argument("--out", default=None, metavar="FILE",
+                        help="write the dispatch to FILE and print its path")
 
     return parser
 
@@ -485,8 +517,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.assume_done:
             done = {int(n) for n in args.assume_done.split(",") if n.strip()}
             issues = dag.apply_assume_done(issues, done)
-        result = dag.compute_frontier(issues, cfg, limit=args.limit)
-        print(json.dumps(result, indent=2))
+        cap = cfg["loop"]["max_issues_per_run"] if args.limit is None else args.limit
+        result = dag.compute_frontier(issues, cfg, limit=cap)
+        run_id = f"loop-{datetime.now().astimezone():%Y%m%d}-{secrets.token_hex(2)}"
+        print(json.dumps({"run_id": run_id, **result}, indent=2))
     elif args.cmd == "claim":
         # The assignee is the claim; labels.claimed stays readable for `plan`.
         github.run(["issue", "edit", str(args.number), "--add-assignee", "@me"])
@@ -496,6 +530,21 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "release":
         github.run(["issue", "edit", str(args.number), "--remove-assignee", "@me"])
         print(f"released #{args.number}")
+    elif args.cmd == "check" and args.baseline:
+        mode = cfg["tdd"]["mode"]
+        if mode not in TDD_MODES:
+            print(json.dumps({"error": f"tdd.mode: expected {' | '.join(TDD_MODES)}, "
+                                       f"got {mode!r}"}))
+            return 2
+        tests = [g for g in cfg["gates"] if g["kind"] == "command"]
+        if mode == "auto" and not tests:
+            print(json.dumps({"error": "tdd.mode = auto: no command gate in config, so no "
+                                       "tests ran and the baseline has no colour"}))
+            return 2
+        results = [run_command_gate(g, Path(args.cwd).resolve()) for g in tests]
+        green = {"always": True, "never": False}.get(mode, all(r["passed"] for r in results))
+        print(json.dumps({"baseline": "green" if green else "red", "results": results},
+                         indent=2))
     elif args.cmd == "check" and args.issue is not None:
         cwd = Path(args.cwd).resolve()
         try:
@@ -566,14 +615,16 @@ def main(argv: list[str] | None = None) -> int:
                                            payload["served"], args.session_id)
         print(json.dumps(payload, indent=2))
     elif args.cmd == "triage":
-        signals = json.loads(Path(args.signals_json).read_text(encoding="utf-8"))
-        if not isinstance(signals, dict):
-            print(json.dumps({"error": "signals-json must be a JSON object"}))
+        try:
+            signals = triage.read_signals(
+                json.loads(Path(args.gates_json).read_text(encoding="utf-8")),
+                json.loads(Path(args.judge_json).read_text(encoding="utf-8")),
+                args.baseline, args.fix_rounds, Path(args.cwd).resolve(), args.base_ref)
+        except ValueError as e:
+            print(json.dumps({"error": str(e)}))
             return 2
-        result = triage.classify_pr(signals, cfg["triage"],
-                                    red_label=cfg["labels"]["on_gate_failure"])
-        issue = args.number if args.number is not None else signals.get("issue")
-        print(json.dumps({"issue": issue, **result}, indent=2))
+        result = signals.classify(cfg["triage"], cfg["labels"]["on_gate_failure"])
+        print(json.dumps({"issue": args.number, **result}, indent=2))
     elif args.cmd == "trajectory":
         cwd = Path(args.cwd).resolve()
         issue = json.loads(github.run(["api", f"repos/{{owner}}/{{repo}}/issues/{args.number}"]))
@@ -654,14 +705,24 @@ def main(argv: list[str] | None = None) -> int:
             rules = [pack.body(p) for p in find_constitution(root)]
             persona = pack.body(PACKAGE_PERSONA) if posture == "writer" else ""
             touched = None if posture == "writer" else pack.Touched.since(args.base_ref, root)
+            dispatch = pack.Dispatch(
+                branch=args.branch, baseline=args.baseline, return_file=args.return_file,
+                worktree=str(root) if args.return_file else "",
+                check=Path(args.check_json).read_text(encoding="utf-8") if args.check_json else "",
+                evidence=args.evidence)
             text = pack.compose(
                 issues, args.role, posture, rules, persona,
                 pack.Codegraph(args.codegraph_bin, root), touched,
                 prime=Path(args.prime).read_text(encoding="utf-8") if args.prime else "",
                 trace=Path(args.trace).read_text(encoding="utf-8") if args.trace else "",
+                dispatch=dispatch,
             )
         except (FileNotFoundError, ValueError) as exc:
             print(json.dumps({"error": str(exc)}))
             return 2
-        print(text, end="")
+        if args.out:
+            Path(args.out).write_text(text, encoding="utf-8")
+            print(args.out)
+        else:
+            print(text, end="")
     return 0

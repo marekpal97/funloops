@@ -373,7 +373,7 @@ def test_shape_pack_without_codegraph_still_holds_every_module(repo, monkeypatch
                      "--cwd", str(repo), "--base-ref", "base"]) == 0
     out = capsys.readouterr().out
     assert "### fx/core.py\n" in out and "### fx/helper.py\n" in out
-    edges = out[out.index("## Module edges"):]
+    edges = out[out.index("## Module edges"):out.index("## Shape brief")]
     assert "DEGRADED" in edges and "edges" in edges.splitlines()[2]
     assert len(edges.strip().splitlines()) == 3  # the heading, a blank, one line
 
@@ -387,3 +387,62 @@ def test_pack_refuses_what_it_cannot_shape(repo, tmp_path, capsys, argv, needle)
     binary, _ = fake_codegraph(tmp_path)
     assert cli.main(["pack", *argv, "--cwd", str(repo), "--codegraph-bin", str(binary)]) == 2
     assert needle in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_writer_dispatch_file_is_the_pack_plus_its_lines(repo, tmp_path, capsys):
+    """``--out`` writes the whole dispatch and prints its path: the pack, then
+    the branch, baseline, return-file and worktree lines, in that order."""
+    binary, _ = fake_codegraph(tmp_path)
+    out, ret = tmp_path / "d.md", tmp_path / "r.md"
+    assert cli.main(["pack", "7", "--cwd", str(repo), "--codegraph-bin", str(binary),
+                     "--branch", "loop/x", "--baseline", "green",
+                     "--return", str(ret), "--out", str(out)]) == 0
+    assert capsys.readouterr().out.strip() == str(out)
+    text = out.read_text(encoding="utf-8")
+    golden = (FIX / "implementer.md").read_text(encoding="utf-8")
+    assert text == golden + (f"\nBranch: loop/x\nBaseline: green\nReturn file: {ret}\n"
+                             f"Worktree: {repo}\n")
+
+
+def test_judge_dispatch_carries_brief_diff_check_and_evidence(repo, tmp_path, capsys):
+    """The reader dispatch is complete: the judge brief with its return
+    shape, the slice diff, the ``check --issue`` output and the evidence
+    directory, then the return file and the worktree it judges."""
+    binary, _ = fake_codegraph(tmp_path)
+    check = tmp_path / "check.json"
+    check.write_text('{"issue": 7, "summary": "1/1 passed"}\n', encoding="utf-8")
+    out = tmp_path / "j.md"
+    assert cli.main(["pack", "7", "--role", "judge", "--cwd", str(repo),
+                     "--codegraph-bin", str(binary), "--base-ref", "base",
+                     "--check-json", str(check), "--evidence", str(tmp_path / "r.md.demo"),
+                     "--return", str(tmp_path / "j.json"), "--out", str(out)]) == 0
+    text = out.read_text(encoding="utf-8")
+    assert text.startswith((FIX / "judge.md").read_text(encoding="utf-8"))
+    assert "## Judge brief" in text and '"criteria"' in text and "rule:<n>" in text
+    assert "## Diff\n" in text and "+def fmt(x: int) -> str:" in text
+    assert '## Check output\n\n```json\n{"issue": 7, "summary": "1/1 passed"}\n```' in text
+    assert f"Evidence directory: {tmp_path / 'r.md.demo'}\n" in text
+    assert text.endswith(f"Return file: {tmp_path / 'j.json'}\nWorktree: {repo}\n")
+    for gone in ("## Standing orders", "Branch:", "Baseline:"):
+        assert gone not in text
+
+
+def test_judge_brief_blocks_copied_patterns_never_untouched_code():
+    """New code that copies a rule-breaking pattern is a ``rule:<n>``
+    violation; code the diff does not touch never blocks."""
+    brief = " ".join(pack.JUDGE_BRIEF.split())
+    assert "New code that copies an existing rule-breaking pattern is a `rule:<n>` violation" in brief
+    assert "Code the diff does not touch never blocks" in brief
+
+
+def test_shape_dispatch_carries_the_shape_brief(repo, tmp_path, capsys):
+    binary, _ = fake_codegraph(tmp_path)
+    out = tmp_path / "s.md"
+    assert cli.main(["pack", "7", "--role", "judge", "--posture", "shape",
+                     "--cwd", str(repo), "--codegraph-bin", str(binary),
+                     "--base-ref", "base", "--return", str(tmp_path / "s.json"),
+                     "--out", str(out)]) == 0
+    text = out.read_text(encoding="utf-8")
+    assert "## Shape brief" in text and '"options"' in text and '"verdict"' in text
+    for gone in ("## Judge brief", "## Diff", "## Standing orders"):
+        assert gone not in text

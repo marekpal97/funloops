@@ -77,10 +77,10 @@ Do not assume the list above is comprehensive.
 
 ## Standing orders
 
-The dispatch is this pack plus three lines the orchestrator adds: the branch
-name, the baseline verdict (`green` or `red`, the tests gate on the pristine
-worktree), and the return file path. Nothing else instructs you; a rule stated
-here is stated once.
+This file is the whole dispatch. Its last lines name the branch, the baseline
+verdict (`green` or `red`, the tests gate on the pristine worktree), the
+return file path and the worktree you work inside. Nothing else instructs
+you; a rule stated here is stated once.
 
 - Read the repo's architecture and design docs for the areas you touch before
   editing them; a documented standard overrides your instinct.
