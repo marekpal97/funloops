@@ -635,7 +635,7 @@ def main(argv: list[str] | None = None) -> int:
             ["git", "branch", "--show-current"], cwd=cwd,
             capture_output=True, text=True, check=True).stdout.strip()
         commits = subprocess.run(
-            ["git", "log", "--oneline", f"{args.base_ref}..{branch}"],
+            ["git", "log", "--reverse", "--format=%H", f"{args.base_ref}..{branch}"],
             cwd=cwd, capture_output=True, text=True, check=True,
         ).stdout.strip().splitlines()
         numstat = subprocess.run(
@@ -655,6 +655,7 @@ def main(argv: list[str] | None = None) -> int:
                 fix_rounds=args.fix_rounds, outcome=args.outcome,
                 pr_url=args.pr_url, run_id=args.run_id,
                 epic_url=parent["html_url"] if parent else "",
+                epic_title=parent["title"] if parent else "",
                 skills=skills, skill_centric=args.skill_centric,
                 primed=args.primed, served=served, trace=trace,
             )
