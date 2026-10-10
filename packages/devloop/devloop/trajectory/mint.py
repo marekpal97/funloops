@@ -109,7 +109,7 @@ def _normalize_trace(raw: object) -> dict:
 def build_trajectory(issue: dict, *, branch: str, commits: list[str],
                      numstat: str, gates: list[dict], fix_rounds: int,
                      outcome: str, pr_url: str = "", run_id: str = "",
-                     epic_url: str = "",
+                     epic_url: str = "", epic_title: str = "",
                      skills: list[dict] | None = None,
                      skill_centric: bool = False,
                      primed: bool | None = None,
@@ -117,8 +117,9 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
                      trace: dict | None = None) -> dict:
     """Assemble the deterministic half of a per-issue trajectory note as a
     weave_create-shaped payload: the mechanical facts in frontmatter, the body
-    a skeleton the orchestrator fills. ``epic_url`` is the issue's sub-issue
-    parent, empty when it has none.
+    a skeleton the orchestrator fills. ``commits`` is the branch's full SHAs,
+    oldest first. ``epic_url`` and ``epic_title`` are the issue's sub-issue
+    parent's, empty when it has none.
 
     ``skills`` is the stage-dispatch log, ``[{id, role, skill, outcome,
     fix_rounds_attributed}]``, each entry optionally carrying the dispatch
@@ -140,12 +141,14 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
         "issue": issue["number"],
         "issue_url": issue.get("html_url", ""),
         "epic_url": epic_url,
+        "epic_title": epic_title,
         "pr_url": pr_url,
         "run_id": run_id,
         "branch": branch,
         "outcome": outcome,
         "fix_rounds": fix_rounds,
         "commits": len(commits),
+        "commit_shas": list(commits),
         "files_touched": sorted(set(files)),
         "gates": [{"id": g["id"], "passed": g["passed"], "summary": g.get("summary", "")}
                   for g in gates],

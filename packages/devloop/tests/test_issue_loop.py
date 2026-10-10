@@ -434,7 +434,7 @@ def test_build_trajectory_payload():
     payload = mint.build_trajectory(
         issue,
         branch="loop/issue-26",
-        commits=["abc fix", "def test"],
+        commits=["a" * 40, "b" * 40],
         numstat="10\t2\tsrc/thinkweave/acquisition/queue.py\n5\t0\ttests/test_queue.py\n",
         gates=[{"id": "tests", "kind": "command", "passed": True, "summary": "exit 0"}],
         fix_rounds=1,
@@ -446,6 +446,8 @@ def test_build_trajectory_payload():
     assert payload["type"] == "note" and payload["tags"] == ["loop-run"]
     assert fm["issue"] == 26 and fm["outcome"] == "shipped" and fm["fix_rounds"] == 1
     assert fm["commits"] == 2
+    assert fm["commit_shas"] == ["a" * 40, "b" * 40]
+    assert fm["epic_title"] == ""
     assert fm["files_touched"] == ["src/thinkweave/acquisition/queue.py", "tests/test_queue.py"]
     assert fm["gates"] == [{"id": "tests", "passed": True, "summary": "exit 0"}]
     assert "track:D-acquisition" in payload["concept_hints"]
@@ -624,6 +626,7 @@ def test_trajectory_reads_a_branch_after_the_worktree_is_removed(tmp_path, monke
     fm = json.loads(capsys.readouterr().out)["frontmatter"]
     assert fm["branch"] == "loop/issue-52"
     assert fm["commits"] == 2
+    assert fm["commit_shas"] == git("rev-list", "--reverse", f"{base}..loop/issue-52").split()
     assert fm["files_touched"] == ["a.txt", "b.txt"]
 
 
@@ -648,14 +651,19 @@ def _trajectory_cli(tmp_path, monkeypatch, parent):
 
 
 def test_trajectory_payload_carries_the_sub_issue_parent_as_epic_url(tmp_path, monkeypatch, capsys):
-    """A run lands on its epic's task: the payload's `epic_url` is the
-    native sub-issue parent's URL, and empty when the issue has no parent."""
+    """A run lands on its epic's task: the payload's `epic_url` and
+    `epic_title` are the native sub-issue parent's, and empty when the issue
+    has no parent; `commit_shas` is emitted either way."""
     assert _trajectory_cli(tmp_path, monkeypatch, {
-        "number": 89, "html_url": "https://github.com/o/r/issues/89"}) == 0
-    assert json.loads(capsys.readouterr().out)["frontmatter"]["epic_url"] == \
-        "https://github.com/o/r/issues/89"
+        "number": 89, "title": "devloop subtraction",
+        "html_url": "https://github.com/o/r/issues/89"}) == 0
+    fm = json.loads(capsys.readouterr().out)["frontmatter"]
+    assert fm["epic_url"] == "https://github.com/o/r/issues/89"
+    assert fm["epic_title"] == "devloop subtraction"
     assert _trajectory_cli(tmp_path, monkeypatch, None) == 0
-    assert json.loads(capsys.readouterr().out)["frontmatter"]["epic_url"] == ""
+    fm = json.loads(capsys.readouterr().out)["frontmatter"]
+    assert fm["epic_url"] == "" and fm["epic_title"] == ""
+    assert fm["commit_shas"] == []
 
 
 def test_fetch_parent_raises_on_a_failure_that_is_not_a_missing_parent(monkeypatch):
