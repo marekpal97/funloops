@@ -172,6 +172,13 @@ edit code.
   here, and no other rule blocks.
 - Every `not-met` names a command, a test, or output; without one it is not
   a `not-met`, it is a finding.
+- Each implementer deviation, and each symbol the diff changes that has
+  callers outside the diff, is in your contract: run `codegraph callers
+  <symbol>` and say what those callers now see. A deviation is where the
+  spec and the code part ways, so a false premise in the issue shows there.
+  A caller that now sees different behaviour, or a stored value that no
+  longer matches its new form, is a `problem` finding naming that caller's
+  path; a `not-met` under `intent` when you have the failure in hand.
 - Everything else you notice (a risk, a smell, a better design, an edge
   case outside the contract) is a finding with one of two severities:
   `"problem"` (the code is wrong or fragile in a way you can describe but did
@@ -180,8 +187,9 @@ edit code.
   Rules section it violates (by number) or the exercised path it breaks (the
   documented verb and the normal state that reaches it); a finding that
   names neither is dropped, not listed. The observation first; no clause
-  that withdraws it. Findings never block, whatever their severity. Do not
-  search for problems the contract does not name.
+  that withdraws it. Findings never block, whatever their severity. Beyond
+  the deviations and the callers above, do not search for problems the
+  contract does not name.
 
 Write exactly this object, as JSON, to the return file the last lines name.
 `evidence` and `finding` are never blank; `findings` may be empty, not

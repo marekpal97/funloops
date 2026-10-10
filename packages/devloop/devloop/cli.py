@@ -483,6 +483,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="reader: file with the `check --issue` output to splice")
     p_pack.add_argument("--evidence", default="", metavar="DIR",
                         help="reader: the implementer's demo evidence directory")
+    p_pack.add_argument("--report", default=None, metavar="FILE",
+                        help="reader: the implementer's return file; its deviations join the pack")
     p_pack.add_argument("--out", default=None, metavar="FILE",
                         help="write the dispatch to FILE and print its path")
 
@@ -716,6 +718,7 @@ def main(argv: list[str] | None = None) -> int:
                 prime=Path(args.prime).read_text(encoding="utf-8") if args.prime else "",
                 trace=Path(args.trace).read_text(encoding="utf-8") if args.trace else "",
                 dispatch=dispatch,
+                report=Path(args.report).read_text(encoding="utf-8") if args.report else None,
             )
         except (FileNotFoundError, ValueError) as exc:
             print(json.dumps({"error": str(exc)}))

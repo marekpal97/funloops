@@ -153,7 +153,8 @@ red result, a forbidden-path breach included, is a fix round.
 
 ```bash
 uv run --directory <worktree> devloop pack <N> --role judge --base-ref origin/main \
-  --check-json <run-dir>/check-<N>.json [--evidence <run-dir>/impl-<N>.md.demo] \
+  --check-json <run-dir>/check-<N>.json --report <run-dir>/impl-<N>.md \
+  [--evidence <run-dir>/impl-<N>.md.demo] \
   --return <run-dir>/judge-<N>.json --out <run-dir>/dispatch-judge-<N>.md
 ```
 

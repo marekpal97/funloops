@@ -427,6 +427,40 @@ def test_judge_dispatch_carries_brief_diff_check_and_evidence(repo, tmp_path, ca
         assert gone not in text
 
 
+@pytest.mark.parametrize("report, expected", [
+    (("# Return\n\n## Deviations from declared shapes\n\n- Extended `norm` to fold"
+      " `owner/repo#N`.\n\n### why\nThe issue said it did.\n\n## Tests\n- pytest\n"),
+     "- Extended `norm` to fold `owner/repo#N`.\n\n### why\nThe issue said it did."),
+    ("# Return\n\n## Tests\n- pytest\n",
+     "The implementer's return names no `## Deviations` section."),
+])
+def test_judge_dispatch_carries_the_implementers_deviations(repo, tmp_path, capsys,
+                                                            report, expected):
+    """``--report`` puts the return's ``## Deviations`` section, up to the
+    next heading of its level, under ``## Implementer deviations``; a return
+    without one says so, so the judge never reads silence as none."""
+    binary, _ = fake_codegraph(tmp_path)
+    ret = tmp_path / "impl.md"
+    ret.write_text(report, encoding="utf-8")
+    assert cli.main(["pack", "7", "--role", "judge", "--cwd", str(repo),
+                     "--codegraph-bin", str(binary), "--base-ref", "base",
+                     "--report", str(ret)]) == 0
+    text = capsys.readouterr().out
+    section = text.split("## Implementer deviations\n\n", 1)[1]
+    assert section.startswith(expected + "\n\n")
+    assert "## Tests" not in text
+    assert text.index("## Diff") < text.index("## Implementer deviations") < text.index("## Judge brief")
+
+
+def test_judge_brief_traces_deviations_and_callers():
+    """The judge's contract reaches each deviation and each changed symbol's
+    callers outside the diff (funloops#107); findings still never block."""
+    brief = " ".join(pack.JUDGE_BRIEF.split())
+    assert "run `codegraph callers <symbol>` and say what those callers now see" in brief
+    assert "Findings never block" in brief
+    assert "under a `## Deviations` heading" in " ".join(pack.STANDING_ORDERS.split())
+
+
 def test_judge_brief_blocks_copied_patterns_never_untouched_code():
     """New code that copies a rule-breaking pattern is a ``rule:<n>``
     violation; code the diff does not touch never blocks."""
