@@ -3,7 +3,7 @@
 In order: the issue; the rules; the persona (writer posture only); the
 repo map from codegraph's CLI, a catalog tier and an issue-slice tier, any
 failure degrading to a marked block; the touched modules in full and the
-slice diff (reader posture); the prime block and the run's trace when the
+slice diff and the implementer's deviations (reader posture); the prime block and the run's trace when the
 host supplies them; the posture's brief (the standing orders, the judge
 brief, the shape brief); the dispatch lines. The shape posture packs a
 stack: its issues, the rules, the touched modules, and codegraph's edges
@@ -36,10 +36,12 @@ class Issue(NamedTuple):
 
 def compose(issues: dict[int, Issue], role: str, posture: Posture, rules: list[str],
             persona: str, codegraph: Codegraph, touched: Touched | None = None,
-            prime: str = "", trace: str = "", dispatch: Dispatch | None = None) -> str:
+            prime: str = "", trace: str = "", dispatch: Dispatch | None = None,
+            report: str | None = None) -> str:
     """The whole dispatch text: ``role`` names it, ``posture`` shapes it and
     picks its brief, ``dispatch`` closes it. Only a shape pack spans several
-    issues; a reader or shape pack carries ``touched``. Empty ``rules`` are
+    issues; a reader or shape pack carries ``touched``; a reader pack given
+    the implementer's ``report`` carries its deviations. Empty ``rules`` are
     refused; a codegraph failure renders a degraded block, never an
     exception."""
     if not rules:
@@ -67,6 +69,8 @@ def compose(issues: dict[int, Issue], role: str, posture: Posture, rules: list[s
     if posture == "reader":
         parts.append(f"## Diff\n\n`git diff {touched.base}...HEAD`:\n\n"
                      + fenced(touched.diff, "diff"))
+        if report is not None:
+            parts.append(f"## Implementer deviations\n\n{deviations(report)}")
     if shape:
         try:
             parts.append(codegraph.edges(list(touched.modules)))
@@ -407,6 +411,15 @@ def named_files(body: str, root: Path) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+def deviations(report: str) -> str:
+    """The ``## Deviations`` section of an implementer's return, up to the
+    next heading of its level or above; a line saying so when it has none."""
+    found = re.search(r"^## Deviations[^\n]*\n(.*?)(?=^#{1,2} |\Z)", report, re.MULTILINE | re.DOTALL)
+    if not found or not found[1].strip():
+        return "The implementer's return names no `## Deviations` section."
+    return found[1].strip()
+
+
 def fenced(text: str, lang: str = "") -> str:
     """``text`` in a code fence longer than any backtick run inside it."""
     longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
@@ -483,8 +496,9 @@ you; a rule stated here is stated once.
   Do NOT push, do NOT open a PR, do NOT close or label anything — the
   orchestrator owns the control plane.
 - Return: worktree path, branch, files touched, test commands run, each
-  deviation from the issue's declared shapes as one sentence with its reason,
-  and any acceptance criterion you believe is NOT yet met (honesty over
+  deviation from the issue's declared shapes as one sentence with its reason
+  under a `## Deviations` heading (`none` when there is none; the judge
+  reads this section), and any acceptance criterion you believe is NOT yet met (honesty over
   green-washing). Write the whole
   return to the return file the dispatch names; the orchestrator reads that
   file, never your screen.
@@ -536,6 +550,13 @@ edit code.
   here, and no other rule blocks.
 - Every `not-met` names a command, a test, or output; without one it is not
   a `not-met`, it is a finding.
+- Each implementer deviation, and each symbol the diff changes that has
+  callers outside the diff, is in your contract: run `codegraph callers
+  <symbol>` and say what those callers now see. A deviation is where the
+  spec and the code part ways, so a false premise in the issue shows there.
+  A caller that now sees different behaviour, or a stored value that no
+  longer matches its new form, is a `problem` finding naming that caller's
+  path; a `not-met` under `intent` when you have the failure in hand.
 - Everything else you notice (a risk, a smell, a better design, an edge
   case outside the contract) is a finding with one of two severities:
   `"problem"` (the code is wrong or fragile in a way you can describe but did
@@ -544,8 +565,9 @@ edit code.
   Rules section it violates (by number) or the exercised path it breaks (the
   documented verb and the normal state that reaches it); a finding that
   names neither is dropped, not listed. The observation first; no clause
-  that withdraws it. Findings never block, whatever their severity. Do not
-  search for problems the contract does not name.
+  that withdraws it. Findings never block, whatever their severity. Beyond
+  the deviations and the callers above, do not search for problems the
+  contract does not name.
 
 Write exactly this object, as JSON, to the return file the last lines name.
 `evidence` and `finding` are never blank; `findings` may be empty, not

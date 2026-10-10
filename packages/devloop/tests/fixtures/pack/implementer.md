@@ -121,8 +121,9 @@ you; a rule stated here is stated once.
   Do NOT push, do NOT open a PR, do NOT close or label anything — the
   orchestrator owns the control plane.
 - Return: worktree path, branch, files touched, test commands run, each
-  deviation from the issue's declared shapes as one sentence with its reason,
-  and any acceptance criterion you believe is NOT yet met (honesty over
+  deviation from the issue's declared shapes as one sentence with its reason
+  under a `## Deviations` heading (`none` when there is none; the judge
+  reads this section), and any acceptance criterion you believe is NOT yet met (honesty over
   green-washing). Write the whole
   return to the return file the dispatch names; the orchestrator reads that
   file, never your screen.
