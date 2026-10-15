@@ -55,6 +55,8 @@ Run `uv run devloop config` and `uv run devloop plan`. `plan` prints the
   `exhaust`.
 - An empty frontier: report why (all blocked, all claimed, PRs awaiting
   merge) and stop.
+- A `demo:` only a human can run (a session, a TUI, a page): ask on the issue
+  for `demo (human):` or a proxy, and defer it this run.
 
 Make the run directory `$(git rev-parse --git-common-dir)/devloop/runs/<run-id>/`.
 Every dispatch and return file lives there, outside every worktree.
@@ -122,7 +124,7 @@ uv run --directory <worktree> devloop pack <N> --role implementer \
   --return <run-dir>/impl-<N>.md --out <run-dir>/dispatch-<N>.md
 ```
 
-`pack --out` prints the dispatch file's path; add nothing to the file. A JSON
+`pack --out` prints the file's path; add nothing to it. A JSON
 `error` instead means a role, posture, rules file or persona did not resolve:
 stop and surface it. Every role writes its return to the file its dispatch
 names; read that file, never the agent's screen. A fix round or a re-ask
@@ -148,8 +150,8 @@ uv run --directory <worktree> devloop check --issue <N> > <run-dir>/check-<N>.js
 `check --issue` runs the command gates, then the issue's `verify:` lines. Any
 red result, a forbidden-path breach included, is a fix round.
 
-**The judge.** Write its dispatch and send it to a fresh agent as
-`dispatch.judge` says:
+**The judge.** Pack it and send it to a fresh agent as `dispatch.judge`
+says:
 
 ```bash
 uv run --directory <worktree> devloop pack <N> --role judge --base-ref origin/main \
@@ -158,8 +160,8 @@ uv run --directory <worktree> devloop pack <N> --role judge --base-ref origin/ma
   --return <run-dir>/judge-<N>.json --out <run-dir>/dispatch-judge-<N>.md
 ```
 
-Pass `--evidence` when the issue carries a `demo:` criterion. Validate the
-return before acting on it:
+Pass `--evidence` with a `demo:` criterion. Validate the return before
+acting on it:
 
 ```bash
 uv run devloop validate --gate judge --return-json <run-dir>/judge-<N>.json
@@ -182,15 +184,17 @@ uv run --directory <worktree> devloop pack <N> [<N2> …] --role judge --posture
 uv run devloop validate --gate judge --posture shape --return-json <run-dir>/shape-<N>.json
 ```
 
-Exit `0`: met. Exit `2`: re-ask once. Exit `1` is a restructure case: it
-stops the run at the human, never a fix round. Route to human with the case as
-evidence, on the issue (stacked: on the DAG root, naming the branch and tip
-sha); no PR opens.
+Exit `0`: met. Exit `2`: re-ask once. Exit `1` is a restructure case: the
+diff introduced or widened a main-flow break. It stops the run at the human,
+never a fix round. Route to human with the case as evidence, on the issue
+(stacked: on the DAG root, naming the branch and tip sha); no PR opens. Seams
+named under `met` ship.
 
 **Fix rounds.** Send the evidence (gate id, summary, failed criteria with
 their evidence, red verify lines) to the same implementer, with a fresh pack
 and return path. Re-run the gates from the first failed one; the re-judge
-covers the failed criteria plus every `demo:` criterion. `max_fix_rounds` is
+covers the failed criteria plus every `demo:` criterion (`demo (human):`
+stays deferred). `max_fix_rounds` is
 the budget; never extend it. When it is spent, route to human:
 
 ```bash
@@ -201,7 +205,7 @@ gh issue comment <N> --body "🤖 issue-loop run <run-id>: routed to human at <s
 
 The table is §1d's; a failed row carries its failed criteria or red verify
 lines, and one sentence says what the fix rounds tried. Continue with the
-next issue. There are three exits: ship, ship with findings, route to human.
+next issue.
 
 ### 1d. Ship
 
@@ -216,8 +220,8 @@ gh pr comment <pr-url> --body "<findings comment>"
 gh issue comment <N> --body "🤖 issue-loop run <run-id>: shipped at <sha>, PR <pr-url>"
 ```
 
-Only the route-to-human comment carries a gate table; otherwise the
-evidence lives in the PR.
+Only the route-to-human comment carries a gate table; the PR holds the
+rest.
 
 **The PR body carries each fact once:** `Closes #<N>`; one sentence on what
 the code now does (not the issue title); the gate table; the demo line; the
@@ -227,12 +231,16 @@ findings line; the attribution block. Nothing else.
   carries only what varies (`133 lines`, `274 passed`, `5/5`, the failure).
 - The demo line: `demo: <short sha>`, the SHA `demo.md` names; none without a
   `demo:` criterion.
+- A `human demo` row, `deferred`, only with a `demo (human):`
+  criterion.
 - The findings line: `Findings: see comment` or `Findings: none`.
 
 **The findings comment** is one per PR, posted right after `gh pr create`:
 a `###` heading per severity present (`problem`, `note`), one bullet per
 finding, the judge's sentence verbatim. Each deviation the implementer names
-is a bullet under a first heading, `### deviation`. Drop a finding that hedges or names
+is a bullet under a first heading, `### deviation`. A `demo (human):`
+scenario is quoted under `### human demo`; each shape seam is a bullet under
+`### seam`. Drop a finding that hedges or names
 neither a rule nor an exercised path. A finding already filed as an issue is
 its number alone. No findings and no deviations: no comment, and the body
 reads `Findings: none`.
@@ -313,14 +321,13 @@ uv run --directory <repo-root> devloop trajectory <N> --branch <branch> \
 
 `--skills-json` lists each dispatched stage as `{id, role, skill, outcome,
 fix_rounds_attributed}`; the shape pass is id `judge:shape`, role `judge`.
-`skill` is the skill that ran the stage, or empty. Add the join keys you know;
-omit the rest, never `0` or `""`:
+Add the join keys you know; omit the rest, never `0` or `""`:
 
 - `posture`: `writer`, `reader` or `shape`.
 - `transport`: `agent-tool`, `herdr` or `headless-argv`.
 - `harness`, `model`, `effort`: the values the stage ran with.
 - `session_ref`: on herdr, `herdr agent get <name>` →
-  `.result.agent.agent_session.value`. The Agent tool exposes none.
+  `.result.agent.agent_session.value`; none on the Agent tool.
 - `duration_sec`: whole seconds from dispatch to return.
 - `tokens`: the harness's reported total, when it reports one.
 

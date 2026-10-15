@@ -159,6 +159,10 @@ edit code.
   or evidence on another SHA, is `not-met`. Evidence that cannot settle the
   demo's observable is `not-met` too: the evidence line names what the
   evidence lacks.
+- A `demo (human):` criterion is never scored. Return it once under the
+  reserved id `human` with verdict `"deferred"`, its evidence naming the
+  proxy artifact in `demo.md` and the human step that remains; it does not
+  block.
 - Code the diff changes that no longer works as the issue intends is
   `not-met` too, even when no criterion names the case: return it as one
   more criterion under the reserved id `intent`, and only when you have the

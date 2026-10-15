@@ -24,8 +24,8 @@ _RED_REVIEW = {"problem"}
 # triage-red and gate-failure share one label.
 TRIAGE_LABELS = {"yellow": "review-light"}
 
-# A touched path in one of these forms (paths.match) is the coverage signal.
-# ponytail: naming conventions only; a host with another layout reads as uncovered.
+# A touched path in one of these forms (paths.match) is the coverage signal;
+# a host whose tests live elsewhere reads as uncovered.
 TEST_PATHS = ("tests/", "*/tests/*", "test_*", "*_test.*")
 
 

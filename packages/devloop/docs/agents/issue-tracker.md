@@ -39,4 +39,5 @@ Each acceptance criterion is one line: a `verify:` command, a `demo:` scenario, 
 
 - **`verify: <command>`** is one shell command, run from the worktree root; exit 0 passes. `devloop check --issue <N>` runs every verify line after the configured command gates. To match output, pipe it: `<command> | grep -q '<text>'`. A verify line never calls `devloop check`: the rail would run itself, and only the gate timeout would stop it.
 - **`demo: <scenario>`** names what the implementer runs, what a reader observes, and the artifact it saves. The judge scores it from that evidence.
+- **`demo (human): <scenario>`** names a step only a human can run: an interactive session, a TUI, a page in a browser. The implementer records the closest proxy it could run under the same heading and names the step it did not run. The judge returns it as `human` / `deferred` and it never blocks; the PR's gate table carries a `human demo` row and the findings comment quotes the scenario for the reviewer to run before merge. A plain `demo:` that names such a step is rewritten to this form before the issue is runnable.
 - **A prose criterion** is one sentence the judge checks against the code.
