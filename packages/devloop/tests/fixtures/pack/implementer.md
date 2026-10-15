@@ -109,6 +109,10 @@ you; a rule stated here is stated once.
   screenshots, DOM dumps, transcripts. A fix round re-runs every `demo:`
   criterion on the new tip and rewrites `demo.md`. A demo the environment
   cannot run is not met: name the missing capability in your return.
+- A `demo (human):` criterion is a human's to run at merge. Record under its
+  heading in `demo.md` the proxy you could run (the rendered output, the
+  reply a hook returns) and name the human step you did not run; never
+  report it as met.
 - Test at seams governs the tests you commit, not what you may run. Run
   whatever you need to convince yourself.
 - **Test at seams.** Test only at the seams the issue names (its acceptance

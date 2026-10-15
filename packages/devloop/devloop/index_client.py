@@ -63,10 +63,8 @@ _FTS_TERM = re.compile(r"[0-9A-Za-z_-]{3,}")
 def _fts_match_expr(text: str) -> str:
     """Encode free text as an OR-of-terms fts5 MATCH, ``''`` when no term
     survives. Only tokenizer-legal runs of 3+ chars are kept, so fts5
-    operator syntax is unreachable; terms dedupe and cap at 24.
-
-    ponytail: no stopword filter, so the leg can touch most of the index,
-    about 100ms at 6k notes, paid once at claim time.
+    operator syntax is unreachable; terms dedupe and cap at 24. No stopword
+    filter: the leg may touch most of the index, once, at claim time.
     """
     terms = list(dict.fromkeys(_FTS_TERM.findall(text)))[:24]
     return " OR ".join(f'"{t}"' for t in terms)

@@ -2620,3 +2620,52 @@ def test_command_doc_outside_host_extension_blocks_never_needs_a_vault():
     assert "host-extension" not in spine, "an unbalanced host-extension block"
     for token in ("vault", "prime", "priming", "trajector"):
         assert token not in spine.lower(), token
+
+
+# --- diff-scoped shape, the human demo, and the persona's comment rule ------
+
+
+def test_shape_brief_scopes_the_main_flow_to_the_diff():
+    """A break the base ref already had, and the diff did not widen, is a
+    seam under `met`; only a break the diff introduces or widens fails."""
+    brief = " ".join(pack.SHAPE_BRIEF.split())
+    assert "a break on the main flow that the diff introduces or widens" in brief
+    assert "A break present at the base ref and not widened by the diff is a seam" in brief
+    assert "with its rule number" in brief
+
+
+def test_standing_orders_and_judge_brief_carry_the_human_demo():
+    orders = " ".join(pack.STANDING_ORDERS.split())
+    brief = " ".join(pack.JUDGE_BRIEF.split())
+    assert "A `demo (human):` criterion is a human's to run at merge" in orders
+    assert "never report it as met" in orders
+    assert "A `demo (human):` criterion is never scored" in brief
+    assert "reserved id `human` with verdict `\"deferred\"`" in brief
+
+
+def test_validate_judge_defers_a_human_demo_without_blocking():
+    """`human` / `deferred` passes beside met criteria; `deferred` on any other
+    id, or any other verdict on `human`, is a schema rejection."""
+    ok = gates.validate(_gate("judge"), {"criteria": [
+        {"id": "AC1", "verdict": "met", "evidence": "e"},
+        {"id": "human", "verdict": "deferred", "evidence": "demo.md: the hook reply; the session step remains"},
+    ], "findings": []})
+    assert ok["passed"] is True
+    assert ok["summary"] == "1/2 criteria met, 1 deferred to a human; 0 findings"
+    other = gates.validate(_gate("judge"), {"criteria": [
+        {"id": "AC2", "verdict": "deferred", "evidence": "e"}], "findings": []})
+    assert other["reasons"] == ["criteria[0].verdict: 'deferred' is not one of met | not-met"]
+    scored = gates.validate(_gate("judge"), {"criteria": [
+        {"id": "human", "verdict": "met", "evidence": "e"}], "findings": []})
+    assert scored["reasons"] == ["criteria[0].verdict: 'met' is not one of deferred"]
+    assert gates.VERDICTS == ("met", "not-met")
+
+
+def test_persona_sends_ceilings_to_the_return_never_to_a_comment():
+    """The persona and the standing orders never ask for a `ponytail:` comment:
+    a ceiling and its upgrade path live in the return's Deviations and the
+    commit message (rule 8)."""
+    persona = cli.PACKAGE_PERSONA.read_text(encoding="utf-8")
+    assert "`ponytail:` comment" not in persona
+    assert "under Deviations and in the commit message" in persona
+    assert "ponytail:" not in pack.STANDING_ORDERS

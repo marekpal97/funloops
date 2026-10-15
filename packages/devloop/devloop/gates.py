@@ -127,6 +127,10 @@ def run_diff_gate(gate: dict, cwd: Path, base_ref: str) -> dict:
 # trajectory as fact.
 
 VERDICTS = ("met", "not-met")
+# A `demo (human):` criterion is a human's to run at merge: the judge returns
+# it under this id with this verdict, and it never blocks.
+HUMAN_ID = "human"
+HUMAN_VERDICT = "deferred"
 SEVERITIES = ("problem", "note")
 # The constitution rules a per-slice judge may block on; rules 1 and 4 are the
 # shape posture's, and the rest stay findings.
@@ -188,10 +192,12 @@ def validate_judge(gate: dict, raw: dict) -> dict:
     """Validate a judge return: ``{criteria: [{id, verdict: met|not-met,
     evidence}], findings: [{severity: problem|note, finding}]}``.
 
-    The gate passes when every criterion is met. A ``rule:<n>`` criterion
-    names a blocking constitution rule and cites ``file:line`` in its
-    evidence. ``findings`` never decides the verdict; it may be empty but not
-    missing, so silence never reads as a clean review.
+    The gate passes when every criterion is met or deferred. A ``rule:<n>``
+    criterion names a blocking constitution rule and cites ``file:line`` in
+    its evidence. The ``human`` criterion is a ``demo (human):`` line's: its
+    only verdict is ``deferred``, and no other id may carry it. ``findings``
+    never decides the verdict; it may be empty but not missing, so silence
+    never reads as a clean review.
     """
     reasons: list[str] = []
     verdicts = []
@@ -200,15 +206,18 @@ def validate_judge(gate: dict, raw: dict) -> dict:
         _text(entry, where, "id", reasons)
         _text(entry, where, "evidence", reasons)
         _rule(entry, where, reasons)
-        verdicts.append(_enum(entry, where, "verdict", VERDICTS, reasons))
+        allowed = (HUMAN_VERDICT,) if entry.get("id") == HUMAN_ID else VERDICTS
+        verdicts.append(_enum(entry, where, "verdict", allowed, reasons))
     findings = _entries(raw, "findings", reasons, allow_empty=True)
     for i, entry in findings:
         where = f"findings[{i}]"
         _text(entry, where, "finding", reasons)
         _enum(entry, where, "severity", SEVERITIES, reasons)
     met = sum(v == "met" for v in verdicts)
-    return _verdict(gate, reasons, passed=met == len(verdicts),
-                    summary=f"{met}/{len(verdicts)} criteria met; {len(findings)} findings")
+    deferred = sum(v == HUMAN_VERDICT for v in verdicts)
+    tail = f", {deferred} deferred to a human" if deferred else ""
+    return _verdict(gate, reasons, passed=met + deferred == len(verdicts),
+                    summary=f"{met}/{len(verdicts)} criteria met{tail}; {len(findings)} findings")
 
 
 def validate_shape(gate: dict, raw: dict) -> dict:

@@ -484,6 +484,10 @@ you; a rule stated here is stated once.
   screenshots, DOM dumps, transcripts. A fix round re-runs every `demo:`
   criterion on the new tip and rewrites `demo.md`. A demo the environment
   cannot run is not met: name the missing capability in your return.
+- A `demo (human):` criterion is a human's to run at merge. Record under its
+  heading in `demo.md` the proxy you could run (the rendered output, the
+  reply a hook returns) and name the human step you did not run; never
+  report it as met.
 - Test at seams governs the tests you commit, not what you may run. Run
   whatever you need to convince yourself.
 - **Test at seams.** Test only at the seams the issue names (its acceptance
@@ -537,6 +541,10 @@ edit code.
   or evidence on another SHA, is `not-met`. Evidence that cannot settle the
   demo's observable is `not-met` too: the evidence line names what the
   evidence lacks.
+- A `demo (human):` criterion is never scored. Return it once under the
+  reserved id `human` with verdict `"deferred"`, its evidence naming the
+  proxy artifact in `demo.md` and the human step that remains; it does not
+  block.
 - Code the diff changes that no longer works as the issue intends is
   `not-met` too, even when no criterion names the case: return it as one
   more criterion under the reserved id `intent`, and only when you have the
@@ -601,11 +609,14 @@ else. Do not edit code.
   functions each re-spell the same main-flow steps instead of one name
   owning them.
 - The main flow is the path every route or verb of the stack runs. Fail the
-  contract for a break on the main flow. A seam off it does not fail the
-  contract: name it in `flow` under a `"met"` verdict.
-- Return `"met"` when the main flow has one owning module that reads
-  top-down and owns what its Interfaces block declares. Otherwise return
-  `"not-met"` with a restructure case. `flow` states the current flow in at
+  contract for a break on the main flow that the diff introduces or widens.
+  A break present at the base ref and not widened by the diff is a seam, as
+  is any break off the main flow: a seam does not fail the contract. Name
+  each seam in `flow` under a `"met"` verdict, with its rule number.
+- Return `"met"` when the diff leaves the main flow with one owning module
+  that reads top-down and owns what its Interfaces block declares, or no
+  worse than the base ref left it. Otherwise return `"not-met"` with a
+  restructure case. `flow` states the current flow in at
   most five lines and names each broken rule by number. `owns` says, per
   module, what it should own. `options` gives one to three shape options,
   one sentence each.
