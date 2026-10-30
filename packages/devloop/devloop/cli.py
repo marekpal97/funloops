@@ -458,6 +458,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              "object {reviews[], criteria[], edge_cases[], deviations[], tdd} "
                              "the orchestrator condenses from the gate agents' own reports. "
                              "Omit to leave the trace key out.")
+    p_traj.add_argument("--manifest-json", default=None,
+                        help="host extension: file with the run's manifest, a JSON "
+                             "object (thinkweave's shape: {harness, readers, rsi_rail}), "
+                             "passed through uninterpreted as the payload's `manifest`. "
+                             "Omit to leave the key out.")
     p_traj.add_argument("--fix-rounds", type=int, default=0)
     p_traj.add_argument("--outcome", required=True,
                         choices=["shipped", "routed-to-human", "awaiting-approval"])
@@ -673,6 +678,8 @@ def main(argv: list[str] | None = None) -> int:
                   if args.served_json else None)
         trace = (json.loads(Path(args.trace_json).read_text(encoding="utf-8"))
                  if args.trace_json else None)
+        manifest = (json.loads(Path(args.manifest_json).read_text(encoding="utf-8"))
+                    if args.manifest_json else None)
         try:
             payload = trajectory.build_trajectory(
                 issue, branch=branch, commits=commits, numstat=numstat, gates=gates,
@@ -681,7 +688,7 @@ def main(argv: list[str] | None = None) -> int:
                 epic_url=parent["html_url"] if parent else "",
                 epic_title=parent["title"] if parent else "",
                 skills=skills, skill_centric=args.skill_centric,
-                primed=args.primed, served=served, trace=trace,
+                primed=args.primed, served=served, trace=trace, manifest=manifest,
             )
         except ValueError as e:
             print(json.dumps({"error": "; ".join(e.args), "reasons": list(e.args)}))

@@ -115,7 +115,10 @@ the `loop-run` tag and the trajectory→insight `builds_on` link.
 Public interface, re-exported by `trajectory/__init__.py`:
 
 - `build_trajectory(issue, *, branch, commits, numstat, gates, fix_rounds,
-  outcome, ...) -> dict`: pure; the weave_create-shaped payload.
+  outcome, ...) -> dict`: pure; the weave_create-shaped payload. A host's
+  run `manifest` (`trajectory --manifest-json`) rides as the payload's
+  top-level `manifest` key, passed through uninterpreted for the host's run
+  recorder; it is not a note frontmatter key.
 - `build_prime_payload(issue_number, run_id, concepts, *, conn, limit,
   budget_chars, decisions, query) -> dict`: the claim-time payload. Concepts
   and the issue's text are two retrieval legs; decision ids resolve to title
