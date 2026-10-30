@@ -480,3 +480,87 @@ def test_shape_dispatch_carries_the_shape_brief(repo, tmp_path, capsys):
     assert "## Shape brief" in text and '"options"' in text and '"verdict"' in text
     for gone in ("## Judge brief", "## Diff", "## Standing orders"):
         assert gone not in text
+
+
+# ---------------------------------------------------------------------------
+# Policy directory (thinkweave#346): the pack's texts from a configured folder
+
+
+def test_unconfigured_policy_serves_the_module_constants(repo, tmp_path, capsys):
+    """No env var, no flag: every text is the packaged default, so a user
+    without a policy folder sees exactly what they saw before."""
+    assert cli.resolve_policy_dir(None) is None
+    assert pack.policy_file("persona", None) is None
+    assert {p: pack.brief(p) for p in pack.BRIEFS} == pack.BRIEFS
+    binary, _ = fake_codegraph(tmp_path)
+    assert cli.main(["pack", "7", "--cwd", str(repo), "--codegraph-bin", str(binary)]) == 0
+    out = capsys.readouterr().out
+    assert pack.STANDING_ORDERS in out
+    assert pack.body(FIX / "persona.md") in out
+    assert pack.body(FIX / "constitution.md") in out
+
+
+def _policy(tmp_path, **texts: str) -> Path:
+    """A policy folder holding one ``<name>.md`` per keyword (``_`` → ``-``)."""
+    d = tmp_path / "policy"
+    d.mkdir()
+    for name, text in texts.items():
+        (d / f"{name.replace('_', '-')}.md").write_text(text, encoding="utf-8")
+    return d
+
+
+def test_policy_dir_files_win_and_absent_files_fall_back(repo, tmp_path, capsys):
+    """A file present in the folder replaces its default; a file absent from
+    it leaves the default in place, text by text."""
+    d = _policy(tmp_path, persona="<!-- header -->\nTUNED persona\n",
+                standing_orders="## Standing orders\n\nTUNED orders\n")
+    binary, _ = fake_codegraph(tmp_path)
+    assert cli.main(["pack", "7", "--cwd", str(repo), "--codegraph-bin", str(binary),
+                     "--policy-dir", str(d)]) == 0
+    out = capsys.readouterr().out
+    assert "## Persona\n\nTUNED persona\n" in out
+    assert "TUNED orders" in out and pack.STANDING_ORDERS not in out
+    assert pack.body(FIX / "constitution.md") in out  # no constitution.md there
+    assert pack.brief("reader", d) == pack.JUDGE_BRIEF
+    assert pack.brief("shape", d) == pack.SHAPE_BRIEF
+
+
+@pytest.mark.parametrize("posture, name", [("writer", "standing-orders"),
+                                           ("reader", "judge-brief"),
+                                           ("shape", "shape-brief")])
+def test_each_brief_reads_its_kebab_case_file(tmp_path, posture, name):
+    d = _policy(tmp_path, **{name.replace("-", "_"): f"brief for {posture}\n"})
+    assert pack.brief(posture, d) == f"brief for {posture}"
+
+
+def test_env_var_configures_and_the_flag_wins(tmp_path, monkeypatch):
+    env, flag = tmp_path / "env", tmp_path / "flag"
+    monkeypatch.setenv(pack.POLICY_ENV, str(env))
+    assert cli.resolve_policy_dir(None) == env
+    assert cli.resolve_policy_dir(str(flag)) == flag
+    monkeypatch.setenv(pack.POLICY_ENV, "")
+    assert cli.resolve_policy_dir(None) is None
+
+
+def test_env_var_reaches_the_pack(repo, tmp_path, monkeypatch, capsys):
+    d = _policy(tmp_path, judge_brief="## Judge brief\n\nTUNED judge\n")
+    monkeypatch.setenv(pack.POLICY_ENV, str(d))
+    binary, _ = fake_codegraph(tmp_path)
+    assert cli.main(["pack", "7", "--role", "judge", "--cwd", str(repo),
+                     "--codegraph-bin", str(binary), "--base-ref", "base"]) == 0
+    out = capsys.readouterr().out
+    assert "TUNED judge" in out and pack.JUDGE_BRIEF not in out
+
+
+def test_policy_constitution_replaces_the_packaged_one_and_keeps_the_overlay(tmp_path):
+    """The folder's constitution.md stands in for the packaged default; the
+    repo's docs/agents overlay still extends whichever default is served."""
+    d = _policy(tmp_path, constitution="1. tuned rule\n")
+    host = tmp_path / "host"
+    (host / ".git").mkdir(parents=True)
+    assert cli.find_constitution(host, d) == [d / "constitution.md"]
+    overlay = host / "docs" / "agents" / "constitution.md"
+    overlay.parent.mkdir(parents=True)
+    overlay.write_text("13. local rule\n", encoding="utf-8")
+    assert cli.find_constitution(host, d) == [d / "constitution.md", overlay]
+    assert cli.find_constitution(host, tmp_path / "empty") == [cli.PACKAGE_CONSTITUTION, overlay]

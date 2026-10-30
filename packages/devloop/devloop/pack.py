@@ -9,6 +9,16 @@ brief, the shape brief); the dispatch lines. The shape posture packs a
 stack: its issues, the rules, the touched modules, and codegraph's edges
 between them in place of the repo map. The role is any ``[dispatch]`` entry;
 its ``posture`` picks the sections.
+
+Policy directory: the pack's texts can come from a folder the host names
+(``DEVLOOP_POLICY_DIR`` or ``--policy-dir``; see ``policy_file``). Each text
+is one ``.md`` file there, named after its constant in kebab-case:
+``persona.md``, ``standing-orders.md``, ``judge-brief.md``,
+``shape-brief.md``, and ``constitution.md`` (which replaces the packaged
+constitution; a repo's ``docs/agents/constitution.md`` overlay still extends
+it). The same folder may hold ``loop.toml``. A text whose file is absent, or
+every text when no folder is configured, falls back to the packaged default:
+the constants below and the package's ``docs/agents`` files.
 """
 
 from __future__ import annotations
@@ -37,11 +47,12 @@ class Issue(NamedTuple):
 def compose(issues: dict[int, Issue], role: str, posture: Posture, rules: list[str],
             persona: str, codegraph: Codegraph, touched: Touched | None = None,
             prime: str = "", trace: str = "", dispatch: Dispatch | None = None,
-            report: str | None = None) -> str:
+            report: str | None = None, brief: str | None = None) -> str:
     """The whole dispatch text: ``role`` names it, ``posture`` shapes it and
     picks its brief, ``dispatch`` closes it. Only a shape pack spans several
     issues; a reader or shape pack carries ``touched``; a reader pack given
-    the implementer's ``report`` carries its deviations. Empty ``rules`` are
+    the implementer's ``report`` carries its deviations. ``brief`` replaces
+    the posture's packaged brief (see ``brief``). Empty ``rules`` are
     refused; a codegraph failure renders a degraded block, never an
     exception."""
     if not rules:
@@ -80,7 +91,7 @@ def compose(issues: dict[int, Issue], role: str, posture: Posture, rules: list[s
         parts.append(f"## Prior lessons\n\n{prime.strip()}")
     if trace.strip():
         parts.append(f"## Run trace\n\n{trace.strip()}")
-    parts.append(BRIEFS[posture])
+    parts.append(BRIEFS[posture] if brief is None else brief)
     if dispatch and (lines := dispatch.render()):
         parts.append(lines)
     return "\n\n".join(parts) + "\n"
@@ -436,6 +447,25 @@ def body(path: Path) -> str:
     return text.strip("\n")
 
 
+POLICY_ENV = "DEVLOOP_POLICY_DIR"
+
+
+def policy_file(name: str, policy_dir: Path | None) -> Path | None:
+    """``<policy_dir>/<name>.md`` when a policy directory is configured and
+    holds that file; ``None`` otherwise, so the caller serves its default."""
+    if policy_dir is None:
+        return None
+    found = Path(policy_dir) / f"{name}.md"
+    return found if found.is_file() else None
+
+
+def brief(posture: Posture, policy_dir: Path | None = None) -> str:
+    """The posture's brief: the policy directory's file when it has one, else
+    the packaged constant."""
+    found = policy_file(BRIEF_FILES[posture], policy_dir)
+    return body(found) if found else BRIEFS[posture]
+
+
 DEGRADED = """\
 ## Repo map — DEGRADED (codegraph unavailable: {reason})
 
@@ -633,3 +663,5 @@ lists; its `flow` may name the seams off the main flow.
 ```"""
 
 BRIEFS: dict[str, str] = {"writer": STANDING_ORDERS, "reader": JUDGE_BRIEF, "shape": SHAPE_BRIEF}
+BRIEF_FILES: dict[str, str] = {"writer": "standing-orders", "reader": "judge-brief",
+                               "shape": "shape-brief"}

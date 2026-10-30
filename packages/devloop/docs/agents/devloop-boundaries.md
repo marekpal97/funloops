@@ -52,6 +52,11 @@ packages/devloop/
   imperative shell: git reads and file arguments feed the pure modules.
   `find_config` and `find_constitution` walk up from the cwd to the repo
   root; a host's `docs/agents/constitution.md` extends the packaged one.
+  A policy directory (`--policy-dir`, else `$DEVLOOP_POLICY_DIR`; unset by
+  default) is read first: its `loop.toml` wins over the walk, its
+  `constitution.md` replaces the packaged default, and `pack` reads
+  `persona.md`, `standing-orders.md`, `judge-brief.md` and `shape-brief.md`
+  from it. A file absent there falls back to the packaged default.
 - **`dag.py`** is pure over issue-snapshot dicts. Edges come from native
   dependency keys only; it reads no body metadata.
 - **`github.py`** is the one subprocess seam to `gh`. It owns the

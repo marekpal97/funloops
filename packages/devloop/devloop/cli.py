@@ -35,8 +35,11 @@ Subcommands:
   triage     — classify a shipped PR into a risk lane from its gate results,
                its judge return, the baseline line and its git diff
 
-Stdlib only. Config: the host repo's docs/agents/loop.toml, found by walking up
-from the cwd, else the copy shipped with the package (see find_config).
+Stdlib only. Config: the policy directory's loop.toml when one is configured
+(--policy-dir, else $DEVLOOP_POLICY_DIR), else the host repo's
+docs/agents/loop.toml, found by walking up from the cwd, else the copy shipped
+with the package (see find_config). The same directory may hold the pack's
+texts (see devloop.pack).
 """
 
 from __future__ import annotations
@@ -106,27 +109,40 @@ def _is_packaged(constitution: Path) -> bool:
         home.name == "devloop" and (home / "__init__.py").is_file())
 
 
-def find_config(start: Path | None = None) -> Path:
-    """The host repo's ``docs/agents/loop.toml``, else the package's own copy.
-    The host's file replaces the packaged one; ``load_config`` treats a
-    missing file as defaults only."""
+def resolve_policy_dir(flag: str | None = None) -> Path | None:
+    """The configured policy directory: the ``--policy-dir`` flag, else
+    ``$DEVLOOP_POLICY_DIR``, else ``None``. An empty value is unset."""
+    value = flag or os.environ.get(pack.POLICY_ENV, "")
+    return Path(value).expanduser() if value else None
+
+
+def find_config(start: Path | None = None, policy_dir: Path | None = None) -> Path:
+    """``<policy_dir>/loop.toml`` when a policy directory holds one, else the
+    host repo's ``docs/agents/loop.toml``, else the package's own copy.
+    The first found replaces the rest; ``load_config`` treats a missing file
+    as defaults only."""
+    if policy_dir is not None and (configured := Path(policy_dir) / "loop.toml").is_file():
+        return configured
     return next(_walk_up(CONFIG_REL, start), PACKAGE_CONFIG)
 
 
-def find_constitution(start: Path | None = None) -> list[Path]:
-    """The packaged constitution, then the host repo's overlay when it has one.
+def find_constitution(start: Path | None = None,
+                      policy_dir: Path | None = None) -> list[Path]:
+    """The default constitution, then the host repo's overlay when it has one.
 
-    The overlay extends the default and never replaces it. A walk that starts
-    below the packaged file serves it once and goes on to the repo's overlay.
-    A missing packaged default raises: a dispatch must never lose every rule
-    unannounced.
+    The default is the policy directory's ``constitution.md`` when it has
+    one, else the packaged file. The overlay extends the default and never
+    replaces it. A walk that starts below the packaged file serves it once
+    and goes on to the repo's overlay. A missing packaged default raises: a
+    dispatch must never lose every rule unannounced.
     """
-    if not PACKAGE_CONSTITUTION.is_file():
+    default = pack.policy_file("constitution", policy_dir) or PACKAGE_CONSTITUTION
+    if not default.is_file():
         raise FileNotFoundError(
             f"packaged constitution missing: {PACKAGE_CONSTITUTION} — this "
             "install shipped no docs/; do not dispatch without the rules")
     overlay = [p for p in _walk_up(CONSTITUTION_REL, start) if not _is_packaged(p)][:1]
-    return [PACKAGE_CONSTITUTION, *overlay]
+    return [default, *overlay]
 
 # Stamped on a prime payload built from labels alone, with no text leg.
 DEAD_VOCAB_NOTE = (
@@ -317,6 +333,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "(section defaults to 'loop'; repeatable; applied after "
              "loop.toml; gates are file-only)",
     )
+    common.add_argument(
+        "--policy-dir", default=None, metavar="DIR",
+        help="folder holding loop.toml and the pack texts (persona.md, "
+             "standing-orders.md, judge-brief.md, shape-brief.md, "
+             "constitution.md); each file present there wins over the "
+             f"default (default: ${pack.POLICY_ENV}, else unset)",
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_plan = sub.add_parser("plan", help="compute the runnable frontier", parents=[common])
@@ -494,8 +517,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    policy_dir = resolve_policy_dir(args.policy_dir)
     try:
-        cfg = apply_overrides(load_config(), args.overrides)
+        cfg = apply_overrides(load_config(find_config(policy_dir=policy_dir)), args.overrides)
     except ValueError as e:
         print(json.dumps({"error": str(e)}))
         return 2
@@ -503,7 +527,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "config":
         # An "error" entry tells the orchestrator to stop, not to splice nothing.
         try:
-            cfg["constitution"] = [str(p) for p in find_constitution()]
+            cfg["constitution"] = [str(p) for p in find_constitution(policy_dir=policy_dir)]
         except FileNotFoundError as exc:
             cfg["constitution"] = {"error": str(exc)}
         # Compact, like `gh --json`: a verify line matches ` => ` as a raw substring, so lists stay on one line.
@@ -705,8 +729,9 @@ def main(argv: list[str] | None = None) -> int:
         issues = {n: pack.Issue(**json.loads(github.run(
             ["issue", "view", str(n), "--json", "title,body"], cwd=root))) for n in args.number}
         try:
-            rules = [pack.body(p) for p in find_constitution(root)]
-            persona = pack.body(PACKAGE_PERSONA) if posture == "writer" else ""
+            rules = [pack.body(p) for p in find_constitution(root, policy_dir)]
+            persona = (pack.body(pack.policy_file("persona", policy_dir) or PACKAGE_PERSONA)
+                       if posture == "writer" else "")
             touched = None if posture == "writer" else pack.Touched.since(args.base_ref, root)
             dispatch = pack.Dispatch(
                 branch=args.branch, baseline=args.baseline, return_file=args.return_file,
@@ -720,6 +745,7 @@ def main(argv: list[str] | None = None) -> int:
                 trace=Path(args.trace).read_text(encoding="utf-8") if args.trace else "",
                 dispatch=dispatch,
                 report=Path(args.report).read_text(encoding="utf-8") if args.report else None,
+                brief=pack.brief(posture, policy_dir),
             )
         except (FileNotFoundError, ValueError) as exc:
             print(json.dumps({"error": str(exc)}))
