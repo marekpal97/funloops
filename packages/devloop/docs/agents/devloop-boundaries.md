@@ -53,7 +53,8 @@ packages/devloop/
   `find_config` and `find_constitution` walk up from the cwd to the repo
   root; a host's `docs/agents/constitution.md` extends the packaged one.
   A policy directory (`--policy-dir`, else `$DEVLOOP_POLICY_DIR`; unset by
-  default) is read first: its `loop.toml` wins over the walk, its
+  default) is read first: its `loop.toml` is layered over the repo's and
+  carries only `POLICY_KEYS` (a repo key there is refused by name), its
   `constitution.md` replaces the packaged default, and `pack` reads
   `persona.md`, `standing-orders.md`, `judge-brief.md` and `shape-brief.md`
   from it. A file absent there falls back to the packaged default.

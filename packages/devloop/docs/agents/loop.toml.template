@@ -14,8 +14,23 @@
 # command (orchestration). Per-run posture belongs on
 # the command line, not in edits to this file: `--set` and its sugar are
 # issue-loop.command.md §0's.
+#
+# Two owners. A configured policy directory (`--policy-dir`, else
+# $DEVLOOP_POLICY_DIR) may hold a second loop.toml, layered over this one,
+# for the person's settings; this file keeps the repo's facts. Marked below:
+#   [policy] keys — the policy directory's loop.toml may carry them, and its
+#                   value wins: [loop] max_issues_per_run, max_fix_rounds,
+#                   training_mode, run_mode, delivery; [tdd] mode; [prime];
+#                   [dispatch.<role>] transport, harness, model, effort, args.
+#   [repo] keys   — this file only; the policy directory's loop.toml refuses
+#                   them by name: [loop] branch_prefix, require_green_baseline;
+#                   [labels]; [triage]; [dispatch.<role>] posture; [[gates]].
+# Without a policy directory this file carries both, as before. The split is
+# thinkweave's dec-6c3539b2 (cli.POLICY_KEYS holds it).
 
 [loop]
+# [policy]: max_issues_per_run, max_fix_rounds, training_mode, run_mode, delivery
+# [repo]:   branch_prefix, require_green_baseline
 max_issues_per_run = 3   # token guardrail: issues processed per invocation
 max_fix_rounds = 2       # implement→gates→fix iterations before routing to human; never extended mid-run
 training_mode = true     # pause for human approval before push/PR; flip when trusted
@@ -24,12 +39,22 @@ require_green_baseline = true   # red suite on main → refuse to implement
 run_mode = "pass"          # pass | exhaust (issue-loop.command.md §0)
 delivery = "pr-per-issue"  # pr-per-issue | stacked (issue-loop.command.md §0)
 
-[tdd]
+[tdd]   # [policy]
 # auto: TDD is ENFORCED iff the per-run baseline probe is green.
 # always / never override the probe.
 mode = "auto"
 
-[labels]
+# ── Prime ─────────────────────────────────────────────────────────────────
+# [policy]. `devloop prime` at claim time: how much prior-trajectory context
+# to splice into the implementer's pack. --limit / --budget-chars on the
+# command line win for one call; enabled = false makes `prime` serve
+# nothing, with no retrieval, and say so in its payload's note.
+[prime]
+enabled = true
+limit = 3            # top-N prior trajectories (and decisions) to splice
+budget_chars = 1200  # char budget for the spliced block
+
+[labels]   # [repo]
 # ← EDIT if your tracker uses different vocabulary (see triage-labels.md).
 runnable = "ready-for-agent"
 claimed = "agent-claimed"
@@ -39,7 +64,7 @@ on_gate_failure = "ready-for-human"
 # After all gates pass, the rail classifies the shipped PR yellow (a human
 # skims) or red (a human must look) so review effort lands where it matters.
 # The rail CLASSIFIES; the orchestrator applies the label. Red wins.
-[triage]
+[triage]   # [repo]
 # ← EDIT: sensitive paths are always red, whatever the size or judge verdict.
 # Empty means "no path is sensitive here" — an inherited list from another
 # repo's layout classifies the wrong files, so this ships empty on purpose.
@@ -64,6 +89,7 @@ red_diff_lines = 800             # "big diff" → red (a signal for the human la
 # session and model, with no argv tail. The rail checks shape only — it never
 # validates a harness or model name, and it never imports a harness profile:
 # `args` is the literal argv tail the harness binary takes, written by you.
+# [repo]: posture. [policy]: transport, harness, model, effort, args.
 [dispatch.implementer]
 posture = "writer"          # writer: persona + standing orders; reader: neither
 transport = "agent-tool"    # agent-tool | herdr
@@ -97,7 +123,7 @@ transport = "agent-tool"
 # args = ["-s", "workspace-write", "-a", "never"]
 
 # ── Gate pipeline ─────────────────────────────────────────────────────────
-# Ordered, and the order is the contract: the deterministic guards run first,
+# [repo]. Ordered, and the order is the contract: the deterministic guards run first,
 # then the one judge. kinds: command | diff (deterministic, run by the rail)
 # — judge (LLM-judged, run by the command in a fresh subagent context).
 # `devloop check --issue <N>` runs every command gate, then the issue's
