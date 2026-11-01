@@ -21,7 +21,7 @@ Subcommands:
                against its schema; rejects for a re-ask
   prime      — assemble prior-trajectory prime context for an issue at claim
                time (reads the derived index read-only; always serves what
-               it finds)
+               it finds; [prime] sets its limit and budget, or turns it off)
   trajectory — assemble a per-issue trajectory payload for the memory feed
                (the optional host extension; shape: devloop-boundaries.md §4)
   board      — doctor: lint one or more repos' boards against the grammar
@@ -35,11 +35,13 @@ Subcommands:
   triage     — classify a shipped PR into a risk lane from its gate results,
                its judge return, the baseline line and its git diff
 
-Stdlib only. Config: the policy directory's loop.toml when one is configured
-(--policy-dir, else $DEVLOOP_POLICY_DIR), else the host repo's
-docs/agents/loop.toml, found by walking up from the cwd, else the copy shipped
-with the package (see find_config). The same directory may hold the pack's
-texts (see devloop.pack).
+Stdlib only. Config: the host repo's docs/agents/loop.toml, found by walking
+up from the cwd, else the copy shipped with the package (see find_config);
+then, when a policy directory is configured (--policy-dir, else
+$DEVLOOP_POLICY_DIR) and holds a loop.toml, that file on top, carrying only
+the policy keys (POLICY_KEYS: the person's settings, never the repo's
+gates, labels or triage paths). The same directory may hold the pack's texts
+(see devloop.pack).
 """
 
 from __future__ import annotations
@@ -116,14 +118,20 @@ def resolve_policy_dir(flag: str | None = None) -> Path | None:
     return Path(value).expanduser() if value else None
 
 
-def find_config(start: Path | None = None, policy_dir: Path | None = None) -> Path:
-    """``<policy_dir>/loop.toml`` when a policy directory holds one, else the
-    host repo's ``docs/agents/loop.toml``, else the package's own copy.
-    The first found replaces the rest; ``load_config`` treats a missing file
-    as defaults only."""
+def find_config(start: Path | None = None) -> Path:
+    """The host repo's ``docs/agents/loop.toml``, else the package's own copy.
+    ``load_config`` treats a missing file as defaults only. A policy
+    directory's loop.toml never replaces it: see ``find_policy_config``."""
+    return next(_walk_up(CONFIG_REL, start), PACKAGE_CONFIG)
+
+
+def find_policy_config(policy_dir: Path | None = None) -> Path | None:
+    """``<policy_dir>/loop.toml`` when a policy directory holds one, else
+    ``None``. ``load_config`` layers it on top of the repo's file, so the
+    repo keeps its gates whether or not a policy directory is set."""
     if policy_dir is not None and (configured := Path(policy_dir) / "loop.toml").is_file():
         return configured
-    return next(_walk_up(CONFIG_REL, start), PACKAGE_CONFIG)
+    return None
 
 
 def find_constitution(start: Path | None = None,
@@ -150,6 +158,9 @@ DEAD_VOCAB_NOTE = (
     "likely dead by vocabulary; pass ontology --concepts and/or --query "
     "(docs/agents/issue-loop.command.md §1b)"
 )
+
+# Stamped on the payload `prime` emits when [prime] enabled = false.
+PRIME_DISABLED_NOTE = "prime disabled (prime.enabled = false): no retrieval ran"
 
 DEFAULT_CONFIG: dict = {
     "loop": {
@@ -180,12 +191,17 @@ DEFAULT_CONFIG: dict = {
         "watched_paths": [],
         "red_diff_lines": 800,     # "big diff" → red
     },
+    "prime": {
+        "enabled": True,       # false: `prime` serves nothing and says so, no retrieval
+        "limit": 3,            # top-N prior trajectories (and decisions) to splice
+        "budget_chars": 1200,  # char budget for the spliced block
+    },
     "gates": [],
 }
 
 # The scalar sections a file or --set may carry. Gates are file-only and
 # checked per kind (gates.GATE_KEYS); anything else is unknown by name.
-SECTIONS = ("loop", "labels", "tdd", "triage")
+SECTIONS = ("loop", "labels", "tdd", "triage", "prime")
 
 # [dispatch]: which agent runs a role, one sub-table per role. A role IS its
 # entry: the loop's own two always resolve, and any other entry declares
@@ -200,6 +216,20 @@ OVERRIDABLE = " | ".join((*SECTIONS, "dispatch.<role>"))
 # tdd.mode: auto writes the tests gate's colour as the baseline line; always
 # writes green and never red, whatever the gate said.
 TDD_MODES = ("auto", "always", "never")
+
+# The keys a policy directory's loop.toml may carry: the person's settings
+# (how many issues, how many fix rounds, how supervised a run is), as opposed to the repo's
+# facts (its gates and test command, labels, triage paths, branch prefix,
+# baseline rule), which only the repo's own loop.toml carries. A repo key in
+# the policy file is refused by name. The split is thinkweave's
+# dec-6c3539b2. ``dispatch.<role>.posture`` is the role's pack shape, which
+# the repo's command docs define, so it stays a repo key.
+POLICY_KEYS: dict[str, tuple[str, ...]] = {
+    "loop": ("max_issues_per_run", "max_fix_rounds", "training_mode", "run_mode", "delivery"),
+    "tdd": ("mode",),
+    "prime": tuple(DEFAULT_CONFIG["prime"]),
+    "dispatch": tuple(k for k in DISPATCH_KEYS if k != "posture"),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -252,30 +282,69 @@ def _checked_gates(gates: list[dict]) -> list[dict]:
     return gates
 
 
-def load_config(path: Path | None = None) -> dict:
-    """Defaults merged with loop.toml; gates come only from the file. A
-    section or key the defaults do not carry raises ``ValueError`` naming it."""
+def _checked_policy(path: Path, data: dict) -> dict:
+    """Refuse by name a repo key in a policy directory's loop.toml: a known
+    section or key outside POLICY_KEYS. Unknown ones are left to ``_merge``,
+    which refuses them by name as in the repo's file."""
+    where = f"the policy directory's {path.name}: it belongs in the repo's docs/agents/loop.toml"
+    for section, values in data.items():
+        if section in (*SECTIONS, "dispatch", "gates") and section not in POLICY_KEYS:
+            raise ValueError(f"repo-owned section '{section}' in {where} "
+                             f"(policy keys: {_policy_names()})")
+        if section == "dispatch":
+            keys = [(f"dispatch.{role}.{key}", key, DISPATCH_KEYS)
+                    for role, entry in values.items() if isinstance(entry, dict)
+                    for key in entry]
+        elif section in POLICY_KEYS:
+            keys = [(f"{section}.{key}", key, DEFAULT_CONFIG[section]) for key in values]
+        else:
+            keys = []
+        for name, key, known in keys:
+            if key in known and key not in POLICY_KEYS[section]:
+                raise ValueError(f"repo-owned key '{name}' in {where} "
+                                 f"(policy keys: {_policy_names()})")
+    return data
+
+
+def _policy_names() -> str:
+    return ", ".join(f"dispatch.<role>.{k}" if s == "dispatch" else f"{s}.{k}"
+                     for s, keys in POLICY_KEYS.items() for k in keys)
+
+
+def _merge(cfg: dict, path: Path, data: dict) -> None:
+    """Merge one parsed loop.toml into ``cfg``, refusing an unknown section
+    or key by name."""
+    for section, values in data.items():
+        if section == "gates":
+            cfg["gates"] = _checked_gates(values)
+            continue
+        if section == "dispatch":
+            for role, entry in values.items():
+                checked = _checked_dispatch(role, entry)
+                cfg["dispatch"].setdefault(role, dict(DISPATCH_DEFAULT)).update(checked)
+            continue
+        if section not in SECTIONS:
+            raise ValueError(
+                f"unknown section '{section}' in {path.name} (known: {OVERRIDABLE})")
+        for key in values:
+            _known_key(section, key)
+        cfg[section].update(values)
+
+
+def load_config(path: Path | None = None, policy: Path | None = None) -> dict:
+    """Defaults merged with the repo's loop.toml, then with the policy
+    directory's loop.toml when ``policy`` names one. Gates come only from the
+    repo's file. A section or key the defaults do not carry raises
+    ``ValueError`` naming it; so does a repo key in the policy file."""
     path = path if path is not None else find_config()
     cfg: dict = {section: dict(DEFAULT_CONFIG[section]) for section in SECTIONS}
     cfg["dispatch"] = {role: dict(DISPATCH_DEFAULT) for role in ROLES}
     cfg["gates"] = []
     if path.exists():
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-        for section, values in data.items():
-            if section == "gates":
-                cfg["gates"] = _checked_gates(values)
-                continue
-            if section == "dispatch":
-                for role, entry in values.items():
-                    checked = _checked_dispatch(role, entry)
-                    cfg["dispatch"].setdefault(role, dict(DISPATCH_DEFAULT)).update(checked)
-                continue
-            if section not in SECTIONS:
-                raise ValueError(
-                    f"unknown section '{section}' in {path.name} (known: {OVERRIDABLE})")
-            for key in values:
-                _known_key(section, key)
-            cfg[section].update(values)
+        _merge(cfg, path, tomllib.loads(path.read_text(encoding="utf-8")))
+    if policy is not None and policy.exists():
+        _merge(cfg, policy, _checked_policy(
+            policy, tomllib.loads(policy.read_text(encoding="utf-8"))))
     return cfg
 
 
@@ -335,10 +404,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     common.add_argument(
         "--policy-dir", default=None, metavar="DIR",
-        help="folder holding loop.toml and the pack texts (persona.md, "
+        help="folder holding the pack texts (persona.md, "
              "standing-orders.md, judge-brief.md, shape-brief.md, "
-             "constitution.md); each file present there wins over the "
-             f"default (default: ${pack.POLICY_ENV}, else unset)",
+             "constitution.md), each present file winning over the default, "
+             "and a loop.toml of policy keys layered over the repo's "
+             f"(default: ${pack.POLICY_ENV}, else unset)",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -398,10 +468,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          help="vault root; resolves the index under the vault's "
                               "weave_dir override (config.toml) when --db is absent, "
                               "else <vault>/.weave/index.db")
-    p_prime.add_argument("--limit", type=int, default=3,
-                         help="max prior trajectories (and decisions) to splice — top-N per kind")
-    p_prime.add_argument("--budget-chars", type=int, default=1200,
-                         help="char budget for the spliced block")
+    p_prime.add_argument("--limit", type=int, default=None,
+                         help="max prior trajectories (and decisions) to splice — top-N "
+                              "per kind (default: prime.limit)")
+    p_prime.add_argument("--budget-chars", type=int, default=None,
+                         help="char budget for the spliced block (default: prime.budget_chars)")
     p_prime.add_argument("--decisions", default=None,
                          help="comma-separated decisions_for_file note ids to fold into served context")
     p_prime.add_argument("--buffer", default=None,
@@ -524,7 +595,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     policy_dir = resolve_policy_dir(args.policy_dir)
     try:
-        cfg = apply_overrides(load_config(find_config(policy_dir=policy_dir)), args.overrides)
+        cfg = apply_overrides(load_config(find_config(), find_policy_config(policy_dir)),
+                              args.overrides)
     except ValueError as e:
         print(json.dumps({"error": str(e)}))
         return 2
@@ -618,6 +690,11 @@ def main(argv: list[str] | None = None) -> int:
             result = validate(gate, raw, args.posture)
         print(json.dumps(result, indent=2))
         return 2 if result["reasons"] else (0 if result["passed"] else 1)
+    elif args.cmd == "prime" and not cfg["prime"]["enabled"]:
+        # No labels fetch, no index, no decisions: an unprimed payload that says why.
+        payload = trajectory.build_prime_payload(args.number, args.run_id, [], query=args.query)
+        payload["note"] = PRIME_DISABLED_NOTE
+        print(json.dumps(payload, indent=2))
     elif args.cmd == "prime":
         concepts = (_split_csv(args.concepts) if args.concepts is not None
                     else _split_csv(args.labels) if args.labels is not None
@@ -632,7 +709,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             payload = trajectory.build_prime_payload(
                 args.number, args.run_id, concepts, conn=conn,
-                limit=args.limit, budget_chars=args.budget_chars,
+                limit=cfg["prime"]["limit"] if args.limit is None else args.limit,
+                budget_chars=(cfg["prime"]["budget_chars"] if args.budget_chars is None
+                              else args.budget_chars),
                 decisions=_split_csv(args.decisions) if args.decisions else None,
                 query=args.query,
             )

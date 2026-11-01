@@ -27,6 +27,11 @@
     "watched_paths": [],
     "red_diff_lines": 800
   },
+  "prime": {
+    "enabled": true,
+    "limit": 3,
+    "budget_chars": 1200
+  },
   "dispatch": {
     "implementer": {
       "transport": "agent-tool"
