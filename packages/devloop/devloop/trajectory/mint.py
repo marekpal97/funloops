@@ -114,7 +114,8 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
                      skill_centric: bool = False,
                      primed: bool | None = None,
                      served: list[str] | None = None,
-                     trace: dict | None = None) -> dict:
+                     trace: dict | None = None,
+                     manifest: dict | None = None) -> dict:
     """Assemble the deterministic half of a per-issue trajectory note as a
     weave_create-shaped payload: the mechanical facts in frontmatter, the body
     a skeleton the orchestrator fills. ``commits`` is the branch's full SHAs,
@@ -128,7 +129,10 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
     with one field-path reason per arg. ``skill_centric`` adds the
     ``skill-invocation`` tag. ``primed``/``served`` mirror the claim-time
     prime verdict; ``primed=None`` omits both keys. ``trace`` is stored under one ``trace``
-    key; ``trace=None`` omits it.
+    key; ``trace=None`` omits it. ``manifest`` is the host's run manifest
+    (thinkweave's ``{harness, readers, rsi_rail}``), passed through
+    uninterpreted as the payload's top-level ``manifest`` for the host's
+    run recorder; a non-dict raises, ``manifest=None`` omits the key.
     """
     files = [line.split("\t")[2] for line in numstat.strip().splitlines()
              if len(line.split("\t")) == 3]
@@ -164,7 +168,9 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
         frontmatter["served"] = list(served or [])
     if trace is not None:
         frontmatter["trace"] = _normalize_trace(trace)
-    return {
+    if manifest is not None and not isinstance(manifest, dict):
+        raise ValueError("manifest must be a JSON object")
+    payload = {
         "type": "note",
         "title": f"loop trajectory #{issue['number']}: {issue.get('title', '')[:80]}",
         "tags": tags,
@@ -176,3 +182,6 @@ def build_trajectory(issue: dict, *, branch: str, commits: list[str],
         "concept_hints": [l["name"] if isinstance(l, dict) else l
                           for l in issue.get("labels", [])],
     }
+    if manifest is not None:
+        payload["manifest"] = manifest
+    return payload
