@@ -1889,10 +1889,46 @@ def test_prime_argparse_contract():
     assert ns.cmd == "prime" and ns.number == 57 and ns.run_id == "loop-x"
     assert ns.labels == "a,b" and ns.concepts == "c1,c2"
     assert ns.limit == 2 and ns.budget_chars == 800
-    # Sensible defaults when omitted.
+    # Omitted, limit and budget are None: main reads them from [prime].
     ns2 = cli.build_arg_parser().parse_args(["prime", "1", "--run-id", "r"])
     assert ns2.labels is None and ns2.concepts is None and ns2.db is None
-    assert ns2.limit == 3 and ns2.budget_chars == 1200 and ns2.buffer is None
+    assert ns2.limit is None and ns2.budget_chars is None and ns2.buffer is None
+
+
+def _prime_served(capsys, db, *argv) -> list[str]:
+    assert cli.main(["prime", "57", "--run-id", "r", "--concepts", "retrieval",
+                     "--query", "fuse the retrieval legs", "--db", str(db),
+                     "--dry-run", *argv]) == 0
+    return json.loads(capsys.readouterr().out)["served"]
+
+
+def test_prime_limit_comes_from_the_prime_section_and_the_flag_wins(tmp_path, capsys):
+    """[prime] limit replaces the old CLI default of 3; an explicit --limit
+    still wins over it."""
+    db = _fusion_db(tmp_path)
+    assert len(_prime_served(capsys, db)) == 3
+    assert len(_prime_served(capsys, db, "--set", "prime.limit=1")) == 1
+    assert len(_prime_served(capsys, db, "--set", "prime.limit=1", "--limit", "2")) == 2
+
+
+def test_prime_budget_comes_from_the_prime_section(tmp_path, capsys):
+    """A tight [prime] budget_chars splices fewer entries than the default."""
+    db = _fusion_db(tmp_path)
+    assert len(_prime_served(capsys, db, "--set", "prime.budget_chars=40")) == 1
+    assert len(_prime_served(capsys, db, "--set", "prime.budget_chars=40",
+                             "--budget-chars", "1200")) == 3
+
+
+def test_prime_disabled_serves_nothing_and_says_so(tmp_path, capsys, monkeypatch):
+    """enabled = false: no labels fetch, no index read, an unprimed payload
+    whose note names the knob."""
+    monkeypatch.setattr(github, "fetch_labels", lambda n: pytest.fail("fetched labels"))
+    db = _fusion_db(tmp_path)
+    assert cli.main(["prime", "57", "--run-id", "r", "--db", str(db),
+                     "--decisions", "dec-1", "--set", "prime.enabled=false"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["primed"] is False and payload["served"] == [] and payload["block"] == ""
+    assert payload["note"] == cli.PRIME_DISABLED_NOTE
 
 
 # ---------------------------------------------------------------------------
