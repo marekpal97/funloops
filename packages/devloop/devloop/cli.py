@@ -8,12 +8,18 @@ graph math here.
 
 Subcommands:
   plan     — snapshot issues via `gh`, compute frontier + components (JSON);
-             the frontier is cut to max_issues_per_run and carries a run id
+             the frontier is cut to max_issues_per_run and carries a run id;
+             a runnable issue that fails the ticket check is listed under
+             needs_info with its failures, never in the frontier
   claim    — claim an issue for a run (the assignee IS the claim)
   release  — drop the claim
   config     — print resolved loop config (defaults merged with loop.toml;
                an unknown or deleted key is refused by name)
-  check      — run one deterministic gate (kind: command | diff) and emit JSON;
+  check      — N alone checks issue N's ticket against the ticket standard:
+               prints pass, or fail with each failing line quoted under the
+               rule it broke (devloop.check);
+               --gate runs one deterministic gate (kind: command | diff) and
+               emits JSON;
                --issue N runs the command gates, then the issue's `verify:`
                lines, as one result list; --baseline runs the command gates
                and adds the baseline line (green | red) under tdd.mode
@@ -56,7 +62,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import get_args
 
-from devloop import board, dag, github, index_client, pack, trajectory, triage
+from devloop import board, check, dag, github, index_client, pack, trajectory, triage
 
 # Imported by name: `main` binds a local `gates` in the trajectory branch,
 # which would shadow a module of that name for the whole function.
@@ -430,8 +436,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     sub.add_parser("config", help="print resolved config as JSON", parents=[common])
 
     p_check = sub.add_parser(
-        "check", help="run one deterministic gate, or an issue's verify: lines", parents=[common])
+        "check", help="check an issue's ticket, or run one deterministic gate, "
+                      "or an issue's verify: lines", parents=[common])
     what = p_check.add_mutually_exclusive_group(required=True)
+    what.add_argument("number", type=int, nargs="?", default=None, metavar="N",
+                      help="check issue N's ticket before any agent runs: print pass "
+                           "(exit 0), or fail with each failing line quoted under the "
+                           "rule it broke (exit 1); `plan` runs this on the frontier, "
+                           "and the loop routes a failing issue to needs-info")
     what.add_argument("--gate", help="a command | diff gate id from loop.toml")
     what.add_argument("--issue", type=int, metavar="N",
                       help="run the command gates, then issue N's verify: lines, as one list")
@@ -621,7 +633,8 @@ def main(argv: list[str] | None = None) -> int:
             done = {int(n) for n in args.assume_done.split(",") if n.strip()}
             issues = dag.apply_assume_done(issues, done)
         cap = cfg["loop"]["max_issues_per_run"] if args.limit is None else args.limit
-        result = dag.compute_frontier(issues, cfg, limit=cap)
+        result = dag.compute_frontier(issues, cfg, limit=cap,
+                                      check=lambda issue: check.check(issue).failures)
         run_id = f"loop-{datetime.now().astimezone():%Y%m%d}-{secrets.token_hex(2)}"
         print(json.dumps({"run_id": run_id, **result}, indent=2))
     elif args.cmd == "claim":
@@ -648,17 +661,21 @@ def main(argv: list[str] | None = None) -> int:
         green = {"always": True, "never": False}.get(mode, all(r["passed"] for r in results))
         print(json.dumps({"baseline": "green" if green else "red", "results": results},
                          indent=2))
-    elif args.cmd == "check" and args.issue is not None:
+    elif args.cmd == "check" and (args.number is not None or args.issue is not None):
         cwd = Path(args.cwd).resolve()
+        number = args.issue if args.number is None else args.number
         try:
-            body = json.loads(github.run(["issue", "view", str(args.issue),
-                                          "--json", "body"], cwd=cwd))["body"]
+            issue = github.fetch_issue(number, cwd)
         except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError) as e:
             # Exit 2, not 1: exit 1 would read as "a check is red".
             detail = (e.stderr or "").strip() if hasattr(e, "stderr") else str(e)
-            print(json.dumps({"error": f"cannot read issue #{args.issue}: {detail}"}))
+            print(json.dumps({"error": f"cannot read issue #{number}: {detail}"}))
             return 2
-        checks = [g for g in cfg["gates"] if g["kind"] == "command"] + verify_gates(body)
+        if args.issue is None:
+            report = check.check(issue)
+            print(report.render())
+            return 0 if report.ok else 1
+        checks = [g for g in cfg["gates"] if g["kind"] == "command"] + verify_gates(issue["body"])
         results = [run_command_gate(g, cwd) for g in checks]
         passed = sum(r["passed"] for r in results)
         print(json.dumps({"issue": args.issue, "results": results,

@@ -34,6 +34,7 @@ packages/devloop/
     board.py           board hygiene: the grammar dag.py reads, as checks + sweep ops
     pack.py            the dispatch pack: one role's whole dispatch file
     gates.py           Gate protocol + deterministic executors
+    check.py           the ticket check: one issue against the ticket standard
     triage.py          risk-lane classification of shipped PRs
     paths.py           leaf util: the three-form path matcher
     github.py          gh plumbing: issue snapshot + tracker mutations
@@ -92,7 +93,9 @@ JUDGMENT = {"judge": validate_judge}
   other kind gets `gate kind '<k>' is LLM-judged — run it from the
   /issue-loop command, not the script`. `check --issue N` runs every command
   gate, then the issue's `verify:` lines as ad-hoc command gates, as one
-  result list.
+  result list. `check N` runs no gate: it checks issue N's ticket
+  (`check.py`), and `plan` lists each failing frontier issue under
+  `needs_info`.
 - **Judgment kinds** (`judge`): the orchestrator dispatches an agent and
   `validate` checks its return. The judge return carries `criteria[]`
   verdicts and `findings[]`; only a `not-met` criterion fails it, and a

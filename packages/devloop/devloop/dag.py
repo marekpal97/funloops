@@ -6,6 +6,8 @@ edges come from the snapshot's native dependency fields only.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 
 def blockers(issue: dict) -> list[int]:
     """The issue's native ``blocked_by`` edges, deduped and sorted."""
@@ -59,10 +61,12 @@ def apply_assume_done(issues: list[dict], done: set[int]) -> list[dict]:
     return [{**i, "state": "CLOSED"} if i["number"] in done else i for i in issues]
 
 
-def compute_frontier(issues: list[dict], cfg: dict, limit: int | None = None) -> dict:
+def compute_frontier(issues: list[dict], cfg: dict, limit: int | None = None,
+                     check: Callable[[dict], list] | None = None) -> dict:
     """Partition issues into frontier / blocked / claimed, with reasons. With
     ``limit``, the frontier keeps its first ``limit`` entries and ``deferred``
-    names the rest.
+    names the rest. With ``check``, a runnable issue it returns failures for
+    is listed under ``needs_info`` with them, and never enters the frontier.
 
     An issue is runnable when it is OPEN, carries the runnable label, is not
     claimed (an assignee IS a claim — wayfinder convention — and the legacy
@@ -77,7 +81,7 @@ def compute_frontier(issues: list[dict], cfg: dict, limit: int | None = None) ->
     by_number = {i["number"]: i for i in issues}
     component = compute_components(issues)
 
-    frontier, blocked, claimed, warnings = [], [], [], []
+    frontier, needs_info, blocked, claimed, warnings = [], [], [], [], []
     for issue in issues:
         if issue["state"].upper() != "OPEN":
             continue
@@ -110,10 +114,13 @@ def compute_frontier(issues: list[dict], cfg: dict, limit: int | None = None) ->
             if not open_blockers:
                 entry["open_blockers_note"] = "native blocked_by count > 0 (edge list not fetched)"
             blocked.append(entry)
+        elif check and (failures := check(issue)):
+            needs_info.append({**entry, "failures": failures})
         else:
             frontier.append(entry)
 
     frontier.sort(key=lambda e: e["number"])
+    needs_info.sort(key=lambda e: e["number"])
     cut = len(frontier) if limit is None else limit
     return {"frontier": frontier[:cut], "deferred": [e["number"] for e in frontier[cut:]],
-            "blocked": blocked, "claimed": claimed, "warnings": warnings}
+            "needs_info": needs_info, "blocked": blocked, "claimed": claimed, "warnings": warnings}

@@ -13,7 +13,7 @@ import sys
 
 import pytest
 
-from devloop import cli, dag, gates, github, index_client, pack, triage
+from devloop import check, cli, dag, gates, github, index_client, pack, triage
 from devloop.trajectory import mint, prime
 
 # ---------------------------------------------------------------------------
@@ -155,6 +155,7 @@ def test_plan_cuts_the_frontier_to_the_run_cap_and_mints_a_run_id(monkeypatch, c
     order; the rest are named under ``deferred``, never hidden. ``--limit``
     overrides the cap, and every plan carries a ``loop-<date>-<hex>`` run id."""
     monkeypatch.setattr(github, "fetch_issues", lambda: [_issue(n) for n in range(1, 6)])
+    monkeypatch.setattr(check, "check", lambda issue: check.Report([]))
     assert cli.main(["plan", "--set", "max_issues_per_run=3"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert [e["number"] for e in out["frontier"]] == [1, 2, 3]
@@ -249,7 +250,8 @@ def _host_config(tmp_path, monkeypatch, text):
 
 def _issue_body(monkeypatch, body: str) -> None:
     """The gh seam: `check --issue` reads the body exactly as `pack` does."""
-    monkeypatch.setattr(github, "run", lambda args, cwd=None: json.dumps({"body": body}))
+    monkeypatch.setattr(github, "run", lambda args, cwd=None: json.dumps(
+        {"body": body, "url": "https://github.com/o/r/issues/1"}))
 
 
 def test_check_issue_runs_the_command_gates_then_the_verify_lines(tmp_path, monkeypatch, capsys):

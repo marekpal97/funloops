@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 from devloop import paths
 
@@ -62,21 +63,35 @@ def run_command_gate(gate: dict, cwd: Path, base_ref: str | None = None) -> dict
 # The verify rail: an issue's own `verify:` lines, run as command gates. The
 # result is the rail's, so the orchestrator cannot soften a red line into prose.
 
-_VERIFY_LINE = re.compile(r"^\s*(?:[-*]\s+(?:\[[ xX]\]\s+)?)?verify:\s*(.+?)\s*$")
+_CHECKLIST = r"^\s*(?:[-*]\s+(?:\[[ xX]\]\s+)?)?"
+DEMO = r"demo(?: \(human\))?"
 
 
-def parse_verify_lines(body: str) -> list[str]:
-    """The body's ``verify:`` commands in body order, backticks stripped. A
-    line inside a ``` fence does not parse."""
-    lines, fenced = [], False
+class Criterion(NamedTuple):
+    """One criterion line of an issue body: the line as written, and its text
+    after the kind, backticks stripped."""
+    line: str
+    text: str
+
+
+def criteria(body: str, kind: str = "verify") -> list[Criterion]:
+    """The body's ``<kind>:`` lines in body order; ``kind`` is a regex. A line
+    inside a ``` fence does not parse."""
+    pattern = re.compile(rf"{_CHECKLIST}{kind}:\s*(.+?)\s*$")
+    found, fenced = [], False
     for line in body.splitlines():
         if line.lstrip().startswith("```"):
             fenced = not fenced
             continue
-        if fenced or not (m := _VERIFY_LINE.match(line)):
+        if fenced or not (m := pattern.match(line)):
             continue
-        lines.append(m.group(1).removeprefix("`").removesuffix("`").strip())
-    return lines
+        found.append(Criterion(line.strip(), m.group(1).removeprefix("`").removesuffix("`").strip()))
+    return found
+
+
+def parse_verify_lines(body: str) -> list[str]:
+    """The body's ``verify:`` commands in body order."""
+    return [c.text for c in criteria(body)]
 
 
 def verify_gates(body: str) -> list[dict]:

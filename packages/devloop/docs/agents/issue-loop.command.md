@@ -36,8 +36,8 @@ one trajectory per issue (§3). These stretches sit in `host-extension` blocks.
 `loop.toml` holds the defaults; the arguments set this run's posture.
 Translate `--stacked` to `--set delivery=stacked` and `--max-issues <n>` to
 `--set max_issues_per_run=<n>`, and pass any other `--set
-[section.]key=value` through verbatim. Append the collected `--set` flags to
-every `devloop` call in this run. Never edit `loop.toml` for the user.
+[section.]key=value` through verbatim. Append the `--set` flags to
+every `devloop` call. Never edit `loop.toml` for the user.
 
 `run_mode`: **pass** works the frontier once. **exhaust** re-plans after each
 shipped issue while the frontier is non-empty; when only blocked issues
@@ -46,11 +46,13 @@ each issue as its own branch and draft PR; **stacked** is §1e.
 
 Run `uv run devloop config` and `uv run devloop plan`. `plan` prints the
 `run_id`, the `frontier` cut to `max_issues_per_run`, the `deferred` rest,
-`blocked` and `claimed`. Each dispatched stage is a role whose
+`needs_info`, `blocked` and `claimed`. Each dispatched stage is a role whose
 `dispatch.<role>` entry picks its posture and transport.
 
-- An issue number as argument: the frontier is that issue. Check in `plan`
-  that it is unblocked and unclaimed; if not, say so and stop.
+- An issue number as argument: the frontier is that issue if `plan` lists
+  it; else say why and stop.
+- `needs_info` entries failed the ticket check: swap `ready-for-agent` for
+  `needs-info`, comment `devloop check <N>`'s output, dispatch nothing.
 - `--dag <N>`: pass `--dag <N>` to every `plan` call; `run_mode` defaults to
   `exhaust`.
 - An empty frontier: report why (all blocked, all claimed, PRs awaiting
@@ -160,8 +162,7 @@ uv run --directory <worktree> devloop pack <N> --role judge --base-ref origin/ma
   --return <run-dir>/judge-<N>.json --out <run-dir>/dispatch-judge-<N>.md
 ```
 
-Pass `--evidence` with a `demo:` criterion. Validate the return before
-acting on it:
+Pass `--evidence` with a `demo:` criterion. Validate the return:
 
 ```bash
 uv run devloop validate --gate judge --return-json <run-dir>/judge-<N>.json
@@ -263,7 +264,7 @@ one; list it in the report. In `exhaust`, re-plan now (§0).
 ### 1e. Stacked delivery
 
 Each DAG component is one stack: one branch, one worktree, one PR at the end.
-Components run as concurrent stacks. Differences from the flow above:
+Components run as concurrent stacks. Differences:
 
 - **One branch per stack.** `loop/dag-<N>`, `<N>` the component's root, made
   once (§0.5). Each slice's implementer is fresh but works in this worktree.

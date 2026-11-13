@@ -67,7 +67,7 @@ def test_plan_runs_against_the_funloops_tracker():
     out = subprocess.run([sys.executable, "-m", "devloop", "plan"],
                          cwd=WORKSPACE_ROOT, capture_output=True, text=True, check=True)
     plan = json.loads(out.stdout)
-    assert set(plan) == {"run_id", "frontier", "deferred", "blocked", "claimed", "warnings"}
+    assert set(plan) == {"run_id", "frontier", "deferred", "needs_info", "blocked", "claimed", "warnings"}
 
 
 # ---------------------------------------------------------------------------

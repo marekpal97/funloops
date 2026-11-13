@@ -1,6 +1,6 @@
 """The one subprocess seam to ``gh``, plus the issue-snapshot dicts it makes.
 
-This module owns the snapshot shape ``{number, title, state, labels,
+This module owns the snapshot shape ``{number, repo, title, state, labels,
 assignees, body, native_blocked_count, native_blockers?}``; ``dag`` never
 sees raw gh output. Tracker mutations (claim/release) stay in ``cli``.
 """
@@ -35,6 +35,7 @@ def fetch_issues() -> list[dict]:
             continue
         issue = {
             "number": item["number"],
+            "repo": _repo_of(item),
             "title": item.get("title", ""),
             "state": item["state"],
             "labels": item.get("labels", []),
@@ -51,6 +52,12 @@ def fetch_issues() -> list[dict]:
                 issue["native_blockers"] = []  # the count still gates
         issues.append(issue)
     return issues
+
+
+def fetch_issue(number: int, cwd: Path | None = None) -> dict:
+    """One issue's ``{number, repo, body}``; a gh failure raises."""
+    item = json.loads(run(["issue", "view", str(number), "--json", "body,url"], cwd=cwd))
+    return {"number": number, "repo": "/".join(item["url"].split("/")[3:5]), "body": item["body"] or ""}
 
 
 def fetch_labels(number: int) -> list[str]:
