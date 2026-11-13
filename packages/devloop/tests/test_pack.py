@@ -567,7 +567,7 @@ def test_policy_constitution_replaces_the_packaged_one_and_keeps_the_overlay(tmp
 
 
 # ---------------------------------------------------------------------------
-# The text verb (thinkweave#395): one named text through the pack's resolver
+# The text verb: one named text through the pack's resolver
 
 
 def _text(capsys, *argv: str) -> str:
