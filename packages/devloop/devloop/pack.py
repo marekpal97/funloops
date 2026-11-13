@@ -16,7 +16,9 @@ is one ``.md`` file there, named after its constant in kebab-case:
 ``persona.md``, ``standing-orders.md``, ``judge-brief.md``,
 ``shape-brief.md``, and ``constitution.md`` (which replaces the packaged
 constitution; a repo's ``docs/agents/constitution.md`` overlay still extends
-it). The same folder may hold ``loop.toml``. A text whose file is absent, or
+it). The same folder may hold ``loop.toml``. ``TEXTS`` is the whole list of
+names; ``devloop text <name>`` prints any of them, and serves the ones no
+pack carries (``ship.md``). A text whose file is absent, or
 every text when no folder is configured, falls back to the packaged default:
 the constants below and the package's ``docs/agents`` files.
 """
@@ -459,11 +461,18 @@ def policy_file(name: str, policy_dir: Path | None) -> Path | None:
     return found if found.is_file() else None
 
 
+def text(name: str, policy_dir: Path | None, default: Path | str) -> str:
+    """One named text (a ``TEXTS`` entry): the policy directory's
+    ``<name>.md`` when it has one, else ``default``, a packaged file or a
+    constant. A file is served through ``body``."""
+    found = policy_file(name, policy_dir) or default
+    return body(found) if isinstance(found, Path) else found
+
+
 def brief(posture: Posture, policy_dir: Path | None = None) -> str:
     """The posture's brief: the policy directory's file when it has one, else
     the packaged constant."""
-    found = policy_file(BRIEF_FILES[posture], policy_dir)
-    return body(found) if found else BRIEFS[posture]
+    return text(BRIEF_FILES[posture], policy_dir, BRIEFS[posture])
 
 
 DEGRADED = """\
@@ -665,3 +674,8 @@ lists; its `flow` may name the seams off the main flow.
 BRIEFS: dict[str, str] = {"writer": STANDING_ORDERS, "reader": JUDGE_BRIEF, "shape": SHAPE_BRIEF}
 BRIEF_FILES: dict[str, str] = {"writer": "standing-orders", "reader": "judge-brief",
                                "shape": "shape-brief"}
+
+#: Every text a policy directory may replace, by file stem: the pack's five
+#: and the texts ``devloop text`` alone serves. A stem that is not a brief
+#: has its packaged default under the package's ``docs/agents``.
+TEXTS: tuple[str, ...] = ("constitution", "persona", *BRIEF_FILES.values(), "ship")

@@ -2650,6 +2650,19 @@ def test_every_devloop_verb_the_command_doc_names_is_a_subcommand():
     assert named <= set(sub.choices), named - set(sub.choices)
 
 
+def test_command_doc_points_at_the_ship_text_and_holds_no_template_of_its_own():
+    """The PR body, the findings comment, the stacked body and the report are
+    the packaged `ship` text; the command doc keeps a pointer at each place."""
+    doc = " ".join(_command_doc().split())
+    ship = " ".join(pack.body(cli.PACKAGE_DOCS / "ship.md").split())
+    for phrase in ("Closes #<N>", "gate | verdict | summary", "`demo: <short sha>`",
+                   "`Findings: see comment` or `Findings: none`", "`### deviation`",
+                   "a row per issue, a column per gate", "fix rounds used"):
+        assert phrase in ship, phrase
+        assert phrase not in doc, phrase
+    assert doc.count("devloop text ship") == 4
+
+
 def test_command_doc_outside_host_extension_blocks_never_needs_a_vault():
     spine = re.sub(r"<!-- host-extension:.*?<!-- /host-extension -->", "",
                    _command_doc(), flags=re.DOTALL)

@@ -564,3 +564,49 @@ def test_policy_constitution_replaces_the_packaged_one_and_keeps_the_overlay(tmp
     overlay.write_text("13. local rule\n", encoding="utf-8")
     assert cli.find_constitution(host, d) == [d / "constitution.md", overlay]
     assert cli.find_constitution(host, tmp_path / "empty") == [cli.PACKAGE_CONSTITUTION, overlay]
+
+
+# ---------------------------------------------------------------------------
+# The text verb (thinkweave#395): one named text through the pack's resolver
+
+
+def _text(capsys, *argv: str) -> str:
+    assert cli.main(["text", *argv]) == 0
+    return capsys.readouterr().out
+
+
+def test_text_verb_serves_the_policy_file_else_the_packaged_default(tmp_path, capsys):
+    """`ship` with a policy file prints that file below its header; an empty
+    folder, or none, prints the packaged text."""
+    d = _policy(tmp_path, ship="<!-- header -->\nMARKER ship shape\n")
+    assert _text(capsys, "ship", "--policy-dir", str(d)) == "MARKER ship shape\n"
+    (tmp_path / "empty").mkdir()
+    packaged = _text(capsys, "ship", "--policy-dir", str(tmp_path / "empty"))
+    assert packaged == _text(capsys, "ship")
+    assert "Closes #<N>" in packaged and "MARKER" not in packaged
+    assert not packaged.startswith("<!--")
+
+
+def test_text_verb_refuses_an_unknown_name_with_the_list(capsys):
+    with pytest.raises(SystemExit) as exit_:
+        cli.main(["text", "nope"])
+    assert exit_.value.code == 2
+    err = capsys.readouterr().err
+    for name in ("constitution", "persona", "standing-orders", "judge-brief",
+                 "shape-brief", "ship"):
+        assert name in err
+
+
+def test_text_verb_serves_every_pack_text_the_pack_serves(tmp_path, capsys):
+    """One resolver: a brief by name is the pack's brief, and a policy file
+    wins for it as it does in a pack."""
+    assert _text(capsys, "judge-brief") == pack.JUDGE_BRIEF + "\n"
+    assert _text(capsys, "persona") == pack.body(cli.PACKAGE_PERSONA) + "\n"
+    d = _policy(tmp_path, judge_brief="TUNED judge\n")
+    assert _text(capsys, "judge-brief", "--policy-dir", str(d)) == "TUNED judge\n"
+
+
+def test_text_verb_fails_closed_on_a_missing_packaged_file(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, "PACKAGE_DOCS", tmp_path)
+    assert cli.main(["text", "ship"]) == 2
+    assert "error" in json.loads(capsys.readouterr().out)

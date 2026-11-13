@@ -32,6 +32,9 @@ Subcommands:
                judge or shape brief for a reader, the repo map spliced from
                codegraph's CLI, the dispatch lines) and print it, or write
                it with --out
+  text       — print one named text (a pack text, or `ship`: the PR body,
+               the findings comment and the report shape): the policy
+               directory's file when present, else the packaged default
   triage     — classify a shipped PR into a risk lane from its gate results,
                its judge return, the baseline line and its git diff
 
@@ -116,6 +119,14 @@ def resolve_policy_dir(flag: str | None = None) -> Path | None:
     ``$DEVLOOP_POLICY_DIR``, else ``None``. An empty value is unset."""
     value = flag or os.environ.get(pack.POLICY_ENV, "")
     return Path(value).expanduser() if value else None
+
+
+def packaged_text(name: str) -> Path | str:
+    """A ``pack.TEXTS`` entry's packaged default: a brief's constant, else
+    its file under the package docs."""
+    briefs = {pack.BRIEF_FILES[p]: pack.BRIEFS[p] for p in pack.BRIEFS}
+    files = {"constitution": PACKAGE_CONSTITUTION, "persona": PACKAGE_PERSONA}
+    return briefs.get(name) or files.get(name) or PACKAGE_DOCS / f"{name}.md"
 
 
 def find_config(start: Path | None = None) -> Path:
@@ -406,7 +417,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--policy-dir", default=None, metavar="DIR",
         help="folder holding the pack texts (persona.md, "
              "standing-orders.md, judge-brief.md, shape-brief.md, "
-             "constitution.md), each present file winning over the default, "
+             "constitution.md) and the texts `text` serves (ship.md), each "
+             "present file winning over the default, "
              "and a loop.toml of policy keys layered over the repo's "
              f"(default: ${pack.POLICY_ENV}, else unset)",
     )
@@ -586,6 +598,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="reader: the implementer's return file; its deviations join the pack")
     p_pack.add_argument("--out", default=None, metavar="FILE",
                         help="write the dispatch to FILE and print its path")
+
+    p_text = sub.add_parser("text", help="print one named text", parents=[common])
+    p_text.add_argument("name", choices=pack.TEXTS,
+                        help="the text: the policy directory's <name>.md when "
+                             "present, else the packaged default")
 
     return parser
 
@@ -816,7 +833,7 @@ def main(argv: list[str] | None = None) -> int:
             ["issue", "view", str(n), "--json", "title,body"], cwd=root))) for n in args.number}
         try:
             rules = [pack.body(p) for p in find_constitution(root, policy_dir)]
-            persona = (pack.body(pack.policy_file("persona", policy_dir) or PACKAGE_PERSONA)
+            persona = (pack.text("persona", policy_dir, PACKAGE_PERSONA)
                        if posture == "writer" else "")
             touched = None if posture == "writer" else pack.Touched.since(args.base_ref, root)
             dispatch = pack.Dispatch(
@@ -841,4 +858,10 @@ def main(argv: list[str] | None = None) -> int:
             print(args.out)
         else:
             print(text, end="")
+    elif args.cmd == "text":
+        try:
+            print(pack.text(args.name, policy_dir, packaged_text(args.name)))
+        except FileNotFoundError as exc:
+            print(json.dumps({"error": str(exc)}))
+            return 2
     return 0

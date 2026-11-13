@@ -15,7 +15,7 @@ the goals.
 
 The seam between them is the **CLI subcommand surface** (JSON on stdout, exit
 codes): `config · plan · claim · release · check · validate · prime · triage
-· trajectory · board · pack`. The orchestrator knows nothing else. The
+· trajectory · board · pack · text`. The orchestrator knows nothing else. The
 `devloop` console script and `python -m devloop` are one entry point.
 
 Below the CLI, modules receive resolved config sections and plain dicts. No
@@ -58,6 +58,9 @@ packages/devloop/
   `constitution.md` replaces the packaged default, and `pack` reads
   `persona.md`, `standing-orders.md`, `judge-brief.md` and `shape-brief.md`
   from it. A file absent there falls back to the packaged default.
+  `text <name>` prints any one of those texts through the same resolver
+  (`pack.text` over `pack.TEXTS`), and serves the texts no pack carries:
+  `ship.md`, the PR body, the findings comment and the report shape.
 - **`dag.py`** is pure over issue-snapshot dicts. Edges come from native
   dependency keys only; it reads no body metadata.
 - **`github.py`** is the one subprocess seam to `gh`. It owns the
@@ -158,6 +161,17 @@ every artifact: run-bound semantic trace → the trajectory's `trace`; portable
 lesson → an insight note, linked by `builds_on`; enumerable fact → a
 frontmatter key. The loop never runs `/wrap`; the host's catch-up rail wraps
 the run's session.
+
+**Admitting a text.** A paragraph of a command doc that states a preference
+(a shape, a wording, a threshold of taste) and not a procedure becomes
+tunable in three steps, and by no other route:
+
+1. Cut the paragraph into a packaged file, `docs/agents/<name>.md`.
+2. Add `<name>` to `pack.TEXTS`.
+3. Replace the paragraph with a pointer to `devloop text <name>`.
+
+The packaged file equals the cut paragraph, so a machine without a policy
+directory behaves as before. `ship` is the first text admitted this way.
 
 ## 5. The index_client contract
 

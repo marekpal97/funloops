@@ -203,9 +203,9 @@ gh issue edit <N> --remove-label ready-for-agent --add-label <on_gate_failure>
 gh issue comment <N> --body "🤖 issue-loop run <run-id>: routed to human at <sha>. <gate evidence table>"
 ```
 
-The table is §1d's; a failed row carries its failed criteria or red verify
-lines, and one sentence says what the fix rounds tried. Continue with the
-next issue.
+The table is the gate table of `devloop text ship`; a failed row carries its
+failed criteria or red verify lines, and one sentence says what the fix
+rounds tried. Continue with the next issue.
 
 ### 1d. Ship
 
@@ -223,27 +223,9 @@ gh issue comment <N> --body "🤖 issue-loop run <run-id>: shipped at <sha>, PR 
 Only the route-to-human comment carries a gate table; the PR holds the
 rest.
 
-**The PR body carries each fact once:** `Closes #<N>`; one sentence on what
-the code now does (not the issue title); the gate table; the demo line; the
-findings line; the attribution block. Nothing else.
-
-- The gate table: gate | verdict | summary, one row per gate. A summary
-  carries only what varies (`133 lines`, `274 passed`, `5/5`, the failure).
-- The demo line: `demo: <short sha>`, the SHA `demo.md` names; none without a
-  `demo:` criterion.
-- A `human demo` row, `deferred`, only with a `demo (human):`
-  criterion.
-- The findings line: `Findings: see comment` or `Findings: none`.
-
-**The findings comment** is one per PR, posted right after `gh pr create`:
-a `###` heading per severity present (`problem`, `note`), one bullet per
-finding, the judge's sentence verbatim. Each deviation the implementer names
-is a bullet under a first heading, `### deviation`. A `demo (human):`
-scenario is quoted under `### human demo`; each shape seam is a bullet under
-`### seam`. Drop a finding that hedges or names
-neither a rule nor an exercised path. A finding already filed as an issue is
-its number alone. No findings and no deviations: no comment, and the body
-reads `Findings: none`.
+**The PR body and the findings comment** take their shape from the `ship`
+text. Run `uv run devloop text ship` once per run, before the first PR, and
+write both as it says.
 
 **Triage.** Write the gate results to a file and run:
 
@@ -281,10 +263,8 @@ Components run as concurrent stacks. Differences from the flow above:
   posture over all of them before the PR.
 - **One PR at the end** (DAG done, cap hit, or a slice routed to human). Its
   title is the epic's or the root's, then the issue numbers in parentheses.
-  Its body is §1d's per issue: a `Closes` line and one sentence each, one gate
-  table (a row per issue, a column per gate), a demo line per demo, and a
-  `Not included` line when part of the DAG remains. One findings comment
-  covers the stack. Then `gh issue comment <N> --body "🤖 issue-loop run <run-id>: PR
+  Its body and its one findings comment follow the stacked paragraph of
+  `devloop text ship`. Then `gh issue comment <N> --body "🤖 issue-loop run <run-id>: PR
   <pr-url>"` per issue. Training mode pauses once, here. Then tear down.
 - **A failed slice does not poison the stack.** When a slice spends its fix
   rounds, `git reset --hard <tip before the slice>`, route it to human, and
@@ -301,10 +281,7 @@ Components run as concurrent stacks. Differences from the flow above:
 
 ## 2. Report
 
-Per issue: number, outcome (PR opened, awaiting approval, routed to human),
-gate results, findings, fix rounds used. Then the deferred and blocked
-issues, the issues newly waiting on a human, and every worktree left behind
-(path, branch, why). If nothing shipped, say what unblocks the DAG.
+Write the report that `uv run devloop text ship` describes.
 
 <!-- host-extension: memory feed — everything below needs a Thinkweave vault. Without one the run ends at §2; the tracker, the PR and the report carry the whole record. -->
 
