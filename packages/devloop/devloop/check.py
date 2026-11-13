@@ -60,67 +60,67 @@ class Report:
 def check(issue: dict) -> Report:
     """Check one issue snapshot (its ``body`` and ``repo``) against every rule."""
     ticket = _Ticket(issue["body"], issue["repo"])
-    return Report([{"rule": rule, "line": line} for rule, line in (
-        *ticket.prose(), *ticket.verifies(), *ticket.demos(), *ticket.files(), *ticket.scope())])
+    return Report([*ticket.prose(), *ticket.verifies(), *ticket.demos(),
+                   *ticket.files(), *ticket.scope()])
 
 
 class _Ticket:
-    """An issue body, parsed; each method yields one rule group's ``(rule, line)`` failures."""
+    """An issue body, parsed; each method yields one rule group's failures."""
 
     def __init__(self, body: str, repo: str):
         self.body = body
         self.sections = _sections(body)
         self.repos = _REPO.findall("\n".join(self.sections.get("Interfaces", []))) or [repo]
 
-    def prose(self) -> Iterator[tuple[str, str]]:
+    def prose(self) -> Iterator[Failure]:
         for name in ("What", "Why"):
             lines = self.sections.get(name)
             if not lines:
-                yield f"{name.lower()}-missing", f"## {name}"
+                yield Failure(rule=f"{name.lower()}-missing", line=f"## {name}")
             elif sum(len(line.split()) for line in lines) > MAX_WORDS:
-                yield f"{name.lower()}-over-length", lines[0]
+                yield Failure(rule=f"{name.lower()}-over-length", line=lines[0])
 
-    def verifies(self) -> Iterator[tuple[str, str]]:
+    def verifies(self) -> Iterator[Failure]:
         found = gates.criteria(self.body)
         if not found:
-            yield "no-verify", CRITERIA_HEADING
+            yield Failure(rule="no-verify", line=CRITERIA_HEADING)
         for criterion in found:
             try:
                 words = shlex.split(criterion.text)
             except ValueError:
-                yield "verify-unparsable", criterion.line
+                yield Failure(rule="verify-unparsable", line=criterion.line)
                 continue
             tool = next((w for w in words if not _PREFIX.fullmatch(w)), "")
             if not shutil.which(tool):
-                yield "verify-tool-missing", criterion.line
+                yield Failure(rule="verify-tool-missing", line=criterion.line)
 
-    def demos(self) -> Iterator[tuple[str, str]]:
+    def demos(self) -> Iterator[Failure]:
         found = gates.criteria(self.body, gates.DEMO)
         if not found:
-            yield "no-demo", CRITERIA_HEADING
+            yield Failure(rule="no-demo", line=CRITERIA_HEADING)
         for line, _ in found:
             items = _unquoted(line)
             for item in ("Observable", "Artifact"):
                 if f"{item}:" not in items:
-                    yield f"demo-no-{item.lower()}", line
+                    yield Failure(rule=f"demo-no-{item.lower()}", line=line)
             if harness := _HARNESS.search(items):
                 if "Prompt:" not in items:
-                    yield "harness-no-prompt", line
+                    yield Failure(rule="harness-no-prompt", line=line)
                 if not any(shutil.which(w.strip(_PUNCTUATION)) for w in harness.group(1).split()):
-                    yield "harness-not-installed", line
+                    yield Failure(rule="harness-not-installed", line=line)
 
-    def files(self) -> Iterator[tuple[str, str]]:
+    def files(self) -> Iterator[Failure]:
         if self.sections.get("Interfaces"):
             return
         for name in ("What", "Why"):
             for line in self.sections.get(name, []):
                 if any(_is_file(w) for w in _named(line)):
-                    yield "files-without-interfaces", line
+                    yield Failure(rule="files-without-interfaces", line=line)
 
-    def scope(self) -> Iterator[tuple[str, str]]:
+    def scope(self) -> Iterator[Failure]:
         for line in self.sections.get("What", []):
             if any(self._outside(w) for w in _named(line)):
-                yield "what-outside-repo", line
+                yield Failure(rule="what-outside-repo", line=line)
 
     def _outside(self, word: str) -> bool:
         """An absolute or home path that passes through no declared repo, or a
