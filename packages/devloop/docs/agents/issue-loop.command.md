@@ -53,6 +53,8 @@ Run `uv run devloop config` and `uv run devloop plan`. `plan` prints the
   it; else say why and stop.
 - `needs_info` entries failed the ticket check: swap `ready-for-agent` for
   `needs-info`, comment `devloop check <N>`'s output, dispatch nothing.
+- A frontier entry with `ticket_read.exists` false gets the ticket read
+  first: [`ticket-read.md`](ticket-read.md).
 - `--dag <N>`: pass `--dag <N>` to every `plan` call; `run_mode` defaults to
   `exhaust`.
 - An empty frontier: report why (all blocked, all claimed, PRs awaiting
@@ -71,7 +73,7 @@ Every dispatch and return file lives there, outside every worktree.
 git worktree add .claude/worktrees/<name> -b <branch> origin/main
 ```
 
-`<branch>` is `<branch_prefix><N>`. No transport creates a worktree.
+`<branch>` is `<branch_prefix><N>`.
 
 Once per run, **before any edits**, run the baseline in the first worktree:
 `uv run --directory <worktree> devloop check --baseline`. Its `baseline`
@@ -149,8 +151,8 @@ uv run --directory <worktree> devloop check --gate diff-guard --base-ref origin/
 uv run --directory <worktree> devloop check --issue <N> > <run-dir>/check-<N>.json
 ```
 
-`check --issue` runs the command gates, then the issue's `verify:` lines. Any
-red result, a forbidden-path breach included, is a fix round.
+`check --issue` also runs the issue's `verify:` lines. Any red result, a
+forbidden-path breach included, is a fix round.
 
 **The judge.** Pack it and send it to a fresh agent as `dispatch.judge`
 says:
@@ -171,9 +173,8 @@ uv run devloop validate --gate judge --return-json <run-dir>/judge-<N>.json
 Exit `0`: passed. Exit `1`: a criterion is `not-met`; run a fix round. Exit
 `2`: schema-rejected; re-ask the same agent with the printed `reasons` and a
 fresh return path. Never hand-fix a return or read a verdict out of a
-rejected one. A second rejection routes to human. Only a `not-met` criterion
-blocks. Findings go to the PR's findings comment and the triage lane, never
-to a fix round or an issue.
+rejected one. A second rejection routes to human. Findings go to the PR's
+findings comment and the triage lane, never to a fix round or an issue.
 
 **The shape posture** judges rules 1 and 4 once per PR. In pr-per-issue, or a
 one-slice stack, send the same judge the shape dispatch after its first return

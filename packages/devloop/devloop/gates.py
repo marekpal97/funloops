@@ -11,6 +11,7 @@ empty on a real verdict.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 from pathlib import Path
@@ -153,6 +154,9 @@ BLOCKING_RULES = ("3", "6", "7", "8")
 _CITATION = re.compile(r"[\w./\\-]+\.\w+:\d+")
 SHAPE_FLOW_LINES = 5
 SHAPE_OPTIONS = (1, 3)
+# A ticket read's finding classes; the first two send the ticket to needs-info.
+NEEDS_INFO_CLASSES = ("false-premise", "demo-cannot-run")
+TICKET_CLASSES = (*NEEDS_INFO_CLASSES, "guess")
 
 
 def reject(gate: dict, reasons: list[str]) -> dict:
@@ -264,6 +268,31 @@ def validate_shape(gate: dict, raw: dict) -> dict:
                     summary="shape met" if verdict == "met" else "shape not-met: a restructure case")
 
 
+def validate_ticket(gate: dict, raw: dict) -> dict:
+    """Validate a ticket-posture return: ``{findings: [{class:
+    false-premise|demo-cannot-run|guess, line, evidence}]}``. A verdict adds
+    ``needs_info``: true, and the gate failed, when a finding's class is
+    ``false-premise`` or ``demo-cannot-run``. Every other finding is
+    advisory. A rejection carries no ``needs_info``."""
+    reasons: list[str] = []
+    classes = []
+    for i, entry in _entries(raw, "findings", reasons, allow_empty=True):
+        where = f"findings[{i}]"
+        classes.append(_enum(entry, where, "class", TICKET_CLASSES, reasons))
+        _text(entry, where, "line", reasons)
+        _text(entry, where, "evidence", reasons)
+    blocking = sum(c in NEEDS_INFO_CLASSES for c in classes)
+    result = _verdict(gate, reasons, passed=not blocking,
+                      summary=f"{len(classes)} findings; {blocking} send the ticket to needs-info")
+    return result if reasons else {**result, "needs_info": bool(blocking)}
+
+
+def ticket_read_marker(body: str) -> str:
+    """The first line of a ticket read's comment: it names the digest of the
+    body that was read, so a changed body has no read."""
+    return f"🤖 issue-loop: ticket read `{hashlib.sha256(body.encode()).hexdigest()[:12]}`"
+
+
 def _rule(entry: dict, where: str, reasons: list[str]) -> None:
     """A ``rule:<n>`` id names a blocking rule and its evidence cites file:line."""
     rid = entry.get("id")
@@ -291,10 +320,13 @@ GATE_KEYS = {
 COMMON_GATE_KEYS = {"id", "kind", "required"}
 
 
+POSTURES = {"shape": validate_shape, "ticket": validate_ticket}
+
+
 def validate(gate: dict, raw: object, posture: str = "reader") -> dict:
-    """Validate one judgment gate's subagent return; the ``shape`` posture
-    takes the shape schema. A non-object is rejected here; raises
-    ``KeyError`` for a deterministic or unknown kind."""
+    """Validate one judgment gate's subagent return; the ``shape`` and
+    ``ticket`` postures take their own schemas. A non-object is rejected
+    here; raises ``KeyError`` for a deterministic or unknown kind."""
     if not isinstance(raw, dict):
         return reject(gate, [f"payload: expected a JSON object, got {type(raw).__name__}"])
-    return (validate_shape if posture == "shape" else JUDGMENT[gate["kind"]])(gate, raw)
+    return (POSTURES.get(posture) or JUDGMENT[gate["kind"]])(gate, raw)

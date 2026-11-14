@@ -39,7 +39,7 @@ from pathlib import Path
 
 import pytest
 
-from devloop import cli, github, pack
+from devloop import cli, gates, github, pack
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "pack"
 TITLE = "fx: run fmt over the catalog"  # hits two entry points, both under fx/
@@ -527,7 +527,8 @@ def test_policy_dir_files_win_and_absent_files_fall_back(repo, tmp_path, capsys)
 
 @pytest.mark.parametrize("posture, name", [("writer", "standing-orders"),
                                            ("reader", "judge-brief"),
-                                           ("shape", "shape-brief")])
+                                           ("shape", "shape-brief"),
+                                           ("ticket", "ticket-brief")])
 def test_each_brief_reads_its_kebab_case_file(tmp_path, posture, name):
     d = _policy(tmp_path, **{name.replace("-", "_"): f"brief for {posture}\n"})
     assert pack.brief(posture, d) == f"brief for {posture}"
@@ -564,3 +565,123 @@ def test_policy_constitution_replaces_the_packaged_one_and_keeps_the_overlay(tmp
     overlay.write_text("13. local rule\n", encoding="utf-8")
     assert cli.find_constitution(host, d) == [d / "constitution.md", overlay]
     assert cli.find_constitution(host, tmp_path / "empty") == [cli.PACKAGE_CONSTITUTION, overlay]
+
+
+# --- the ticket posture: one read of a ticket before any implementer runs ---
+
+EPIC = {"title": "fx: the catalog epic", "body": "## Problem\n\nThe catalog prints bare names."}
+
+
+def _ticket_gh(parent: dict | None):
+    """``gh`` for a ticket pack: the fixture issue, and its parent or gh's 404."""
+    issue = json.dumps({"title": TITLE, "body": (FIX / "issue.md").read_text(encoding="utf-8")})
+
+    def run(args, cwd=None):
+        if args[0] != "api":
+            return issue
+        if parent is None:
+            raise subprocess.CalledProcessError(1, "gh", stderr="gh: Not Found (HTTP 404)")
+        return json.dumps(parent)
+    return run
+
+
+def test_ticket_dispatch_holds_the_ticket_its_parent_its_decisions_and_the_brief(
+        repo, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(github, "run", _ticket_gh(EPIC))
+    binary, _ = fake_codegraph(tmp_path)
+    decisions = tmp_path / "decisions.md"
+    decisions.write_text("### dec-00000001\n\nThe catalog stays one line per file.\n",
+                         encoding="utf-8")
+    out = tmp_path / "t.md"
+    assert cli.main(["pack", "7", "--role", "judge", "--posture", "ticket", "--cwd", str(repo),
+                     "--codegraph-bin", str(binary), "--decisions", str(decisions),
+                     "--return", str(tmp_path / "t.json"), "--out", str(out)]) == 0
+    text = out.read_text(encoding="utf-8")
+    assert text.startswith("# Dispatch pack — issue #7 (judge, ticket)\n")
+    assert f"## Issue\n\n{TITLE}\n\n## What to build\n" in text
+    assert "## Parent epic\n\nfx: the catalog epic\n\n## Problem\n\nThe catalog prints bare" in text
+    assert "## Cited decisions\n\n### dec-00000001\n\nThe catalog stays one line" in text
+    assert "## Repo map — tier 1: catalog" in text
+    assert "## Ticket brief" in text and '"false-premise"' in text
+    assert text.endswith(f"Return file: {tmp_path / 't.json'}\nWorktree: {repo}\n")
+    for gone in ("## Diff", "## Prior lessons", "## Run trace", "## Touched modules",
+                 "## Implementer deviations", "## Persona", "## Judge brief"):
+        assert gone not in text
+
+
+def test_ticket_pack_names_a_missing_parent_and_missing_decision_text(
+        repo, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(github, "run", _ticket_gh(None))
+    binary, _ = fake_codegraph(tmp_path)
+    assert cli.main(["pack", "7", "--role", "judge", "--posture", "ticket", "--cwd", str(repo),
+                     "--codegraph-bin", str(binary)]) == 0
+    text = capsys.readouterr().out
+    assert "## Parent epic\n\nThe ticket has no parent." in text
+    assert "## Cited decisions — NOT SUPPLIED" in text
+
+
+@pytest.mark.parametrize("flag", ["--prime", "--trace", "--report"])
+def test_ticket_pack_refuses_the_prime_the_trace_and_the_report(
+        repo, tmp_path, monkeypatch, capsys, flag):
+    monkeypatch.setattr(github, "run", _ticket_gh(EPIC))
+    binary, _ = fake_codegraph(tmp_path)
+    extra = tmp_path / "extra.md"
+    extra.write_text("## Deviations\n\nnone\n", encoding="utf-8")
+    assert cli.main(["pack", "7", "--role", "judge", "--posture", "ticket", "--cwd", str(repo),
+                     "--codegraph-bin", str(binary), flag, str(extra)]) == 2
+    assert "ticket pack" in json.loads(capsys.readouterr().out)["error"]
+
+
+def _finding(cls):
+    return {"class": cls, "line": "unknown keys fail loudly, as today",
+            "evidence": "config.py:40 drops a key it does not know"}
+
+
+@pytest.mark.parametrize("classes, needs_info", [
+    ([], False), (["guess"], False), (["false-premise"], True),
+    (["guess", "demo-cannot-run"], True)])
+def test_ticket_verdict_routes_to_needs_info_on_a_false_premise_or_a_dead_demo(
+        tmp_path, capsys, classes, needs_info):
+    ret = tmp_path / "ticket.json"
+    ret.write_text(json.dumps({"findings": [_finding(c) for c in classes]}), encoding="utf-8")
+    code = cli.main(["validate", "--gate", "judge", "--posture", "ticket",
+                     "--return-json", str(ret)])
+    result = json.loads(capsys.readouterr().out)
+    assert result["reasons"] == [] and result["needs_info"] is needs_info
+    assert code == (1 if needs_info else 0)
+
+
+@pytest.mark.parametrize("raw, field", [
+    ({}, "findings"),
+    ({"findings": [{**_finding("guess"), "class": "blocker"}]}, "findings[0].class"),
+    ({"findings": [{**_finding("guess"), "line": ""}]}, "findings[0].line"),
+    ({"findings": [{"class": "false-premise", "line": "x"}]}, "findings[0].evidence"),
+])
+def test_ticket_verdict_rejects_a_return_off_its_schema(raw, field):
+    result = gates.validate({"id": "judge", "kind": "judge"}, raw, posture="ticket")
+    assert result["passed"] is False and "needs_info" not in result
+    assert any(r.startswith(field) for r in result["reasons"])
+
+
+def test_plan_lists_a_ticket_read_per_frontier_issue_by_body_digest(monkeypatch, capsys):
+    """An unchanged body with its read's comment needs no read; a changed
+    body, or a comment for another body, does. The digest is sha256's first
+    twelve hex digits, computed here by ``sha256sum``."""
+    def issue(body):
+        return {"number": 1, "title": "t", "state": "OPEN", "repo": "o/home",
+                "labels": [{"name": "ready-for-agent"}], "body": body}
+    comments = ["🤖 issue-loop: claimed by run `loop-x`."]
+    monkeypatch.setattr(github, "fetch_comments", lambda number: comments)
+    monkeypatch.setattr(cli.check, "check", lambda issue: cli.check.Report([]))
+
+    def plan(body):
+        monkeypatch.setattr(github, "fetch_issues", lambda: [issue(body)])
+        assert cli.main(["plan"]) == 0
+        return json.loads(capsys.readouterr().out)["frontier"][0]["ticket_read"]
+
+    first = plan("ticket body one\n")
+    assert "c03c1644815c" in first["marker"] and first["exists"] is False
+    comments.append(first["marker"] + "\n\nNo finding.")
+    assert plan("ticket body one\n") == {**first, "exists": True}
+    changed = plan("ticket body two\n")
+    assert changed["exists"] is False and changed["marker"] != first["marker"]

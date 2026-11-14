@@ -57,8 +57,8 @@ packages/devloop/
   default) is read first: its `loop.toml` is layered over the repo's and
   carries only `POLICY_KEYS` (a repo key there is refused by name), its
   `constitution.md` replaces the packaged default, and `pack` reads
-  `persona.md`, `standing-orders.md`, `judge-brief.md` and `shape-brief.md`
-  from it. A file absent there falls back to the packaged default.
+  `persona.md`, `standing-orders.md`, `judge-brief.md`, `shape-brief.md` and
+  `ticket-brief.md` from it. A file absent there falls back to the packaged default.
 - **`dag.py`** is pure over issue-snapshot dicts. Edges come from native
   dependency keys only; it reads no body metadata.
 - **`github.py`** is the one subprocess seam to `gh`. It owns the
@@ -70,7 +70,9 @@ packages/devloop/
 - **`pack.py`** composes one role's dispatch: the issue, the rules, the
   persona (writer only), codegraph's repo map, the touched modules and diff
   (reader), the stack's module edges (shape), the posture's brief and the
-  dispatch lines. A role is a `loop.toml [dispatch.<role>]` entry; its
+  dispatch lines. The ticket posture packs one ticket before any implementer
+  runs: the issue, its parent epic, the cited decisions and the repo map,
+  with no rules, diff or prime. A role is a `loop.toml [dispatch.<role>]` entry; its
   `posture` picks the sections and its `transport` the orchestrator's recipe.
 - **`gates.py`**: §3. **`triage.py`** classifies a shipped PR from its gate
   results, judge return, baseline line and diff; missing safety signals fail
@@ -100,7 +102,11 @@ JUDGMENT = {"judge": validate_judge}
   `validate` checks its return. The judge return carries `criteria[]`
   verdicts and `findings[]`; only a `not-met` criterion fails it, and a
   `rule:<n>` criterion (rules 3, 6, 7, 8) must cite `file:line`. The shape
-  posture returns `{verdict, flow, owns[], options[]}`.
+  posture returns `{verdict, flow, owns[], options[]}`. The ticket posture
+  returns `findings[]` of `{class, line, evidence}`; its result adds
+  `needs_info`, true when a class is `false-premise` or `demo-cannot-run`.
+  `plan` lists per frontier issue whether a comment holds the read of its
+  current body (`ticket_read`); the recipe is `ticket-read.md`.
 
 Both verbs emit one `GateResult` shape, `{id, kind, passed, summary,
 detail}`, so consumers never care which plane produced it. A judgment result

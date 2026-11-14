@@ -60,6 +60,12 @@ def fetch_issue(number: int, cwd: Path | None = None) -> dict:
     return {"number": number, "repo": "/".join(item["url"].split("/")[3:5]), "body": item["body"] or ""}
 
 
+def fetch_comments(number: int) -> list[str]:
+    """The body of every comment on one issue, oldest first; a gh failure raises."""
+    return json.loads(run(["issue", "view", str(number), "--json", "comments",
+                           "--jq", "[.comments[].body]"]))
+
+
 def fetch_labels(number: int) -> list[str]:
     """Issue label names via gh; an empty list on any failure so prime never
     crashes the loop."""
@@ -71,11 +77,11 @@ def fetch_labels(number: int) -> list[str]:
         return []
 
 
-def fetch_parent(repo: str, number: int) -> dict | None:
+def fetch_parent(repo: str, number: int, cwd: Path | None = None) -> dict | None:
     """The issue's native sub-issue parent as its REST item, or ``None`` when
     it has none (gh's 404); any other gh failure raises."""
     try:
-        return json.loads(run(["api", f"repos/{repo}/issues/{number}/parent"]))
+        return json.loads(run(["api", f"repos/{repo}/issues/{number}/parent"], cwd=cwd))
     except subprocess.CalledProcessError as e:
         if "404" in (e.stderr or ""):
             return None

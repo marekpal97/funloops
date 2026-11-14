@@ -10,7 +10,9 @@ Subcommands:
   plan     — snapshot issues via `gh`, compute frontier + components (JSON);
              the frontier is cut to max_issues_per_run and carries a run id;
              a runnable issue that fails the ticket check is listed under
-             needs_info with its failures, never in the frontier
+             needs_info with its failures, never in the frontier; each
+             frontier issue carries ticket_read: the marker line of the
+             ticket read for its current body, and whether a comment holds it
   claim    — claim an issue for a run (the assignee IS the claim)
   release  — drop the claim
   config     — print resolved loop config (defaults merged with loop.toml;
@@ -24,7 +26,8 @@ Subcommands:
                lines, as one result list; --baseline runs the command gates
                and adds the baseline line (green | red) under tdd.mode
   validate   — validate a judgment gate's subagent return (kind: judge)
-               against its schema; rejects for a re-ask
+               against its schema; rejects for a re-ask; --posture ticket
+               takes a ticket read's return and adds needs_info
   prime      — assemble prior-trajectory prime context for an issue at claim
                time (reads the derived index read-only; always serves what
                it finds; [prime] sets its limit and budget, or turns it off)
@@ -37,7 +40,8 @@ Subcommands:
                as rules, the persona and standing orders for a writer, the
                judge or shape brief for a reader, the repo map spliced from
                codegraph's CLI, the dispatch lines) and print it, or write
-               it with --out
+               it with --out; --posture ticket packs one ticket for a read
+               before any implementer runs
   triage     — classify a shipped PR into a risk lane from its gate results,
                its judge return, the baseline line and its git diff
 
@@ -73,6 +77,7 @@ from devloop.gates import (
     JUDGMENT,
     reject,
     run_command_gate,
+    ticket_read_marker,
     validate,
     verify_gates,
 )
@@ -411,7 +416,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--policy-dir", default=None, metavar="DIR",
         help="folder holding the pack texts (persona.md, "
-             "standing-orders.md, judge-brief.md, shape-brief.md, "
+             "standing-orders.md, judge-brief.md, shape-brief.md, ticket-brief.md, "
              "constitution.md), each present file winning over the default, "
              "and a loop.toml of policy keys layered over the repo's "
              f"(default: ${pack.POLICY_ENV}, else unset)",
@@ -459,9 +464,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_validate.add_argument("--return-json", required=True,
                             help="file with the subagent's JSON return (schema per "
                                  "kind: judge {criteria[], findings[]})")
-    p_validate.add_argument("--posture", default="reader", choices=("reader", "shape"),
+    p_validate.add_argument("--posture", default="reader", choices=("reader", "shape", "ticket"),
                             help="shape: the shape posture's return {verdict, flow, "
-                                 "owns[], options[]}")
+                                 "owns[], options[]}; ticket: a ticket read's return "
+                                 "{findings[{class, line, evidence}]}, exit 1 when a "
+                                 "finding sends the ticket to needs-info")
 
     p_prime = sub.add_parser("prime", help="assemble prior-trajectory prime context for an issue", parents=[common])
     p_prime.add_argument("number", type=int)
@@ -570,7 +577,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              "writer: issue + rules + persona + repo map + standing "
                              "orders; reader: issue + rules + repo map + touched "
                              "modules + diff + judge brief; shape: issues + rules + "
-                             "touched modules + module edges + shape brief")
+                             "touched modules + module edges + shape brief; ticket: "
+                             "issue + parent epic + cited decisions + repo map + "
+                             "ticket brief")
     p_pack.add_argument("--posture", default=None, choices=get_args(pack.Posture),
                         help="one of the role's postures (default: its first)")
     p_pack.add_argument("--base-ref", default="origin/main",
@@ -585,6 +594,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="host extension: file with the prime block to splice")
     p_pack.add_argument("--trace", default=None, metavar="FILE",
                         help="host extension: file with the run's threaded trace to splice")
+    p_pack.add_argument("--decisions", default=None, metavar="FILE",
+                        help="ticket, host extension: file with the text of the "
+                             "decisions the ticket cites")
     p_pack.add_argument("--branch", default="", help="the dispatch's branch line")
     p_pack.add_argument("--baseline", default="", choices=("", "green", "red"),
                         help="the dispatch's baseline line (check --baseline)")
@@ -635,6 +647,12 @@ def main(argv: list[str] | None = None) -> int:
         cap = cfg["loop"]["max_issues_per_run"] if args.limit is None else args.limit
         result = dag.compute_frontier(issues, cfg, limit=cap,
                                       check=lambda issue: check.check(issue).failures)
+        bodies = {i["number"]: i["body"] for i in issues}
+        for entry in result["frontier"]:
+            marker = ticket_read_marker(bodies[entry["number"]])
+            comments = github.fetch_comments(entry["number"])
+            entry["ticket_read"] = {"marker": marker,
+                                    "exists": any(marker in c for c in comments)}
         run_id = f"loop-{datetime.now().astimezone():%Y%m%d}-{secrets.token_hex(2)}"
         print(json.dumps({"run_id": run_id, **result}, indent=2))
     elif args.cmd == "claim":
@@ -835,7 +853,10 @@ def main(argv: list[str] | None = None) -> int:
             rules = [pack.body(p) for p in find_constitution(root, policy_dir)]
             persona = (pack.body(pack.policy_file("persona", policy_dir) or PACKAGE_PERSONA)
                        if posture == "writer" else "")
-            touched = None if posture == "writer" else pack.Touched.since(args.base_ref, root)
+            touched = (pack.Touched.since(args.base_ref, root)
+                       if posture in ("reader", "shape") else None)
+            parent = (github.fetch_parent("{owner}/{repo}", args.number[0], root)
+                      if posture == "ticket" else None)
             dispatch = pack.Dispatch(
                 branch=args.branch, baseline=args.baseline, return_file=args.return_file,
                 worktree=str(root) if args.return_file else "",
@@ -849,6 +870,8 @@ def main(argv: list[str] | None = None) -> int:
                 dispatch=dispatch,
                 report=Path(args.report).read_text(encoding="utf-8") if args.report else None,
                 brief=pack.brief(posture, policy_dir),
+                parent=parent and pack.Issue(parent["title"], parent.get("body") or ""),
+                decisions=Path(args.decisions).read_text(encoding="utf-8") if args.decisions else "",
             )
         except (FileNotFoundError, ValueError) as exc:
             print(json.dumps({"error": str(exc)}))

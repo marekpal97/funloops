@@ -152,6 +152,7 @@ def test_plan_moves_a_failing_frontier_issue_to_needs_info(monkeypatch, capsys):
                 "labels": [{"name": "ready-for-agent"}], "body": body}
     failing = PASSING.replace(VERIFY, "- [ ] verify: `nosuchtool --flag`")
     monkeypatch.setattr(github, "fetch_issues", lambda: [issue(1, PASSING), issue(2, failing)])
+    monkeypatch.setattr(github, "fetch_comments", lambda number: [])
     assert cli.main(["plan"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert [e["number"] for e in out["frontier"]] == [1]

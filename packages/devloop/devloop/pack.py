@@ -7,14 +7,16 @@ slice diff and the implementer's deviations (reader posture); the prime block an
 host supplies them; the posture's brief (the standing orders, the judge
 brief, the shape brief); the dispatch lines. The shape posture packs a
 stack: its issues, the rules, the touched modules, and codegraph's edges
-between them in place of the repo map. The role is any ``[dispatch]`` entry;
-its ``posture`` picks the sections.
+between them in place of the repo map. The ticket posture packs one ticket
+before any implementer runs: the issue, its parent epic, the cited decisions,
+the repo map and the ticket brief, and nothing a run produced. The role is
+any ``[dispatch]`` entry; its ``posture`` picks the sections.
 
 Policy directory: the pack's texts can come from a folder the host names
 (``DEVLOOP_POLICY_DIR`` or ``--policy-dir``; see ``policy_file``). Each text
 is one ``.md`` file there, named after its constant in kebab-case:
 ``persona.md``, ``standing-orders.md``, ``judge-brief.md``,
-``shape-brief.md``, and ``constitution.md`` (which replaces the packaged
+``shape-brief.md``, ``ticket-brief.md``, and ``constitution.md`` (which replaces the packaged
 constitution; a repo's ``docs/agents/constitution.md`` overlay still extends
 it). The same folder may hold ``loop.toml``. A text whose file is absent, or
 every text when no folder is configured, falls back to the packaged default:
@@ -30,7 +32,7 @@ import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Literal, NamedTuple
 
-Posture = Literal["writer", "reader", "shape"]
+Posture = Literal["writer", "reader", "shape", "ticket"]
 
 # Each tier renders at most this many lines; over it, the largest directories
 # fold first. Sized so the map fits under 2,000 chars of an 8,000-char pack.
@@ -47,11 +49,14 @@ class Issue(NamedTuple):
 def compose(issues: dict[int, Issue], role: str, posture: Posture, rules: list[str],
             persona: str, codegraph: Codegraph, touched: Touched | None = None,
             prime: str = "", trace: str = "", dispatch: Dispatch | None = None,
-            report: str | None = None, brief: str | None = None) -> str:
+            report: str | None = None, brief: str | None = None,
+            parent: Issue | None = None, decisions: str = "") -> str:
     """The whole dispatch text: ``role`` names it, ``posture`` shapes it and
     picks its brief, ``dispatch`` closes it. Only a shape pack spans several
     issues; a reader or shape pack carries ``touched``; a reader pack given
-    the implementer's ``report`` carries its deviations. ``brief`` replaces
+    the implementer's ``report`` carries its deviations. A ticket pack
+    carries the ``parent`` epic and the cited ``decisions`` in place of the
+    rules, and refuses a prime, a trace or a report. ``brief`` replaces
     the posture's packaged brief (see ``brief``). Empty ``rules`` are
     refused; a codegraph failure renders a degraded block, never an
     exception."""
@@ -59,15 +64,24 @@ def compose(issues: dict[int, Issue], role: str, posture: Posture, rules: list[s
         raise ValueError("a pack carries the rules; none were resolved")
     if posture != "shape" and len(issues) != 1:
         raise ValueError(f"a {posture} pack is one issue's, got {len(issues)}")
-    if posture != "writer" and touched is None:
+    if posture in ("reader", "shape") and touched is None:
         raise ValueError(f"a {posture} pack carries the touched modules; none were resolved")
-    writer, shape = posture == "writer", posture == "shape"
+    writer, shape, ticket = posture == "writer", posture == "shape", posture == "ticket"
+    if ticket and (prime.strip() or trace.strip() or report is not None):
+        raise ValueError("a ticket pack holds the ticket, its parent, its decisions and "
+                         "the code: it takes no prime, trace or report")
     numbers = ", ".join(f"#{n}" for n in issues)
     parts = [(f"# Dispatch pack — issue{'s' * (len(issues) > 1)} {numbers} "
-              f"({role}{', shape' * shape})")]
+              f"({role}{', shape' * shape}{', ticket' * ticket})")]
     parts += [f"## Issue{f' #{n}' * shape}\n\n{issue.title}\n\n{issue.body.strip()}"
               for n, issue in issues.items()]
-    parts.append("## Rules\n\n" + "\n\n".join(rules))
+    if ticket:
+        parts.append("## Parent epic\n\n" + (f"{parent.title}\n\n{parent.body.strip()}"
+                                             if parent else "The ticket has no parent."))
+        parts.append(f"## Cited decisions\n\n{decisions.strip()}" if decisions.strip()
+                     else DECISIONS_MISSING)
+    else:
+        parts.append("## Rules\n\n" + "\n\n".join(rules))
     if writer:
         parts.append(f"## Persona\n\n{persona}")
     if not shape:
@@ -474,6 +488,13 @@ package layout (the tree of source files), the public surface of every module
 the issue touches (its top-level definitions and signatures), and their import
 neighbours (what they import, who imports them)."""
 
+DECISIONS_MISSING = """\
+## Cited decisions — NOT SUPPLIED
+
+The host supplied no decision text. The ticket's Decisions section names the
+ids it cites; a statement that rests on a decision you cannot read is not
+checked."""
+
 EDGES_DEGRADED = """\
 ## Module edges — DEGRADED (codegraph unavailable: {reason})
 
@@ -662,6 +683,58 @@ lists; its `flow` may name the seams off the main flow.
  "options": ["<shape option>"]}
 ```"""
 
-BRIEFS: dict[str, str] = {"writer": STANDING_ORDERS, "reader": JUDGE_BRIEF, "shape": SHAPE_BRIEF}
+TICKET_BRIEF = """\
+## Ticket brief
+
+You are the judge in the ticket posture: the first reader of one ticket,
+before any implementer runs. You know nothing of the conversation that wrote
+it. The ticket, its parent epic, the cited decisions and the code are all you
+have, and all the implementer will have. Work in the worktree the last lines
+name. Do not edit code and do not build the ticket.
+
+Answer two questions. Settle each against the code, never on the ticket's
+own word.
+
+1. **Can I build this without a guess?** Take each statement the ticket
+   makes about what exists today: a file, a symbol, a signature, a
+   behaviour, and every "as today", "already", "still" and "existing". Open
+   the code it names and read it; follow the call when the statement is
+   about behaviour. Then take each thing the ticket asks for and ask whether
+   the ticket, its parent and its decisions settle how.
+2. **Can I run each demo as written?** Walk each `demo:` line step by step:
+   the command, the harness, the prompt, the place it runs. Then take its
+   `Observable:` and find the knob, command or code path that produces it.
+   Skip a `demo (human):` line.
+
+Return one finding per ticket line that fails a question, in one of three
+classes:
+
+- `"false-premise"`: the ticket states something about the code, the tools
+  or the tracker as they are today, and what you read or ran contradicts
+  it.
+- `"demo-cannot-run"`: a step of a `demo:` line cannot be done as written,
+  or nothing the demo names can produce its observable.
+- `"guess"`: the ticket leaves open a choice the implementer must make, and
+  two careful readers would make it differently.
+
+`line` quotes the ticket line verbatim, long enough to find it. `evidence`
+is in hand: the `file:line` you opened or the command you ran, and what it
+shows against the line. For a `guess`, the evidence is the two readings. A
+suspicion you did not check is not a finding; check it or drop it. Do not
+judge whether the ticket is a good idea, its design, its size or its
+wording, and do not look past the two questions. A ticket that passes both
+returns an empty list.
+
+Write exactly this object, as JSON, to the return file the last lines name.
+`findings` may be empty, not absent; `line` and `evidence` are never blank.
+
+```json
+{"findings": [{"class": "false-premise",
+               "line": "<the ticket line, verbatim>",
+               "evidence": "<file:line or the command, and what it shows>"}]}
+```"""
+
+BRIEFS: dict[str, str] = {"writer": STANDING_ORDERS, "reader": JUDGE_BRIEF,
+                          "shape": SHAPE_BRIEF, "ticket": TICKET_BRIEF}
 BRIEF_FILES: dict[str, str] = {"writer": "standing-orders", "reader": "judge-brief",
-                               "shape": "shape-brief"}
+                               "shape": "shape-brief", "ticket": "ticket-brief"}

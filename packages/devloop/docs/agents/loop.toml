@@ -71,7 +71,10 @@ transport = "agent-tool"    # agent-tool | herdr
 # reader: the per-slice judge, its pack the touched modules in full.
 # shape: the stack-tip pass over every touched module and its edges
 # (`devloop pack <N...> --role judge --posture shape`).
-posture = ["reader", "shape"]
+# ticket: one read of a ticket before any implementer runs, its pack the
+# ticket, its parent epic, its cited decisions and the repo map
+# (`devloop pack <N> --role judge --posture ticket`).
+posture = ["reader", "shape", "ticket"]
 transport = "agent-tool"
 
 # ── Gate pipeline ─────────────────────────────────────────────────────────

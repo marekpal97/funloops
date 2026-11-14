@@ -155,6 +155,7 @@ def test_plan_cuts_the_frontier_to_the_run_cap_and_mints_a_run_id(monkeypatch, c
     order; the rest are named under ``deferred``, never hidden. ``--limit``
     overrides the cap, and every plan carries a ``loop-<date>-<hex>`` run id."""
     monkeypatch.setattr(github, "fetch_issues", lambda: [_issue(n) for n in range(1, 6)])
+    monkeypatch.setattr(github, "fetch_comments", lambda number: [])
     monkeypatch.setattr(check, "check", lambda issue: check.Report([]))
     assert cli.main(["plan", "--set", "max_issues_per_run=3"]) == 0
     out = json.loads(capsys.readouterr().out)
@@ -913,7 +914,7 @@ def test_a_dispatch_entry_declares_a_role_on_both_paths(tmp_path):
 
 @pytest.mark.parametrize("entry", [
     'transport = "ssh"',        # not agent-tool | herdr
-    'posture = "editor"',       # not writer | reader | shape
+    'posture = "editor"',       # not writer | reader | shape | ticket
     'posture = ["reader", "editor"]',  # a list of postures holds only postures
     "posture = []",             # an entry that names a posture names one at least
     'args = "--model opus"',    # the argv tail is a list, not one string
@@ -939,7 +940,8 @@ def test_template_dispatch_table_names_no_host_value():
         assert entry["transport"] == "agent-tool", role
         assert not {"harness", "model", "effort", "args"} & set(entry), role
     assert dispatch["implementer"]["posture"] == "writer"
-    assert dispatch["judge"]["posture"] == ["reader", "shape"]  # the per-slice and stack-tip passes
+    # the per-slice pass, the stack-tip pass and the ticket read
+    assert dispatch["judge"]["posture"] == ["reader", "shape", "ticket"]
 
 
 # --- deleted keys are rejected, named (issue #39 AC2, dec-cf8f0d33) ---------
