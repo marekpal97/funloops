@@ -693,37 +693,48 @@ have, and all the implementer will have. Work in the worktree the last lines
 name. Do not edit code and do not build the ticket.
 
 Answer two questions. Settle each against the code, never on the ticket's
-own word.
+own word. Read the code as it will stand when the ticket's blockers have
+landed: what the ticket or its parent says an earlier ticket delivers counts
+as present.
 
-1. **Can I build this without a guess?** Take each statement the ticket
-   makes about what exists today: a file, a symbol, a signature, a
-   behaviour, and every "as today", "already", "still" and "existing". Open
-   the code it names and read it; follow the call when the statement is
-   about behaviour. Then take each thing the ticket asks for and ask whether
-   the ticket, its parent and its decisions settle how.
-2. **Can I run each demo as written?** Walk each `demo:` line step by step:
-   the command, the harness, the prompt, the place it runs. Then take its
-   `Observable:` and find the knob, command or code path that produces it.
-   Skip a `demo (human):` line.
+1. **Can I build this without a guess?** Find each statement the ticket
+   makes about the present: a file, a symbol, a signature or a behaviour it
+   says exists, and every "as today", "already", "still", "unchanged" and
+   "existing". Open the code it names and read it; follow the call when the
+   statement is about behaviour. A line that says what the ticket adds or
+   changes is a request, not a statement about the present. Then take each
+   request and ask whether the ticket, its parent and its decisions settle
+   how to build it.
+2. **Can I run each demo as written?** A demo runs after the build. Assume
+   every request in the ticket is built as written, and nothing more. Walk
+   each `demo:` line step by step: the command, the harness, the prompt, the
+   place it runs. Then take its `Observable:` and name what produces it:
+   code that exists today, or code a request in the ticket builds. Skip a
+   `demo (human):` line.
 
 Return one finding per ticket line that fails a question, in one of three
 classes:
 
 - `"false-premise"`: the ticket states something about the code, the tools
-  or the tracker as they are today, and what you read or ran contradicts
-  it.
-- `"demo-cannot-run"`: a step of a `demo:` line cannot be done as written,
-  or nothing the demo names can produce its observable.
-- `"guess"`: the ticket leaves open a choice the implementer must make, and
-  two careful readers would make it differently.
+  or the tracker as they are at present, and what you read or ran
+  contradicts it. A request that is unclear or badly aimed is never a false
+  premise.
+- `"demo-cannot-run"`: with every request built, a step of a `demo:` line
+  still cannot be done as written, or its observable still has no producer:
+  the ticket asks for nothing that makes it appear.
+- `"guess"`: the ticket leaves open a choice that changes what gets built,
+  and two careful readers would make it differently.
+
+The first two classes send the ticket back to its author before any work
+starts. Each needs a contradiction you can show: the `file:line` you opened
+or the command you ran, and what it shows against the line. A doubt that
+the built code will behave as the ticket expects, or a conclusion you
+reasoned to and did not check, is a `guess` or nothing.
 
 `line` quotes the ticket line verbatim, long enough to find it. `evidence`
-is in hand: the `file:line` you opened or the command you ran, and what it
-shows against the line. For a `guess`, the evidence is the two readings. A
-suspicion you did not check is not a finding; check it or drop it. Do not
-judge whether the ticket is a good idea, its design, its size or its
-wording, and do not look past the two questions. A ticket that passes both
-returns an empty list.
+is in hand; for a `guess` it is the two readings. Do not judge whether the
+ticket is a good idea, its design, its size or its wording, and do not look
+past the two questions. A ticket that passes both returns an empty list.
 
 Write exactly this object, as JSON, to the return file the last lines name.
 `findings` may be empty, not absent; `line` and `evidence` are never blank.
