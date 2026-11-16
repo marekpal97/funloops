@@ -182,6 +182,7 @@ DEFAULT_CONFIG: dict = {
         "require_green_baseline": True,
         "run_mode": "pass",      # pass: one frontier pass | exhaust: re-plan until dry
         "delivery": "pr-per-issue",  # pr-per-issue | stacked (one branch, one final PR)
+        "tracker": "",  # owner/name of the repo that holds the issues; empty: this repo
     },
     "tdd": {
         "mode": "auto",  # auto: enforced iff the baseline probe is green
@@ -428,7 +429,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_plan.add_argument("--limit", type=int, default=None,
                         help="cap the frontier (default: max_issues_per_run)")
     p_plan.add_argument("--dag", type=int, default=None, metavar="N",
-                        help="scope to the DAG component containing issue N")
+                        help="scope to issue N's sub-issues, or to the DAG "
+                             "component containing N when it has none")
     p_plan.add_argument("--assume-done", default="", metavar="N,N",
                         help="treat these issues as closed (stacked delivery: slices already on the branch)")
 
@@ -617,6 +619,10 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         print(json.dumps({"error": str(e)}))
         return 2
+    github.tracker = cfg["loop"]["tracker"]
+    if not (isinstance(github.tracker, str) and github.tracker.count("/") == bool(github.tracker)):
+        print(json.dumps({"error": f"loop.tracker: expected owner/name, got {github.tracker!r}"}))
+        return 2
 
     if args.cmd == "config":
         # An "error" entry tells the orchestrator to stop, not to splice nothing.
@@ -630,7 +636,7 @@ def main(argv: list[str] | None = None) -> int:
         issues = github.fetch_issues()
         if args.dag is not None:
             try:
-                issues = dag.scope_to_dag(issues, args.dag)
+                issues = dag.scope_to_dag(issues, args.dag, github.fetch_sub_issues(args.dag))
             except ValueError as e:
                 print(json.dumps({"error": str(e)}))
                 return 2
@@ -791,8 +797,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(json.dumps(payload, indent=2))
     elif args.cmd == "board":
-        repos = args.repo or [github.run(["repo", "view", "--json", "nameWithOwner",
-                                          "--jq", ".nameWithOwner"]).strip()]
+        repos = args.repo or [github.tracker or github.run(
+            ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"]).strip()]
         report = board.doctor([github.fetch_board(r) for r in repos], cfg)
         if args.verb == "doctor":
             print(json.dumps(report, indent=2))
@@ -840,7 +846,7 @@ def main(argv: list[str] | None = None) -> int:
                 branch=args.branch, baseline=args.baseline, return_file=args.return_file,
                 worktree=str(root) if args.return_file else "",
                 check=Path(args.check_json).read_text(encoding="utf-8") if args.check_json else "",
-                evidence=args.evidence)
+                evidence=args.evidence, tracker=github.tracker)
             text = pack.compose(
                 issues, args.role, posture, rules, persona,
                 pack.Codegraph(args.codegraph_bin, root), touched,

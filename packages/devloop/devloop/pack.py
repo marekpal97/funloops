@@ -101,8 +101,9 @@ def compose(issues: dict[int, Issue], role: str, posture: Posture, rules: list[s
 
 class Dispatch(NamedTuple):
     """What closes a dispatch: the reader's check output and evidence
-    directory, then the branch, baseline, return-file and worktree lines.
-    An empty field renders nothing."""
+    directory, then the branch, baseline, return-file and worktree lines,
+    then the tracker with the flag the agent's own rail calls take. An empty
+    field renders nothing."""
 
     branch: str = ""
     baseline: str = ""
@@ -110,13 +111,17 @@ class Dispatch(NamedTuple):
     worktree: str = ""
     check: str = ""
     evidence: str = ""
+    tracker: str = ""
 
     def render(self) -> str:
         blocks = [f"## Check output\n\n{fenced(self.check, 'json')}"] if self.check.strip() else []
         lines = [f"{label}: {value}" for label, value in (
             ("Evidence directory", self.evidence), ("Branch", self.branch),
             ("Baseline", self.baseline), ("Return file", self.return_file),
-            ("Worktree", self.worktree)) if value]
+            ("Worktree", self.worktree),
+            ("Tracker", self.tracker and f"{self.tracker} (the issue lives there: pass "
+                                         f"`--set tracker={self.tracker}` to each `devloop` call)"),
+        ) if value]
         if lines:
             blocks.append("\n".join(lines))
         return "\n\n".join(blocks)

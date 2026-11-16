@@ -23,14 +23,15 @@
 #                   training_mode, run_mode, delivery; [tdd] mode; [prime];
 #                   [dispatch.<role>] transport, harness, model, effort, args.
 #   [repo] keys   — this file only; the policy directory's loop.toml refuses
-#                   them by name: [loop] branch_prefix, require_green_baseline;
+#                   them by name: [loop] branch_prefix, require_green_baseline,
+#                   tracker;
 #                   [labels]; [triage]; [dispatch.<role>] posture; [[gates]].
 # Without a policy directory this file carries both, as before. The split is
 # thinkweave's dec-6c3539b2 (cli.POLICY_KEYS holds it).
 
 [loop]
 # [policy]: max_issues_per_run, max_fix_rounds, training_mode, run_mode, delivery
-# [repo]:   branch_prefix, require_green_baseline
+# [repo]:   branch_prefix, require_green_baseline, tracker
 max_issues_per_run = 3   # token guardrail: issues processed per invocation
 max_fix_rounds = 2       # implement→gates→fix iterations before routing to human; never extended mid-run
 training_mode = true     # pause for human approval before push/PR; flip when trusted
@@ -38,6 +39,7 @@ branch_prefix = "loop/issue-"
 require_green_baseline = true   # red suite on main → refuse to implement
 run_mode = "pass"          # pass | exhaust (issue-loop.command.md §0)
 delivery = "pr-per-issue"  # pr-per-issue | stacked (issue-loop.command.md §0)
+tracker = ""               # owner/name of the repo that holds the issues; empty: this repo. PR calls never take it
 
 [tdd]   # [policy]
 # auto: TDD is ENFORCED iff the per-run baseline probe is green.
