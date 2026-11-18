@@ -11,9 +11,20 @@ import json
 import subprocess
 from pathlib import Path
 
+# ``owner/name`` of the repo whose issues the rail reads; empty means the repo
+# of the working directory. ``cli.main`` sets it from ``[loop].tracker``.
+tracker = ""
+
 
 def run(args: list[str], cwd: Path | None = None) -> str:
-    """``gh`` resolves the repo from its cwd; pass one to anchor on a worktree."""
+    """``gh`` resolves the repo from its cwd; pass one to anchor on a worktree.
+    An issue call names ``tracker`` instead when it is set: a ``gh issue``
+    call with no ``-R`` of its own, and each ``{owner}/{repo}`` of an API
+    path. A pull-request call never takes it."""
+    if tracker:
+        args = [a.replace("{owner}/{repo}", tracker) for a in args]
+        if args[0] == "issue" and "-R" not in args:
+            args += ["-R", tracker]
     return subprocess.run(["gh", *args], cwd=cwd, capture_output=True, text=True,
                           check=True).stdout
 
@@ -51,6 +62,13 @@ def fetch_issues() -> list[dict]:
                 issue["native_blockers"] = []  # the count still gates
         issues.append(issue)
     return issues
+
+
+def fetch_sub_issues(number: int) -> list[int]:
+    """The numbers of the issue's native sub-issues; a gh failure raises."""
+    out = run(["api", "--paginate", "--jq", ".[].number",
+               f"repos/{{owner}}/{{repo}}/issues/{number}/sub_issues"])
+    return [int(n) for n in out.split()]
 
 
 def fetch_labels(number: int) -> list[str]:

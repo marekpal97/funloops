@@ -39,6 +39,14 @@ Translate `--stacked` to `--set delivery=stacked` and `--max-issues <n>` to
 [section.]key=value` through verbatim. Append the collected `--set` flags to
 every `devloop` call in this run. Never edit `loop.toml` for the user.
 
+`tracker` (`--set tracker=<owner>/<name>`) names the repo whose issues this
+run reads, when that is not the repo of the working directory. Each issue
+call of the rail then targets it, from the main checkout and from a worktree,
+and each pack's last lines carry it. Add `-R <tracker>` to each `gh issue`
+call you make yourself, and name an issue as `<tracker>#<N>` in a PR body. A
+pull-request call (`gh pr …`) never takes the tracker: the PR opens in the
+repo of the working directory.
+
 `run_mode`: **pass** works the frontier once. **exhaust** re-plans after each
 shipped issue while the frontier is non-empty; when only blocked issues
 remain, report and stop, never busy-wait. `delivery`: **pr-per-issue** ships
@@ -52,7 +60,9 @@ Run `uv run devloop config` and `uv run devloop plan`. `plan` prints the
 - An issue number as argument: the frontier is that issue. Check in `plan`
   that it is unblocked and unclaimed; if not, say so and stop.
 - `--dag <N>`: pass `--dag <N>` to every `plan` call; `run_mode` defaults to
-  `exhaust`.
+  `exhaust`. When `<N>` has sub-issues, `<N>` is a stage: the plan holds only
+  its sub-issues, ordered by their blockers. Otherwise the plan holds the DAG
+  component of `<N>`.
 - An empty frontier: report why (all blocked, all claimed, PRs awaiting
   merge) and stop.
 - A `demo:` only a human can run (a session, a TUI, a page): ask on the issue
@@ -245,7 +255,8 @@ one; list it in the report. In `exhaust`, re-plan now (§0).
 ### 1e. Stacked delivery
 
 Each DAG component is one stack: one branch, one worktree, one PR at the end.
-Components run as concurrent stacks. Differences from the flow above:
+Components run as concurrent stacks. A `--dag <N>` stage is one stack on
+`loop/dag-<N>`, whatever its components. Differences from the flow above:
 
 - **One branch per stack.** `loop/dag-<N>`, `<N>` the component's root, made
   once (§0.5). Each slice's implementer is fresh but works in this worktree.

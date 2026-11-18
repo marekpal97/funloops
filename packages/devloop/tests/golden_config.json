@@ -6,7 +6,8 @@
     "branch_prefix": "loop/issue-",
     "require_green_baseline": true,
     "run_mode": "pass",
-    "delivery": "pr-per-issue"
+    "delivery": "pr-per-issue",
+    "tracker": ""
   },
   "labels": {
     "runnable": "ready-for-agent",

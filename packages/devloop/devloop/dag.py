@@ -40,16 +40,16 @@ def compute_components(issues: list[dict]) -> dict[int, int]:
     return {n: find(n) for n in open_numbers}
 
 
-def scope_to_dag(issues: list[dict], root: int) -> list[dict]:
-    """Keep only the DAG component containing `root` (plus all closed issues,
-    which blocker-satisfaction checks still need). Raises if `root` is not an
-    open issue — a closed root means that DAG has no open work to scope to."""
+def scope_to_dag(issues: list[dict], root: int, sub_issues: list[int] = ()) -> list[dict]:
+    """Keep only `root`'s sub-issues when it has any, else the DAG component
+    containing `root` (plus all closed issues, which blocker-satisfaction
+    checks still need). Raises if `root` is not an open issue — a closed root
+    means that DAG has no open work to scope to."""
     comp = compute_components(issues)
     if root not in comp:
         raise ValueError(f"#{root} is not an open issue — cannot scope to its DAG")
-    target = comp[root]
-    return [i for i in issues
-            if i["state"].upper() != "OPEN" or comp[i["number"]] == target]
+    scope = set(sub_issues) or {n for n in comp if comp[n] == comp[root]}
+    return [i for i in issues if i["state"].upper() != "OPEN" or i["number"] in scope]
 
 
 def apply_assume_done(issues: list[dict], done: set[int]) -> list[dict]:
@@ -70,7 +70,8 @@ def compute_frontier(issues: list[dict], cfg: dict, limit: int | None = None) ->
     native dependencies attached by fetch_issues (``native_blockers``, or
     ``native_blocked_count`` alone when the edge list wasn't fetched). A
     blocker missing from the snapshot is cross-repo or deleted: GitHub counted
-    it as blocking, so it keeps blocking, and the plan says why.
+    it as blocking, so it keeps blocking, and the plan says why. So does an
+    open blocker that ``scope_to_dag`` left out of a stage.
     """
     runnable_label = cfg["labels"]["runnable"]
     claimed_label = cfg["labels"]["claimed"]
@@ -100,7 +101,7 @@ def compute_frontier(issues: list[dict], cfg: dict, limit: int | None = None) ->
             blocker = by_number.get(ref)
             if blocker is None:
                 warnings.append(f"#{issue['number']}: blocker #{ref} not in snapshot "
-                                "(cross-repo or deleted); treated as blocking")
+                                "(out of scope, cross-repo or deleted); treated as blocking")
             if blocker is None or blocker["state"].upper() == "OPEN":
                 open_blockers.append(ref)
         # native_blocked_count is GitHub's own open-blocker count — it gates

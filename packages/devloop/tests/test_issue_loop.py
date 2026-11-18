@@ -2718,3 +2718,94 @@ def test_persona_sends_ceilings_to_the_return_never_to_a_comment():
     assert "`ponytail:` comment" not in persona
     assert "under Deviations and in the commit message" in persona
     assert "ponytail:" not in pack.STANDING_ORDERS
+
+
+# ---------------------------------------------------------------------------
+# [loop].tracker — the repo whose issues the rail reads
+
+
+def _recorded_gh(monkeypatch) -> list[list[str]]:
+    """Stand in for the ``gh`` binary: record each argv, answer an empty body."""
+    calls = []
+
+    def fake(argv, **kwargs):
+        calls.append(argv[1:])
+        return subprocess.CompletedProcess(argv, 0, stdout='{"body": ""}', stderr="")
+
+    monkeypatch.setattr(github, "tracker", "")
+    monkeypatch.setattr(github.subprocess, "run", fake)
+    return calls
+
+
+def test_tracker_is_named_by_each_issue_call_of_the_rail(tmp_path, monkeypatch, capsys):
+    """With the key set, the issue reads and writes of `check`, `claim` and
+    `release` name the tracker, whatever checkout they run from."""
+    _host_config(tmp_path, monkeypatch, "")
+    calls = _recorded_gh(monkeypatch)
+    assert cli.main(["check", "--issue", "1", "--cwd", str(tmp_path), "--set", "tracker=o/b"]) == 0
+    assert cli.main(["claim", "1", "--run-id", "r", "--set", "tracker=o/b"]) == 0
+    assert cli.main(["release", "1", "--set", "tracker=o/b"]) == 0
+    assert len(calls) == 4
+    for call in calls:
+        assert call[0] == "issue" and call[-2:] == ["-R", "o/b"], call
+
+
+def test_tracker_replaces_the_repo_of_an_api_issue_path_and_of_no_pull_request_call(monkeypatch):
+    calls = _recorded_gh(monkeypatch)
+    monkeypatch.setattr(github, "tracker", "o/b")
+    github.run(["api", "repos/{owner}/{repo}/issues/7/parent"])
+    github.run(["pr", "create", "--draft"])
+    github.run(["issue", "edit", "7", "-R", "x/y", "--add-label", "l"])
+    assert calls == [["api", "repos/o/b/issues/7/parent"], ["pr", "create", "--draft"],
+                     ["issue", "edit", "7", "-R", "x/y", "--add-label", "l"]]
+
+
+def test_tracker_unset_leaves_each_call_on_the_repo_of_the_working_directory(
+        tmp_path, monkeypatch, capsys):
+    _host_config(tmp_path, monkeypatch, "")
+    calls = _recorded_gh(monkeypatch)
+    assert cli.main(["check", "--issue", "1", "--cwd", str(tmp_path)]) == 0
+    assert calls == [["issue", "view", "1", "--json", "body"]]
+
+
+def test_tracker_that_is_not_owner_name_is_refused(tmp_path, monkeypatch, capsys):
+    _host_config(tmp_path, monkeypatch, "")
+    assert cli.main(["config", "--set", "tracker=5"]) == 2
+    assert "loop.tracker: expected owner/name" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_tracker_closes_the_dispatch_lines_when_set():
+    lines = pack.Dispatch(branch="loop/x", worktree="/w", tracker="o/b").render().splitlines()
+    assert lines[0] == "Branch: loop/x"
+    assert lines[-1].startswith("Tracker: o/b") and "--set tracker=o/b" in lines[-1]
+    assert "Tracker" not in pack.Dispatch(branch="loop/x").render()
+
+
+# ---------------------------------------------------------------------------
+# --dag on an issue with sub-issues: the stage is the scope
+
+
+def _stage_board():
+    """Epic 1 holds the sub-epics 10 and 20; 13 waits on 11."""
+    return [_issue(1, labels=()), _issue(10, labels=()), _issue(20, labels=()),
+            _issue(11), _issue(12), _issue(13, native_blockers=[11], native_blocked_count=1),
+            _issue(21), _issue(22)]
+
+
+def test_plan_dag_on_a_sub_epic_returns_only_its_sub_issues(monkeypatch, capsys):
+    monkeypatch.setattr(github, "fetch_issues", _stage_board)
+    monkeypatch.setattr(github, "fetch_sub_issues", lambda n: {10: [11, 12, 13]}.get(n, []))
+    assert cli.main(["plan", "--dag", "10"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert [e["number"] for e in out["frontier"]] == [11, 12]
+    assert [(e["number"], e["open_blockers"]) for e in out["blocked"]] == [(13, [11])]
+    assert out["deferred"] == [] and out["claimed"] == []
+
+
+def test_plan_dag_without_sub_epic_children_keeps_the_component_scope(monkeypatch, capsys):
+    monkeypatch.setattr(github, "fetch_issues", _stage_board)
+    monkeypatch.setattr(github, "fetch_sub_issues", lambda n: [])
+    assert cli.main(["plan", "--dag", "13"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert [e["number"] for e in out["frontier"]] == [11]
+    assert [e["number"] for e in out["blocked"]] == [13]
