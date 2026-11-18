@@ -11,7 +11,6 @@ import json
 import subprocess
 from pathlib import Path
 
-
 # ``owner/name`` of the repo whose issues the rail reads; empty means the repo
 # of the working directory. ``cli.main`` sets it from ``[loop].tracker``.
 tracker = ""
